@@ -40,14 +40,15 @@ func contextFull(tokens int64, window int) bool {
 }
 
 // rotateIfContextFull is StartTurn's rotation check, run after the addressed
-// conversation passed the current-thread fence. It returns
-// ErrConversationRotated when the conversation is full (whether this call
-// rotated it or a concurrent sender did first), a TurnInProgressError when it
-// is full but a turn is still running in it, and nil otherwise.
+// conversation passed the current-thread fence of its use case (chat view).
+// It returns ErrConversationRotated when the conversation is full (whether
+// this call rotated it or a concurrent sender did first), a
+// TurnInProgressError when it is full but a turn is still running in its use
+// case, and nil otherwise.
 //
 // A connection that states no window (Anthropic's own API) returns before
 // any query.
-func (s *Service) rotateIfContextFull(ctx context.Context, orgID, projectID, conversationID string, conn modelconn.Connection) error {
+func (s *Service) rotateIfContextFull(ctx context.Context, orgID, projectID, useCase, conversationID string, conn modelconn.Connection) error {
 	if conn.ContextWindow == nil || *conn.ContextWindow <= 0 || s.conversations == nil {
 		return nil
 	}
@@ -61,14 +62,14 @@ func (s *Service) rotateIfContextFull(ctx context.Context, orgID, projectID, con
 	// A running turn is still adding to this conversation, and rotating
 	// under it would land its answer in a thread nobody is looking at. The
 	// send was going to be refused for the running turn anyway; say that.
-	active, err := s.turns.GetActive(ctx, orgID, projectID)
+	active, err := s.turns.GetActive(ctx, orgID, projectID, useCase)
 	if err != nil {
 		return fmt.Errorf("get active turn: %w", err)
 	}
 	if active != nil {
 		return &TurnInProgressError{ActiveTurnID: active.ID}
 	}
-	if _, err := s.conversations.RotateIfCurrent(ctx, orgID, projectID, useCaseGeneral, conversationID, displayIdentityFrom(ctx)); err != nil {
+	if _, err := s.conversations.RotateIfCurrent(ctx, orgID, projectID, useCase, conversationID, displayIdentityFrom(ctx)); err != nil {
 		return fmt.Errorf("rotate full conversation: %w", err)
 	}
 	return ErrConversationRotated

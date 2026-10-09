@@ -21,7 +21,10 @@ import {
   ANSWERS_PREFIX,
   ASK_QUESTION_TOOL,
   ASK_QUESTIONS_TOOL,
+  HAND_OFF_TO_ISSUES,
   type AskQuestionInput,
+  type HandOffInput,
+  type HandOffResult,
   type StreamPart,
 } from "@aep/agent-stream";
 import { parseInterviewCommand, START_COMMAND } from "@aep/contracts/commands";
@@ -44,8 +47,9 @@ type ConversationMessage = components["schemas"]["ConversationMessage"];
 // feature's file (stub → interviewed, one `*assumed*` line) with an editFile
 // the client applies to its local doc. Spending reports and Mileage claims
 // have their own questions; any other feature gets a generic pair. Besides
-// the interview: the kickoff (`/start`), a short answer on the product, and a
-// short acknowledgement anywhere else.
+// the interview: the kickoff (`/start`), a hand-off to Issues for a report of
+// something broken, a short answer on the product, and a short
+// acknowledgement anywhere else.
 
 /** Builds one turn: its frames on a clock, and the messages it persists. */
 export class Script {
@@ -79,11 +83,29 @@ export class Script {
 
   /** One question card (ask_question); the turn ends waiting for its answer. */
   ask(toolCallId: string, input: AskQuestionInput): this {
-    this.emit({ type: "tool-call", toolCallId, toolName: ASK_QUESTION_TOOL, input }, 200);
-    const output = { status: "awaiting_user_response" };
-    this.emit({ type: "tool-result", toolCallId, toolName: ASK_QUESTION_TOOL, input, output }, 30);
-    this.parts.push({ type: "tool-call", toolCallId, toolName: ASK_QUESTION_TOOL, input });
-    this.results.push({ type: "tool-result", toolCallId, toolName: ASK_QUESTION_TOOL, output: { type: "json", value: output } });
+    return this.call(toolCallId, ASK_QUESTION_TOOL, input, { status: "awaiting_user_response" });
+  }
+
+  /** A tool call with its result, as the wire carries one that needs no streamed input. */
+  call(toolCallId: string, toolName: string, input: unknown, output: unknown): this {
+    this.emit({ type: "tool-call", toolCallId, toolName, input }, 200);
+    this.emit({ type: "tool-result", toolCallId, toolName, input, output }, 30);
+    this.parts.push({ type: "tool-call", toolCallId, toolName, input });
+    this.results.push({ type: "tool-result", toolCallId, toolName, output: { type: "json", value: output } });
+    this.lastWasText = false;
+    return this;
+  }
+
+  /**
+   * A call of one of aep-api's MCP tools (the issue tools): its result is the
+   * server's text, which the stream carries as the call's output and the
+   * history in the SDK's `{ type: "text", value }` wrapper.
+   */
+  mcp(toolCallId: string, toolName: string, input: unknown, text: string): this {
+    this.emit({ type: "tool-call", toolCallId, toolName, input }, 200);
+    this.emit({ type: "tool-result", toolCallId, toolName, input, output: text }, 30);
+    this.parts.push({ type: "tool-call", toolCallId, toolName, input });
+    this.results.push({ type: "tool-result", toolCallId, toolName, output: { type: "text", value: text } });
     this.lastWasText = false;
     return this;
   }
@@ -405,6 +427,21 @@ function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
+/** The `/issue` command's words (the whole message for a bare `/issue`), or null when it is not that command. */
+function issueCommandRequest(text: string): string | null {
+  const match = /^\/issue(?:\s+([\s\S]*))?$/.exec(text);
+  return match ? ((match[1] ?? "").trim() || text) : null;
+}
+
+/**
+ * A message in the user's own words that says something is broken. An answer
+ * to a card or a command is the conversation's own business, never a report.
+ */
+function readsBroken(text: string): boolean {
+  if (text.startsWith("/") || text.startsWith(ANSWER_PREFIX) || text.startsWith(ANSWERS_PREFIX)) return false;
+  return /\b(broken|not working|doesn'?t work|does nothing|errors?|crash\w*)\b/i.test(text);
+}
+
 /** What the mock agent does with a message. */
 export function scriptTurn(req: TurnRequest): ScriptedTurn {
   const { instruction, scope, model, progress, turnKey } = req;
@@ -467,6 +504,19 @@ export function scriptTurn(req: TurnRequest): ScriptedTurn {
       effect: { featureId: interviewed.id, stage: "Interviewed", file: { path: interviewed.path, content: up.content } },
       progress: undefined,
     };
+  }
+
+  // A report of something broken, or an `/issue` message, belongs in Issues: the
+  // agent hands it over, in the user's words, and the turn ends waiting for the user to go there.
+  const issueRequest = issueCommandRequest(text);
+  if (issueRequest !== null || readsBroken(text)) {
+    const input: HandOffInput = { request: (issueRequest ?? text).slice(0, 2000) };
+    const output: HandOffResult = { status: "awaiting_handoff", view: "issues" };
+    const s = new Script()
+      .pause(500)
+      .say("That sounds like a problem report.")
+      .call(`${turnKey}-handoff`, HAND_OFF_TO_ISSUES, input, output);
+    return { display: text, ...s.end(), progress };
   }
 
   // Anything else: a short answer, about what the scope is about.

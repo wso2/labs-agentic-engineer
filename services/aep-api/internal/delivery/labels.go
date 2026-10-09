@@ -47,7 +47,13 @@ const (
 	// It is also the GitHub-side ADOPTION trigger: a human stamping it on an
 	// issue arms it, and the event plane starts (or wakes) a run over the
 	// issue's milestone. Labels the platform stamps itself come back as webhook
-	// echoes and are dropped by sender, so arming stays a human act.
+	// echoes and are dropped by sender, so the platform's own writes never adopt
+	// anything. The platform stamps it in exactly one adoption: a person's
+	// hand-off from the console or by an issue's agent (promote-from-issue),
+	// which is that person's act made through the platform
+	// (eventcore.AdoptIssue). Once armed, a handed-over issue is a bug like any
+	// other: a cancelled task run over its milestone closes it with the rest of
+	// the run's work.
 	LabelAgentWork = "aep"
 )
 
@@ -67,7 +73,9 @@ const (
 	KindDevelopment = "development"
 	// KindBug ("bug") is a defect, from anywhere: a red build, a failed deploy,
 	// a failed acceptance criterion, a wiring conformance defect, or a human.
-	// Where it came from is the `src/*` source label, which only bugs carry.
+	// Where it came from is the `src/*` source label, which every platform-minted bug
+	// carries; the Issues agent also stamps `src/user` on the feature and improvement
+	// issues it files, which are not delivery kinds.
 	KindBug = "bug"
 	// KindConflict ("conflict") is a cycle's pull request that will not merge.
 	// The issue names the pull request so the agent rebases THAT branch rather
@@ -84,8 +92,10 @@ const (
 	KindProvision = "provision"
 )
 
-// The SOURCES. Only a KindBug issue carries one, and an ABSENT source reads as
-// SrcUser: a bug with no source label is a human's, because every platform minter
+// The SOURCES. A KindBug issue carries one (so does a feature or improvement issue
+// the Issues agent files for a user, stamped `src/user`; those are not delivery
+// kinds), and an ABSENT source reads as SrcUser: a bug with no source label is a
+// human's, because every platform minter
 // stamps its own. Nothing substitutes the value — the reading is what a person or
 // an agent takes from the missing label, which is why `src/user` is also stamped
 // explicitly wherever the platform knows a human filed the issue.

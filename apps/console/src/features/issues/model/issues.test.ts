@@ -20,6 +20,7 @@ import { describe, expect, it } from "vitest";
 import type { components } from "../../../generated/aep-api";
 import {
   alertItems,
+  canHandToCodingAgent,
   codingAgentTookOn,
   issueOrigin,
   issueSections,
@@ -73,9 +74,48 @@ describe("issueOrigin", () => {
 });
 
 describe("codingAgentTookOn", () => {
-  it("reads the arming label", () => {
-    expect(codingAgentTookOn(issue(1, { Labels: ["incident", "aep"] }))).toBe(true);
-    expect(codingAgentTookOn(issue(1, { Labels: ["aep:halted"] }))).toBe(false);
+  it("reads an armed issue in a version's milestone, as handing it over leaves it", () => {
+    expect(codingAgentTookOn(issue(1, { Labels: ["incident", "aep"], milestoneNumber: 3 }))).toBe(true);
+    expect(codingAgentTookOn(issue(1, { Labels: ["aep"], milestoneNumber: 3 }))).toBe(true);
+  });
+
+  it("needs both: armed but in no milestone, or in one but disarmed, is not taken on", () => {
+    expect(codingAgentTookOn(issue(1, { Labels: ["aep"] }))).toBe(false);
+    expect(codingAgentTookOn(issue(1, { Labels: ["incident"], milestoneNumber: 3 }))).toBe(false);
+    expect(codingAgentTookOn(issue(1, { Labels: ["aep:halted"], milestoneNumber: 3 }))).toBe(false);
+  });
+
+  it("is not taken on once its run gave up on it (halted): it can be handed over again", () => {
+    expect(codingAgentTookOn(issue(1, { Labels: ["bug", "aep", "aep:halted"], milestoneNumber: 3 }))).toBe(false);
+  });
+
+  it("reads labels as aep-api does, whatever their case", () => {
+    expect(codingAgentTookOn(issue(1, { Labels: ["AEP", "Bug"], milestoneNumber: 3 }))).toBe(true);
+    expect(codingAgentTookOn(issue(1, { Labels: ["aep", "Validation"], milestoneNumber: 3 }))).toBe(false);
+    expect(codingAgentTookOn(issue(1, { Labels: ["aep", "AEP:Halted"], milestoneNumber: 3 }))).toBe(false);
+  });
+
+  it("is not the coding agent's for the version's validation task or a dispatch gate", () => {
+    expect(codingAgentTookOn(issue(1, { Labels: ["aep", "validation"], milestoneNumber: 3 }))).toBe(false);
+    expect(codingAgentTookOn(issue(1, { Labels: ["aep", "provision"], milestoneNumber: 3 }))).toBe(false);
+  });
+});
+
+describe("canHandToCodingAgent", () => {
+  it("offers an open issue of the coding agent's kinds", () => {
+    expect(canHandToCodingAgent(issue(1, { Labels: [] }))).toBe(true);
+    expect(canHandToCodingAgent(issue(1, { Labels: ["bug", "src/user"] }))).toBe(true);
+    expect(canHandToCodingAgent(issue(1, { Labels: ["incident", "dedupe:sre-code-1"] }))).toBe(true);
+  });
+
+  it("offers no closed issue, and none the platform works another way", () => {
+    expect(canHandToCodingAgent(issue(1, { State: "closed" }))).toBe(false);
+    for (const kind of ["validation", "provision", "development"]) {
+      expect(canHandToCodingAgent(issue(1, { Labels: [kind] }))).toBe(false);
+    }
+    expect(canHandToCodingAgent(issue(1, { Labels: ["incident", "dedupe:sre-config-1"] }))).toBe(false);
+    expect(canHandToCodingAgent(issue(1, { Labels: ["Validation"] }))).toBe(false);
+    expect(canHandToCodingAgent(issue(1, { Labels: ["incident", "Dedupe:SRE-Config-1"] }))).toBe(false);
   });
 });
 

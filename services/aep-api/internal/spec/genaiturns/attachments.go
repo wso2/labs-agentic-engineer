@@ -24,6 +24,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/clients/agentsvc"
@@ -49,6 +50,8 @@ const (
 	scopeField       = "scope"
 	anchorField      = "anchor"
 	intentField      = "intent"
+	viewField        = "view"
+	issueNumberField = "issueNumber"
 )
 
 // The caps, and every one of them restates ONE number.
@@ -105,7 +108,13 @@ type multipartTurn struct {
 	Intent string
 	// Scope is the raw `scope` part (S6), validated with the JSON path's rules
 	// in scope.go.
-	Scope       string
+	Scope string
+	// View is the raw `view` part (the chat view); the service refuses a value
+	// outside the enum, since no request validator reads a multipart form.
+	View string
+	// IssueNumber is the `issueNumber` part, zero when absent; the service
+	// refuses it on the wrong view, or a missing one on the issue view.
+	IssueNumber int
 	Attachments []agentsvc.TurnAttachment
 }
 
@@ -161,6 +170,26 @@ func readMultipartTurn(body *multipart.Reader) (multipartTurn, error) {
 			}
 			out.Intent = v
 			continue
+		case viewField:
+			v, err := readFormValue(part)
+			if err != nil {
+				return out, err
+			}
+			out.View = strings.TrimSpace(v)
+			continue
+		case issueNumberField:
+			v, err := readFormValue(part)
+			if err != nil {
+				return out, err
+			}
+			// The contract's minimum (1): no validator reads create-turn's
+			// bodies, so each arm holds it (chatScopeOf for JSON).
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			if err != nil || n < 1 {
+				return out, apierr.BadRequest("issueNumber must be a positive integer")
+			}
+			out.IssueNumber = n
+			continue
 		case collabField:
 			v, err := readFormValue(part)
 			if err != nil {
@@ -171,9 +200,11 @@ func readMultipartTurn(body *multipart.Reader) (multipartTurn, error) {
 			continue
 		case attachmentsField:
 		default:
-			// Unknown parts are IGNORED, and this is a deliberate divergence
-			// from the JSON arm, which is strict (`additionalProperties: false`
-			// on TurnInputBody). Under strict parsing a rolling deploy in which
+			// Unknown parts are IGNORED. The contract declares both bodies strict
+			// (`additionalProperties: false`), but the edge validator skips
+			// create-turn's bodies (the route takes multipart) and the JSON arm
+			// decodes leniently, so neither arm refuses an unknown field today.
+			// Under strict parsing a rolling deploy in which
 			// the console ships a new field before the server knows it would 400
 			// every send; ignoring degrades gracefully instead. Relaxing the
 			// multipart schema to match is a contract decision, so it is left to

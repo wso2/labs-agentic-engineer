@@ -44,6 +44,7 @@ import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
 import type { ModelMessage } from "ai";
 import { FileBundle, type OpResult, type StreamPart } from "@aep/agent-stream";
 import { runTurn } from "../src/agents/main/run-turn.js";
+import { createMainAgent } from "../src/agents/main/agent.js";
 import { buildFileToolSet } from "../src/agents/main/tools/files.js";
 import { runConversationTurn, TurnGuard } from "../src/conversation/run-conversation-turn.js";
 import { InMemoryConversationStore } from "../src/store/memory-store.js";
@@ -106,10 +107,9 @@ async function collectFrames(): Promise<StreamPart[]> {
   const frames: StreamPart[] = [];
   await runTurn({
     model: model as never,
-    instructions: "batch",
+    agentFor: (run) => createMainAgent({ instructions: "batch", tools: buildFileToolSet(new FileBundle({})).tools }, run),
     prompt: "write the files",
     messages: [],
-    tools: buildFileToolSet(new FileBundle({})).tools,
     onEvent: (p) => frames.push(p),
   });
   return frames;
@@ -204,10 +204,9 @@ test("raw SDK: every file lands in the bundle — batching changes ordering, not
   const model = new MockLanguageModelV4({ doStream: [batchedStep(), closingStep()] as never });
   await runTurn({
     model: model as never,
-    instructions: "batch",
+    agentFor: (run) => createMainAgent({ instructions: "batch", tools: buildFileToolSet(bundle).tools }, run),
     prompt: "write the files",
     messages: [],
-    tools: buildFileToolSet(bundle).tools,
     onEvent: () => {},
   });
   for (const [path, content] of FILES) {

@@ -444,7 +444,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		// #430: the project-scoped thread store — resolve/rotate the current
 		// conversation, and the conversation_rotated admission fence on turns.
 		Conversations: spec.NewConversationRepository(db),
-		Recorder:      turnActivityRecorder{svc: activitySvc, authorship: specAuthored},
+		// The issue view has a thread only while its issue is open.
+		Issues:   issueService,
+		Recorder: turnActivityRecorder{svc: activitySvc, authorship: specAuthored},
 	}
 	// MCP discovery on design-generation turns (dependency-management Phase 5):
 	// the BFF mints a short-lived aud:aep-api-mcp token per turn so the agents
@@ -982,6 +984,11 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		OrganizationService: organizationService,
 		SREHandoffAuth:      sreHandoffAuth,
 		SREHandoffMCP:       sreHandoffMCP,
+		IssuesMCP: scissues.NewUserMCPHandler(issueService, scissues.IssueAgentPorts{
+			Promoter:   issueAgentPromoter{commands: taskCommands},
+			Components: designComponents{store: artifactStore},
+			Threads:    genaiSvc,
+		}),
 
 		DB:                   db,
 		CredService:          credService,
@@ -1402,6 +1409,13 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// router is a pointer held by the already-built controller, so a late Register
 	// (before serve) is picked up.
 	registerWebhook("issues", "closed", provisioningSvc.OnIssueClosed)
+	// A closed issue's chat thread goes with it, whoever closed it (round
+	// three §4); the issue agent's own close_issue removes it too (Threads on
+	// the issues MCP handler above). A reopen removes whatever the close left,
+	// so a reopened issue starts a fresh thread.
+	threadRemoval := issueThreadRemoval{repos: repoLocator{db: db}, threads: genaiSvc}
+	registerWebhook("issues", "closed", threadRemoval.OnIssueEvent)
+	registerWebhook("issues", "reopened", threadRemoval.OnIssueEvent)
 	// Deprovision a project's OC Resource model on project delete (OC does not
 	// cascade the logically-owned Resources/bindings).
 	projectService.SetResourceDeprovisioner(provisioningSvc)
@@ -1660,8 +1674,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		credValidator,
 		// agent_turns crash-safety sweep (design D17): a stale-heartbeat
 		// running turn is failed and the D18 one-active guard released;
-		// locally-buffered streams get the terminal event.
-		spec.NewTurnSweeper(turnRepo, turnBroker, 0, 0),
+		// locally-buffered streams get the terminal event, and a closed
+		// issue's thread removal that waited for the turn runs.
+		spec.NewTurnSweeper(turnRepo, turnBroker, genaiSvc, 0, 0),
 		// Moves each org's model connection key off its Anthropic-era storage
 		// names: migrate's phase20 copied the bytes at boot, and this switches
 		// the SM-API mirror at boot; the periodic passes retire the old copies

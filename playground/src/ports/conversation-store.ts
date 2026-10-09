@@ -100,6 +100,13 @@ export class FileConversationStore implements ConversationStore {
     renameSync(tmp, file);
   }
 
+  async delete(id: string): Promise<boolean> {
+    const file = this.fileFor(id);
+    const existed = existsSync(file);
+    rmSync(file, { force: true });
+    return existed;
+  }
+
   /** `--fresh`: drop a conversation's history (next turn starts clean). */
   reset(id: string): void {
     rmSync(this.fileFor(id), { force: true });

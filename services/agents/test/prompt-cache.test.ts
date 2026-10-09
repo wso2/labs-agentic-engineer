@@ -29,6 +29,7 @@ import assert from "node:assert/strict";
 import { FileBundle } from "@aep/agent-stream";
 import type { ModelMessage } from "ai";
 import { runTurn } from "../src/agents/main/run-turn.js";
+import { createMainAgent } from "../src/agents/main/agent.js";
 import { buildFileToolSet } from "../src/agents/main/tools/files.js";
 import { mockModel } from "../src/shared/mock-model.js";
 import { SEED_FILES } from "./seed-files.js";
@@ -58,8 +59,7 @@ test("the cache breakpoint rides the system block and the last message", async (
 
   await runTurn({
     model,
-    instructions: "You are a spec agent.",
-    tools: {},
+    agentFor: (run) => createMainAgent({ instructions: "You are a spec agent.", tools: {} }, run),
     messages,
     prompt: "this turn",
     cacheBreakpoint: BREAKPOINT,
@@ -86,8 +86,7 @@ test("the breakpoint never reaches the persisted conversation", async () => {
 
   await runTurn({
     model,
-    instructions: "You are a spec agent.",
-    tools: {},
+    agentFor: (run) => createMainAgent({ instructions: "You are a spec agent.", tools: {} }, run),
     messages,
     prompt: "this turn",
     cacheBreakpoint: BREAKPOINT,
@@ -128,8 +127,7 @@ test("the breakpoint rolls onto the newest message on every step of the loop", a
 
   await runTurn({
     model,
-    instructions: "You are a spec agent.",
-    tools: buildFileToolSet(bundle).tools,
+    agentFor: (run) => createMainAgent({ instructions: "You are a spec agent.", tools: buildFileToolSet(bundle).tools }, run),
     messages,
     prompt: "edit it twice",
     cacheBreakpoint: BREAKPOINT,
@@ -181,8 +179,7 @@ test("no breakpoint leaves the request untouched", async () => {
 
   await runTurn({
     model,
-    instructions: "You are a spec agent.",
-    tools: {},
+    agentFor: (run) => createMainAgent({ instructions: "You are a spec agent.", tools: {} }, run),
     messages,
     prompt: "this turn",
   });

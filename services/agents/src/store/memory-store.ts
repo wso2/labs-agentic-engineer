@@ -46,4 +46,8 @@ export class InMemoryConversationStore implements ConversationStore {
     });
     this.conversations.set(c.id, stored);
   }
+
+  async delete(id: string): Promise<boolean> {
+    return this.conversations.delete(id);
+  }
 }

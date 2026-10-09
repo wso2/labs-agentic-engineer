@@ -89,7 +89,31 @@ function OptionButton({
           )}
         </Box>
         {opt.description && (
-          <Typography variant="caption" color="text.secondary">
+          // A confirmation's description is the exact change (a comment, an
+          // issue's title and body): its line breaks are part of what is
+          // confirmed. It is the agent's text, so it sits in a box of its own:
+          // a line in it that looks like another option reads as part of the
+          // text, and however long it is, it scrolls inside the box instead of
+          // pushing the other options out of view.
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{
+              display: "block",
+              mt: 0.25,
+              px: 1,
+              py: 0.75,
+              borderWidth: 1,
+              borderStyle: "solid",
+              borderColor: "divider",
+              borderRadius: 1,
+              bgcolor: "background.paper",
+              maxHeight: 192,
+              overflowY: "auto",
+              whiteSpace: "pre-wrap",
+              overflowWrap: "anywhere",
+            }}
+          >
             {opt.description}
           </Typography>
         )}

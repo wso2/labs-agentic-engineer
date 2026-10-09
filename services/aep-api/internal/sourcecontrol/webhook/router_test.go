@@ -25,6 +25,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 )
 
 // recordingHandler captures the (event, action, payload) a Dispatch delivered
@@ -64,11 +65,14 @@ func (h *recordingHandler) setErr(err error) {
 type dispatchCall struct {
 	event, action string
 	payload       string
+	// receivedAt is what ReceivedAt said in the handler's context.
+	receivedAt time.Time
 }
 
 func (h *recordingHandler) Handle(ctx context.Context, event, action string, payload []byte) error {
 	h.mu.Lock()
-	h.calls = append(h.calls, dispatchCall{event, action, string(payload)})
+	receivedAt, _ := ReceivedAt(ctx)
+	h.calls = append(h.calls, dispatchCall{event: event, action: action, payload: string(payload), receivedAt: receivedAt})
 	block := h.block
 	h.mu.Unlock()
 	if block != nil {

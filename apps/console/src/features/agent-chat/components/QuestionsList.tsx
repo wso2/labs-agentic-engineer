@@ -26,7 +26,8 @@ import { answerableQuestionId, openQuestionId, type QuestionItem } from "../chat
 import { applyNote, applySelection, isQuestionAnswered, normalizeAnswers } from "../questionCards";
 import { clearQuestionDraft, questionDraft, saveQuestionDraft } from "../questionDrafts";
 import { visuallyHidden } from "../../../components/visuallyHidden";
-import { chatStore, useProjectChat } from "../useProjectChat";
+import { homeLink, type ChatView } from "../chatView";
+import { chatStoreFor, useProjectChat } from "../useProjectChat";
 import { QuestionBlock } from "./QuestionBlock";
 
 // The Questions card's body (ADR-0002 / #879): every question the agent is
@@ -34,8 +35,17 @@ import { QuestionBlock } from "./QuestionBlock";
 // points here. The questions are the chat log's (the store this browser
 // keeps), so the card and the chat never disagree about what is open.
 
-export function QuestionsList({ projectName }: { projectName: string }) {
-  const chat = useProjectChat(projectName);
+export function QuestionsList({
+  projectName,
+  view = "main",
+  issueNumber,
+}: {
+  projectName: string;
+  view?: ChatView;
+  /** The issue whose chat's questions these are, in the issue view. */
+  issueNumber?: number;
+}) {
+  const chat = useProjectChat(projectName, view, issueNumber);
   const { items, turn } = chat;
 
   if (chat.status === "loading" && items.length === 0) {
@@ -53,7 +63,7 @@ export function QuestionsList({ projectName }: { projectName: string }) {
           <Typography variant="body2" color="text.secondary">
             {chat.error}
           </Typography>
-          <Button size="small" variant="outlined" onClick={() => chatStore.retry(projectName)}>
+          <Button size="small" variant="outlined" onClick={() => chatStoreFor(view, issueNumber).retry(projectName)}>
             Try again
           </Button>
         </Box>
@@ -74,6 +84,8 @@ export function QuestionsList({ projectName }: { projectName: string }) {
       <QuestionsForm
         key={shown.id}
         projectName={projectName}
+        view={view}
+        {...(issueNumber !== undefined ? { issueNumber } : {})}
         item={shown}
         answerable={answerableQuestionId(items) === shown.id}
         sending={turn.phase === "starting"}
@@ -93,11 +105,15 @@ export function QuestionsList({ projectName }: { projectName: string }) {
 
 function QuestionsForm({
   projectName,
+  view,
+  issueNumber,
   item,
   answerable,
   sending,
 }: {
   projectName: string;
+  view: ChatView;
+  issueNumber?: number;
   item: QuestionItem;
   /** Complete and still waiting: the batch can be sent. */
   answerable: boolean;
@@ -135,12 +151,14 @@ function QuestionsForm({
       return;
     }
     setAnnounced("");
-    // Sent: the card has done its job and closes back to the overview, and the
-    // draft goes. A send that failed keeps it open, answers and all.
-    void chatStore.answer(projectName, item.id, answers).then((sent) => {
+    // Sent: the card has done its job and closes back to the page it is over
+    // (the overview, the Issues page for the Issues chat, or the issue's card
+    // for an issue's chat), and the draft
+    // goes. A send that failed keeps it open, answers and all.
+    void chatStoreFor(view, issueNumber).answer(projectName, item.id, answers).then((sent) => {
       if (!sent) return;
       clearQuestionDraft(projectName, item.toolCallId);
-      void navigate({ to: "/projects/$projectName", params: { projectName } });
+      void navigate(homeLink(projectName, view, issueNumber));
     });
   };
 

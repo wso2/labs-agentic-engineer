@@ -17,10 +17,16 @@
  */
 
 /**
- * runTurn — the generic, file-agnostic turn loop. Model + tools + instructions +
- * messages in; events, appended messages, usage, finishReason out. It imports
- * `ai` only, knows nothing file-specific, and WRITES NOTHING. Every consumer
- * (the SSE route, the eval) drives it identically — one waist, one stream shape.
+ * runTurn — the generic, file-agnostic turn loop. An agent + messages in;
+ * events, appended messages, usage, finishReason out. It imports `ai` only,
+ * knows nothing file-specific, and WRITES NOTHING. Every consumer (the SSE
+ * route, the eval) drives it identically — one waist, one stream shape.
+ *
+ * WHICH agent runs is the caller's: `agentFor` builds it (an agent module's
+ * factory — `main/agent.ts`, `issues/agent.ts`) from the settings runTurn
+ * decides for this turn (`AgentRunSettings`: the model, the step cap, the
+ * output ceiling, the prompt-cache breakpoints), since only runTurn knows where
+ * this turn's prompt lands in the history.
  *
  * Tools run SERVER-SIDE (they keep `execute()`), so the model's one-step
  * self-correction (NOT_UNIQUE / NOT_FOUND / INVALID_YAML) stays inside one
@@ -30,28 +36,25 @@
  */
 
 import {
-  ToolLoopAgent,
-  isStepCount,
   type Instructions,
-  type StopCondition,
   type FilePart,
   type ModelMessage,
   type LanguageModel,
   type LanguageModelUsage,
   type TelemetryOptions,
-  type ToolLoopAgentSettings,
-  type ToolSet,
   type UserContent,
 } from "ai";
 import type { StreamPart } from "@aep/agent-stream";
-
-/** Provider-specific per-call options (`ai` doesn't export the type directly). */
-export type ProviderOptions = NonNullable<ToolLoopAgentSettings["providerOptions"]>;
+import type { AgentRunSettings, ProviderOptions, TurnAgent } from "../run-settings.js";
 
 export interface RunTurnInput {
+  /** The turn's model, handed to the agent through `AgentRunSettings`. */
   model: LanguageModel;
-  instructions: string;
-  tools: ToolSet;
+  /**
+   * Builds the agent this turn runs from the settings runTurn decided (an agent
+   * module's factory). Called once per turn, after the user message is pushed.
+   */
+  agentFor: (run: AgentRunSettings) => TurnAgent;
   /** The growing conversation. MUTATED IN PLACE: the user turn + the response are appended. */
   messages: ModelMessage[];
   /** This turn's user instruction text (pushed as a `user` message before streaming). */
@@ -64,14 +67,9 @@ export interface RunTurnInput {
    * byte-identical to a turn without this feature.
    */
   fileParts?: FilePart[];
-  /**
-   * Stop conditions; defaults to `[isStepCount(maxSteps ?? 20)]`. Stays generic
-   * — the main wiring passes `[isStepCount(n), <stop on an accepted question
-   * call>]` without runTurn ever knowing a tool name.
-   */
-  stopWhen?: StopCondition<ToolSet>[];
   onEvent?: (part: StreamPart) => void;
   abortSignal?: AbortSignal;
+  /** The step cap the agent stops at; defaults to 20. */
   maxSteps?: number;
   /**
    * Per-step output-token ceiling. Left unset the provider applies a low default
@@ -228,14 +226,13 @@ export async function runTurn(input: RunTurnInput): Promise<RunTurnResult> {
     ? rollingCacheBreakpoint(pinIndex, input.cacheBreakpoint)
     : undefined;
 
-  const agent = new ToolLoopAgent({
+  const agent = input.agentFor({
     model: input.model,
-    instructions: withCacheBreakpoint(input.instructions, input.cacheBreakpoint),
-    tools: input.tools,
-    stopWhen: input.stopWhen ?? [isStepCount(input.maxSteps ?? 20)],
+    maxSteps: input.maxSteps ?? 20,
     ...(input.maxOutputTokens ? { maxOutputTokens: input.maxOutputTokens } : {}),
     ...(input.maxRetries !== undefined ? { maxRetries: input.maxRetries } : {}),
     ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
+    instructionsWrap: (instructions) => withCacheBreakpoint(instructions, input.cacheBreakpoint),
     // Absent when caching is off, so the request is byte-identical to one made
     // before any of this existed.
     ...(roll ? { prepareStep: ({ messages }) => ({ messages: roll(messages) }) } : {}),

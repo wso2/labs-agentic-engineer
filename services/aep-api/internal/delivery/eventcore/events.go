@@ -405,8 +405,10 @@ func (e *Events) OnIssues(ctx context.Context, _, action string, payload []byte)
 	// The ARMING SWITCH is the adoption trigger: a human adding `aep` to an issue
 	// hands it to the agent. Platform-written labels never reach here — the echo
 	// suppression above drops any delivery this platform's own sender caused —
-	// so every arming that arrives is a human's act, which is what makes "who
-	// adopted this" answerable from the issue timeline alone.
+	// so an arming that arrives is a human's act on GitHub. (A hand-off from the
+	// console or an issue's agent arms through the platform and adopts directly;
+	// on an install with no App its label echo arrives here as a human's and
+	// re-adopts idempotently.)
 	//
 	// Adoption does NOT short-circuit the predicate below, and that matters: the
 	// two jobs answer different states of the same milestone. Adoption starts a
@@ -420,7 +422,16 @@ func (e *Events) OnIssues(ctx context.Context, _, action string, payload []byte)
 		if ms, ok := p.milestone(); ok {
 			target.MilestoneNumber, target.MilestoneTitle = ms.Number, ms.Title
 		}
-		if aerr := e.AdoptIssue(ctx, orgID, projectID, target); aerr != nil {
+		aerr := e.AdoptIssue(ctx, orgID, projectID, target)
+		switch {
+		case errors.Is(aerr, delivery.ErrIssueClosed), errors.Is(aerr, delivery.ErrNotCodingWork):
+			// An issue adoption will not take — closed, or another species' work,
+			// the platform's own validation task arriving through a PAT echo among
+			// them — is routine, and its arming may still wake the run that works
+			// it: on to the predicate below.
+			slog.DebugContext(ctx, "eventcore: not adopting", "repo", p.Repository.FullName,
+				"issue", p.Issue.Number, "reason", aerr)
+		case aerr != nil:
 			// Adoption problems are the human's to see, and the console dispatch
 			// path returns them synchronously. Failing the delivery here would only
 			// replay a label that is already applied.

@@ -33,6 +33,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
 	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
@@ -83,6 +84,7 @@ func (h *Handler) CreateTurn(ctx context.Context, request gen.CreateTurnRequestO
 		in.Instruction = parsed.Instruction
 		in.Collab = parsed.Collab
 		in.Attachments = parsed.Attachments
+		in.Chat = spec.ChatScope{View: spec.ChatView(parsed.View), IssueNumber: parsed.IssueNumber}
 		anchor, err := parseAnchorField(parsed.Anchor)
 		if err != nil {
 			return nil, err
@@ -102,6 +104,11 @@ func (h *Handler) CreateTurn(ctx context.Context, request gen.CreateTurnRequestO
 	case request.JSONBody != nil:
 		in.Instruction = request.JSONBody.Instruction
 		in.Collab = request.JSONBody.Collab
+		chat, err := chatScopeOf(request.JSONBody.View, request.JSONBody.IssueNumber)
+		if err != nil {
+			return nil, mapGenAITurnError(ctx, err)
+		}
+		in.Chat = chat
 		aim, err := aimFromJSON(request.JSONBody.Anchor, string(request.JSONBody.Intent))
 		if err != nil {
 			return nil, err
@@ -156,8 +163,12 @@ func (h *Handler) GetTurn(ctx context.Context, request gen.GetTurnRequestObject)
 }
 
 func (h *Handler) GetActiveTurn(ctx context.Context, request gen.GetActiveTurnRequestObject) (gen.GetActiveTurnResponseObject, error) {
+	chat, err := chatScopeOf(request.Params.View, request.Params.IssueNumber)
+	if err != nil {
+		return nil, mapGenAITurnError(ctx, err)
+	}
 	org := tenant.BoundOrgFromContext(ctx)
-	st, err := h.genai.ActiveTurn(ctx, org, request.ProjectName)
+	st, err := h.genai.ActiveTurn(ctx, org, request.ProjectName, chat)
 	if err != nil {
 		return nil, mapGenAITurnError(ctx, err)
 	}
@@ -195,13 +206,17 @@ func (h *Handler) StreamTurn(ctx context.Context, request gen.StreamTurnRequestO
 	}}, nil
 }
 
-// ListConversations resolves the project's chat threads (#430) — one element
-// today, the current thread, lazily created on first read so every member
-// converges on it. Plural-shaped so the multi-conversation future grows the
-// array instead of renaming the endpoint.
+// ListConversations resolves one chat view's threads (#430) — one element
+// today, the view's current thread, lazily created on first read so every
+// member converges on it. Plural-shaped so the multi-conversation future grows
+// the array instead of renaming the endpoint.
 func (h *Handler) ListConversations(ctx context.Context, request gen.ListConversationsRequestObject) (gen.ListConversationsResponseObject, error) {
+	chat, err := chatScopeOf(request.Params.View, request.Params.IssueNumber)
+	if err != nil {
+		return nil, mapGenAITurnError(ctx, err)
+	}
 	org := tenant.BoundOrgFromContext(ctx)
-	rows, err := h.genai.ListConversations(ctx, org, request.ProjectName)
+	rows, err := h.genai.ListConversations(ctx, org, request.ProjectName, chat)
 	if err != nil {
 		return nil, mapGenAITurnError(ctx, err)
 	}
@@ -222,6 +237,27 @@ func (h *Handler) RotateConversation(ctx context.Context, request gen.RotateConv
 		return nil, mapGenAITurnError(ctx, err)
 	}
 	return gen.RotateConversation201JSONResponse(conversationView(*row)), nil
+}
+
+// chatScopeOf maps the contract's optional view and issue number onto the
+// feature's chat: an absent view is the main chat, an absent number zero. A
+// PRESENT number below 1 is refused here (ErrIssueNumber → 400), before it
+// could read as absent: no validator holds create-turn's JSON body to the
+// contract's minimum. A view outside the enum, or a number on the wrong view,
+// passes through for the service to refuse (ErrUnknownChatView /
+// ErrIssueNumber → 400).
+func chatScopeOf(v *gen.ChatView, issueNumber *int) (spec.ChatScope, error) {
+	var chat spec.ChatScope
+	if v != nil {
+		chat.View = spec.ChatView(*v)
+	}
+	if issueNumber != nil {
+		if *issueNumber < 1 {
+			return spec.ChatScope{}, spec.ErrIssueNumber
+		}
+		chat.IssueNumber = *issueNumber
+	}
+	return chat, nil
 }
 
 func conversationView(row spec.ProjectConversation) gen.ProjectConversationView {
@@ -246,9 +282,9 @@ func (h *Handler) GetConversation(ctx context.Context, request gen.GetConversati
 
 // turnConflictOf maps the StartTurn conflict rejections onto the contract's
 // 409 TurnConflict body ({"code":"turn_in_progress","activeTurnId"} /
-// {"code":"requirements_missing"} / {"code":"conversation_rotated"} — declared
-// in the contract, generated type); every other error stays on the envelope
-// path (mapGenAITurnError).
+// {"code":"requirements_missing"} / {"code":"conversation_rotated"} /
+// {"code":"issue_closed"} — declared in the contract, generated type); every
+// other error stays on the envelope path (mapGenAITurnError).
 func turnConflictOf(err error) (gen.CreateTurnResponseObject, bool) {
 	var inProgress *spec.TurnInProgressError
 	if errors.As(err, &inProgress) {
@@ -261,6 +297,12 @@ func turnConflictOf(err error) (gen.CreateTurnResponseObject, bool) {
 		// the console re-resolves via list-conversations and retries.
 		return gen.CreateTurn409JSONResponse(gen.TurnConflict{
 			Code: gen.ConversationRotated,
+		}), true
+	}
+	if errors.Is(err, spec.ErrIssueClosed) {
+		// A closed issue has no thread; the console shows it closed.
+		return gen.CreateTurn409JSONResponse(gen.TurnConflict{
+			Code: gen.IssueClosed,
 		}), true
 	}
 	return nil, false
@@ -411,7 +453,8 @@ func mapGenAITurnError(ctx context.Context, err error) error {
 		return mapped
 	}
 	switch {
-	case errors.Is(err, spec.ErrProjectRepoNotFound):
+	case errors.Is(err, spec.ErrProjectRepoNotFound), errors.Is(err, sourcecontrol.ErrRepoNotFound):
+		// The second is the issue reader's (the issue view's open check).
 		return apierr.NotFound("project repository not found")
 	case errors.Is(err, spec.ErrTurnNotFound):
 		return apierr.NotFound("turn not found")
@@ -419,6 +462,18 @@ func mapGenAITurnError(ctx context.Context, err error) error {
 		return apierr.BadRequest("invalid conversation id")
 	case errors.Is(err, spec.ErrEmptyInstruction):
 		return apierr.BadRequest(spec.ErrEmptyInstruction.Error())
+	case errors.Is(err, spec.ErrUnknownChatView):
+		return apierr.BadRequest(spec.ErrUnknownChatView.Error())
+	case errors.Is(err, spec.ErrViewTurnFields):
+		return apierr.BadRequest(spec.ErrViewTurnFields.Error())
+	case errors.Is(err, spec.ErrIssueNumber):
+		return apierr.BadRequest(spec.ErrIssueNumber.Error())
+	case errors.Is(err, spec.ErrIssueClosed):
+		// The list-conversations / active-turn arm; create-turn answers the
+		// same code on its TurnConflict body (turnConflictOf).
+		return apierr.New(http.StatusConflict, string(gen.IssueClosed), spec.ErrIssueClosed.Error(), nil)
+	case errors.Is(err, sourcecontrol.ErrIssueNotFound):
+		return apierr.NotFound("issue not found")
 	case errors.Is(err, spec.ErrCollabNoToken):
 		return apierr.BadRequest(spec.ErrCollabNoToken.Error())
 	case errors.Is(err, spec.ErrNoModelConnection):
@@ -439,6 +494,11 @@ func mapGenAITurnError(ctx context.Context, err error) error {
 		// skills-repo arm above.
 		slog.ErrorContext(ctx, "genai turn: conversation store not configured", "error", err)
 		return apierr.ServiceUnavailable(spec.ErrConversationsUnavailable.Error())
+	case errors.Is(err, spec.ErrIssueReaderUnavailable):
+		// The same wiring-bug posture: the issue view was reached without
+		// the issue reader assembled.
+		slog.ErrorContext(ctx, "genai turn: issue reader not configured", "error", err)
+		return apierr.ServiceUnavailable(spec.ErrIssueReaderUnavailable.Error())
 	case errors.Is(err, gitfs.ErrDiskAdmission):
 		// New snapshot dests are refused at ≥90% workspace usage. Operator
 		// recovery (reap / prune), not a client bug — 503 with a sentence

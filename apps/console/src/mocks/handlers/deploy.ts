@@ -18,7 +18,7 @@
 
 import { http, HttpResponse } from "msw";
 import type { components } from "../../generated/aep-api";
-import { projectBuilds } from "../buildsState";
+import { deployedVersion } from "../buildsState";
 
 // The Deploy Page's reads in mock mode: a three-environment pipeline where a
 // built version runs in Development (the newest the mock built), Xero as the
@@ -43,7 +43,9 @@ const COMPONENTS = [
   { name: "expense-api", displayName: "Expense API", type: "service" },
 ];
 
+// Every component of the design, as aep-api lists them: the web app has no dependencies.
 const design: ComponentDependencies[] = [
+  { componentName: "expense-webapp", dependencies: [] },
   {
     componentName: "expense-api",
     dependencies: [
@@ -84,16 +86,11 @@ paths:
 // Development has Xero's values from the build; the rest wait for a Configure card.
 const configured = new Set(["development"]);
 
-/** The newest version the mock has built: what runs in Development. */
-function runningVersion(projectName: string): string | null {
-  return projectBuilds(projectName).filter((b) => b.status === "built").at(-1)?.version ?? null;
-}
-
 export const deployHandlers = [
   http.get("*/api/v1/dependencies/environments", () => HttpResponse.json(environments)),
 
   http.get("*/api/v1/projects/:projectName/status", ({ params }) => {
-    const version = runningVersion(String(params.projectName));
+    const version = deployedVersion(String(params.projectName))?.version;
     return HttpResponse.json<ProjectStatus>({
       build: { status: "idle", version: version ?? "" },
       deploy: {
@@ -114,7 +111,7 @@ export const deployHandlers = [
   }),
 
   http.get("*/api/v1/projects/:projectName/components", ({ params }) =>
-    HttpResponse.json({ items: runningVersion(String(params.projectName)) ? COMPONENTS : [] }),
+    HttpResponse.json({ items: deployedVersion(String(params.projectName)) ? COMPONENTS : [] }),
   ),
 
   http.get("*/api/v1/projects/:projectName/components/:componentName/deployments", ({ params }) => {

@@ -32,7 +32,7 @@ type stubDesignTurns struct {
 	askedFlow  string
 }
 
-func (s *stubDesignTurns) Newest(context.Context, string, string) (*spec.AgentTurn, error) {
+func (s *stubDesignTurns) Newest(context.Context, string, string, string) (*spec.AgentTurn, error) {
 	return nil, nil
 }
 

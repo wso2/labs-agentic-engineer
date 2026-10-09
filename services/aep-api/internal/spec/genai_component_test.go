@@ -158,6 +158,9 @@ type fakeAgents struct {
 	turnCount    int
 	requests     []recordedTurn
 	lastConvPath string
+
+	deleteStatus int      // DELETE /conversations/:id answer (default 204)
+	deletes      []string // every DELETE's conversation id, in order
 }
 
 type recordedTurn struct {
@@ -172,6 +175,7 @@ func newFakeAgents(t *testing.T) *fakeAgents {
 		turnStatus:       200,
 		convStatus:       200,
 		convBody:         `{"messages":[{"role":"user","content":"hi"}]}`,
+		deleteStatus:     http.StatusNoContent,
 		entered:          make(chan struct{}, 1),
 		release:          make(chan struct{}),
 		preHeaderEntered: make(chan struct{}, 1),
@@ -181,6 +185,12 @@ func newFakeAgents(t *testing.T) *fakeAgents {
 		switch {
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/turns"):
 			f.handleTurn(w, r)
+		case r.Method == http.MethodDelete:
+			f.mu.Lock()
+			f.deletes = append(f.deletes, strings.TrimPrefix(r.URL.Path, "/conversations/"))
+			status := f.deleteStatus
+			f.mu.Unlock()
+			w.WriteHeader(status)
 		case r.Method == http.MethodGet:
 			f.mu.Lock()
 			f.lastConvPath = r.URL.Path
@@ -270,6 +280,13 @@ func (f *fakeAgents) sentTurn(t *testing.T, i int) recordedTurn {
 	return f.requests[i]
 }
 
+// deleted is a copy of the conversation ids DELETEd so far.
+func (f *fakeAgents) deleted() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.deletes...)
+}
+
 func (f *fakeAgents) turns(t *testing.T) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -296,7 +313,7 @@ func (m *memTurnRepo) TryStart(_ context.Context, t *spec.AgentTurn) (*spec.Agen
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, r := range m.rows {
-		if r.OrgID == t.OrgID && r.ProjectID == t.ProjectID && r.Status == "running" {
+		if r.OrgID == t.OrgID && r.ProjectID == t.ProjectID && r.UseCase == t.UseCase && r.Status == "running" {
 			cp := *r
 			return &cp, spec.ErrTurnActive
 		}
@@ -334,6 +351,10 @@ func (m *memTurnRepo) Finish(_ context.Context, id string, term spec.TurnTermina
 			r.Code = term.Code
 			r.ResetAt = term.ResetAt
 			r.ContextTokens = term.ContextTokens
+			if term.Outcome != "" {
+				outcome := term.Outcome
+				r.Outcome = &outcome
+			}
 			if len(term.Paths) > 0 {
 				b, _ := json.Marshal(term.Paths)
 				r.Paths = string(b)
@@ -357,11 +378,11 @@ func (m *memTurnRepo) Get(_ context.Context, orgID, projectID, turnID string) (*
 	return nil, nil
 }
 
-func (m *memTurnRepo) GetActive(_ context.Context, orgID, projectID string) (*spec.AgentTurn, error) {
+func (m *memTurnRepo) GetActive(_ context.Context, orgID, projectID, useCase string) (*spec.AgentTurn, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, r := range m.rows {
-		if r.OrgID == orgID && r.ProjectID == projectID && r.Status == "running" {
+		if r.OrgID == orgID && r.ProjectID == projectID && r.UseCase == useCase && r.Status == "running" {
 			cp := *r
 			return &cp, nil
 		}
@@ -398,12 +419,12 @@ func (m *memTurnRepo) NewestCompletedFlow(_ context.Context, orgID, projectID, f
 	return &cp, nil
 }
 
-func (m *memTurnRepo) Newest(_ context.Context, orgID, projectID string) (*spec.AgentTurn, error) {
+func (m *memTurnRepo) Newest(_ context.Context, orgID, projectID, useCase string) (*spec.AgentTurn, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var newest *spec.AgentTurn
 	for _, r := range m.rows { // insertion order == creation order
-		if r.OrgID == orgID && r.ProjectID == projectID {
+		if r.OrgID == orgID && r.ProjectID == projectID && r.UseCase == useCase {
 			newest = r
 		}
 	}
@@ -442,6 +463,22 @@ func (m *memTurnRepo) LastContextTokens(_ context.Context, orgID, projectID, con
 		}
 	}
 	return last, nil
+}
+
+func (m *memTurnRepo) BranchOutcomes(_ context.Context, orgID, projectID, useCase string, since time.Time) (int, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	turns, latest, latestAt := 0, "", time.Time{}
+	for _, r := range m.rows { // a terminal row's UpdatedAt is its finish time
+		if r.OrgID == orgID && r.ProjectID == projectID && r.UseCase == useCase && r.Status == "completed" &&
+			r.UpdatedAt.After(since) && r.Outcome != nil {
+			turns++
+			if !r.UpdatedAt.Before(latestAt) {
+				latest, latestAt = *r.Outcome, r.UpdatedAt
+			}
+		}
+	}
+	return turns, latest, nil
 }
 
 func (m *memTurnRepo) SweepStale(_ context.Context, olderThan time.Time) ([]spec.AgentTurn, error) {
@@ -530,6 +567,7 @@ type rigConfig struct {
 	mcpBaseURL    string
 	recorder      spec.TurnActivityRecorder
 	conversations spec.ConversationRepository
+	issues        spec.IssueReader
 	repos         spec.RepoResolver
 	snapshots     sourcecontrol.SnapshotProvider
 }
@@ -539,6 +577,12 @@ type rigConfig struct {
 // fence, keeping the pre-#430 tests' arbitrary conversation uuids valid).
 func withConversations(repo spec.ConversationRepository) rigOption {
 	return func(c *rigConfig) { c.conversations = repo }
+}
+
+// withIssues wires the issue reader the issue view admits a thread through
+// (the issue must exist in the project and be open).
+func withIssues(r spec.IssueReader) rigOption {
+	return func(c *rigConfig) { c.issues = r }
 }
 
 // withRepos swaps the project-repo resolver (e.g. a counting stub that 404s
@@ -580,10 +624,20 @@ const (
 	testMCPToken   = "mcp-stub-token"
 )
 
-// stubMinter is an MCPTokenMinter that always returns a fixed token.
+// stubMinter is an MCPTokenMinter that always returns a fixed discovery token,
+// an issues token naming the org + project it was minted for, and an issue
+// token naming the org + project + issue number.
 type stubMinter struct{ token string }
 
 func (m stubMinter) IssueMCPToken(string) (string, error) { return m.token, nil }
+
+func (m stubMinter) IssueIssuesMCPToken(org, project string) (string, error) {
+	return "issues:" + org + "/" + project, nil
+}
+
+func (m stubMinter) IssueIssueMCPToken(org, project string, n int) (string, error) {
+	return fmt.Sprintf("issue:%s/%s#%d", org, project, n), nil
+}
 
 // withMCP wires the MCP discovery deps (a fixed-token minter + a base URL) so a
 // dispatched turn's MCP block can be asserted.
@@ -667,6 +721,7 @@ func newGenaiRig(t *testing.T, seed map[string]string, opts ...rigOption) *genai
 		Snapshots:     snapshots,
 		SkillsRepo:    skillsRepo,
 		Conversations: cfg.conversations,
+		Issues:        cfg.issues,
 		MCPTokens:     cfg.mcpTokens,
 		MCPBaseURL:    cfg.mcpBaseURL,
 		Recorder:      cfg.recorder,
@@ -1292,6 +1347,152 @@ func TestMCPGate_AttachAndLeak(t *testing.T) {
 	})
 }
 
+// TestMCPGate_IssuesTurn pins the Issues turn's dispatch: it names its view and
+// carries the project-fenced issues MCP block (not discovery), whatever its
+// flow; a main-chat turn names no view and never gets the issues block.
+func TestMCPGate_IssuesTurn(t *testing.T) {
+	r := newGenaiRig(t, map[string]string{"specs/requirements/prd.md": "# Reqs\n"},
+		withConversations(&memConversationRepo{}), withMCP())
+	m := manifestPart(map[string]string{}, nil)
+	r.fake.manifest = &m
+	main := listConversations(t, r)[0].ConversationID
+	issuesThread := listConversationsAt(t, r, conversationsPath()+"?view=issues")[0].ConversationID
+
+	issuesTurn := acceptedTurnID(t, postTurnBody(t, r, issuesThread, map[string]any{
+		"instruction": "the save button does nothing", "view": "issues",
+	}))
+	r.waitTerminal(t, issuesTurn)
+	sent := r.fake.sentTurn(t, 0)
+	if sent.req.View != "issues" {
+		t.Errorf("view = %q, want issues", sent.req.View)
+	}
+	if sent.req.MCP == nil {
+		t.Fatal("issues turn dispatched without an MCP block")
+	}
+	if want := testMCPBaseURL + "/internal/v1/issues/mcp"; sent.req.MCP.URL != want {
+		t.Errorf("MCP url = %q, want %q", sent.req.MCP.URL, want)
+	}
+	if want := "issues:" + testOrg + "/" + testProj; sent.req.MCP.Token != want {
+		t.Errorf("MCP token = %q, want the issues token %q", sent.req.MCP.Token, want)
+	}
+	if sent.req.WebSearch || sent.req.Collab != nil || sent.req.Turn.Kind != agentsvc.TurnKindChat {
+		t.Errorf("issues turn = webSearch %v collab %+v kind %q, want false/nil/chat", sent.req.WebSearch, sent.req.Collab, sent.req.Turn.Kind)
+	}
+
+	generalTurn := r.startTurn(t, main, "general", "hello")
+	r.waitTerminal(t, generalTurn)
+	sent = r.fake.sentTurn(t, 1)
+	if sent.req.View != "" {
+		t.Errorf("main-chat view = %q, want empty", sent.req.View)
+	}
+	if sent.req.MCP != nil && strings.Contains(sent.req.MCP.URL, "/issues/") {
+		t.Errorf("main-chat turn carried the issues MCP block: %+v", sent.req.MCP)
+	}
+}
+
+// TestBranchNotes_IssuesOutcomeReachesTheMainChat: an Issues turn's manifest
+// outcome lands on its row, and the main chat's next turn is dispatched with
+// one branch note — the Issues turns since its previous turn and the newest
+// outcome. A main turn with no Issues turns since carries none, and an Issues
+// turn never carries one.
+func TestBranchNotes_IssuesOutcomeReachesTheMainChat(t *testing.T) {
+	r := newGenaiRig(t, map[string]string{"specs/requirements/prd.md": "# Reqs\n"},
+		withConversations(&memConversationRepo{}), withMCP())
+	setManifest := func(outcome string) {
+		b, _ := json.Marshal(map[string]any{"type": "manifest", "files": map[string]string{}, "deleted": []string{}, "outcome": outcome})
+		m := string(b)
+		r.fake.mu.Lock()
+		r.fake.manifest = &m
+		r.fake.mu.Unlock()
+	}
+	main := listConversations(t, r)[0].ConversationID
+	issuesThread := listConversationsAt(t, r, conversationsPath()+"?view=issues")[0].ConversationID
+	issuesTurn := func(instruction, outcome string) string {
+		t.Helper()
+		setManifest(outcome)
+		id := acceptedTurnID(t, postTurnBody(t, r, issuesThread, map[string]any{"instruction": instruction, "view": "issues"}))
+		if st := r.waitTerminal(t, id); st.Status != "completed" {
+			t.Fatalf("issues turn = %+v, want completed", st)
+		}
+		return id
+	}
+
+	setManifest("")
+	r.waitTerminal(t, r.startTurn(t, main, "general", "hello"))
+	if notes := r.fake.sentTurn(t, 0).req.BranchNotes; len(notes) != 0 {
+		t.Fatalf("first main turn branchNotes = %+v, want none", notes)
+	}
+
+	issuesTurn("the save button does nothing", "Which page is it on?")
+	second := issuesTurn("the settings page", "Filed #12: Save button does nothing.")
+	if row := r.turns.row(t, second); row.Outcome == nil || *row.Outcome != "Filed #12: Save button does nothing." {
+		t.Fatalf("issues row outcome = %v, want the manifest's", row.Outcome)
+	}
+	for i := 1; i <= 2; i++ {
+		if notes := r.fake.sentTurn(t, i).req.BranchNotes; len(notes) != 0 {
+			t.Fatalf("issues turn %d carried branchNotes %+v", i, notes)
+		}
+	}
+
+	setManifest("")
+	r.waitTerminal(t, r.startTurn(t, main, "general", "what happened?"))
+	want := []agentsvc.BranchNote{{View: "issues", Turns: 2, Outcome: "Filed #12: Save button does nothing."}}
+	if got := r.fake.sentTurn(t, 3).req.BranchNotes; !reflect.DeepEqual(got, want) {
+		t.Fatalf("main turn after two Issues turns: branchNotes = %+v, want %+v", got, want)
+	}
+
+	r.waitTerminal(t, r.startTurn(t, main, "general", "and now?"))
+	if notes := r.fake.sentTurn(t, 4).req.BranchNotes; len(notes) != 0 {
+		t.Fatalf("main turn with no Issues turns since: branchNotes = %+v, want none", notes)
+	}
+}
+
+// TestBranchNotes_StartFromTheMainThread: the first turn of a fresh or rotated
+// main thread is told only of Issues turns that finished after the thread was
+// created, not the project's whole Issues history; a stored outcome longer
+// than the wire's 400 units is capped before it is sent.
+func TestBranchNotes_StartFromTheMainThread(t *testing.T) {
+	convs := &memConversationRepo{}
+	r := newGenaiRig(t, map[string]string{"specs/requirements/prd.md": "# Reqs\n"},
+		withConversations(convs), withMCP())
+	setManifest := func(outcome string) {
+		b, _ := json.Marshal(map[string]any{"type": "manifest", "files": map[string]string{}, "deleted": []string{}, "outcome": outcome})
+		m := string(b)
+		r.fake.mu.Lock()
+		r.fake.manifest = &m
+		r.fake.mu.Unlock()
+	}
+	issuesThread := listConversationsAt(t, r, conversationsPath()+"?view=issues")[0].ConversationID
+	issuesTurn := func(outcome string) {
+		t.Helper()
+		setManifest(outcome)
+		id := acceptedTurnID(t, postTurnBody(t, r, issuesThread, map[string]any{"instruction": "report", "view": "issues"}))
+		if st := r.waitTerminal(t, id); st.Status != "completed" {
+			t.Fatalf("issues turn = %+v, want completed", st)
+		}
+	}
+
+	issuesTurn("weeks-old outcome")
+	if _, err := convs.Rotate(context.Background(), testOrg, testProj, spec.UseCaseGeneral, ""); err != nil {
+		t.Fatal(err)
+	}
+	main := listConversations(t, r)[0].ConversationID
+
+	setManifest("")
+	r.waitTerminal(t, r.startTurn(t, main, "general", "hello"))
+	if notes := r.fake.sentTurn(t, 1).req.BranchNotes; len(notes) != 0 {
+		t.Fatalf("first turn of a rotated thread: branchNotes = %+v, want none (the Issues turn predates it)", notes)
+	}
+
+	issuesTurn(strings.Repeat("x", 450))
+	setManifest("")
+	r.waitTerminal(t, r.startTurn(t, main, "general", "what happened?"))
+	want := []agentsvc.BranchNote{{View: "issues", Turns: 1, Outcome: strings.Repeat("x", 399) + "…"}}
+	if got := r.fake.sentTurn(t, 3).req.BranchNotes; !reflect.DeepEqual(got, want) {
+		t.Fatalf("branchNotes = %+v, want one capped note", got)
+	}
+}
+
 // TestWebSearchGate_AttachAndLeak pins the WebSearch flag's gate (external-
 // dependency-discovery): it fires on the SAME condition as mcpForTurn
 // (design-generate or any collab room-scoped turn), but — unlike MCP —
@@ -1510,7 +1711,7 @@ func TestRehydrate_ChatMessages(t *testing.T) {
 		t.Errorf("rehydrate body = %s", rec.Body.String())
 	}
 	// Rehydrate reconstructs the id under the general use case (the console
-	// omits "useCase", so its turns are namespaced under useCaseGeneral).
+	// omits "useCase", so its turns are namespaced under UseCaseGeneral).
 	wantPath := "/conversations/org_" + testOrg + "--proj_" + testProj + "--general--" + convUUID
 	r.fake.mu.Lock()
 	gotPath := r.fake.lastConvPath
@@ -1553,6 +1754,7 @@ func (panicClient) Turn(context.Context, string, string, string, agentsvc.TurnRe
 func (panicClient) GetConversation(context.Context, string, string) (json.RawMessage, error) {
 	return nil, nil
 }
+func (panicClient) DeleteConversation(context.Context, string, string) error { return nil }
 
 // TestPanicBarrier_TurnFailsAndGuardReleases pins the detached-goroutine panic
 // barrier: a panic on the turn path does NOT crash the process — the turn is

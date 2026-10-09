@@ -692,6 +692,22 @@ paths:
         schema:
           description: Project name (DNS-label slug)
           type: string
+      - description: The main-panel view whose agent the chat talks to. Absent = the project's main chat.
+        in: query
+        name: view
+        schema:
+          # Keep an explicit pointer under the global prefer-skip-optional-pointer:
+          # the handler must distinguish 'absent' (the main chat) from a view.
+          x-go-type-skip-optional-pointer: false
+          $ref: '#/components/schemas/ChatView'
+      - description: The issue whose thread to read. Required with view=issue; refused with any other view.
+        in: query
+        name: issueNumber
+        schema:
+          # Keep an explicit pointer: 'absent' (every view but issue) differs from a number.
+          x-go-type-skip-optional-pointer: false
+          minimum: 1
+          type: integer
       responses:
         '200':
           content:
@@ -699,6 +715,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProjectConversationList'
           description: OK
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: The issue view's issue is closed (code issue_closed), so it has no thread.
         default:
           content:
             application/json:
@@ -832,8 +854,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/TurnConflict'
           description: A turn is already running for this project, the design
-            use-case has no requirements yet, or the addressed conversation is
-            no longer the project's current thread (conversation_rotated).
+            use-case has no requirements yet, the addressed conversation is
+            no longer the project's current thread (conversation_rotated), or
+            the issue view's issue is closed (issue_closed).
         default:
           content:
             application/json:
@@ -2956,6 +2979,22 @@ paths:
         schema:
           description: Project name (DNS-label slug)
           type: string
+      - description: The main-panel view whose agent the chat talks to. Absent = the project's main chat.
+        in: query
+        name: view
+        schema:
+          # Keep an explicit pointer under the global prefer-skip-optional-pointer:
+          # the handler must distinguish 'absent' (the main chat) from a view.
+          x-go-type-skip-optional-pointer: false
+          $ref: '#/components/schemas/ChatView'
+      - description: The issue whose thread to read. Required with view=issue; refused with any other view.
+        in: query
+        name: issueNumber
+        schema:
+          # Keep an explicit pointer: 'absent' (every view but issue) differs from a number.
+          x-go-type-skip-optional-pointer: false
+          minimum: 1
+          type: integer
       responses:
         '200':
           content:
@@ -2965,6 +3004,12 @@ paths:
           description: OK
         '204':
           description: No running turn
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: The issue view's issue is closed (code issue_closed), so it has no thread.
         default:
           content:
             application/json:
@@ -4376,6 +4421,13 @@ components:
       - status
       - startedAt
       type: object
+    ChatView:
+      description: The main-panel view whose agent the chat talks to. Absent = the project's main chat.
+        `issues` is the Issues page's chat; `issue` is one issue's own chat, named by `issueNumber`.
+      enum:
+      - issues
+      - issue
+      type: string
     ClientSecretOutputBody:
       additionalProperties: false
       properties:
@@ -6081,6 +6133,13 @@ components:
           - no_change_verdict
           - escalated
           type: string
+        milestoneNumber:
+          description: >-
+            The number of the issue's milestone, if any (handing an issue over
+            puts it in the deployed version's and arms it with the `aep` label).
+            Omitted when the issue is in none.
+          format: int64
+          type: integer
       required:
       - Number
       - Title
@@ -8596,8 +8655,8 @@ components:
             `never-started` is distinct from `""` because the two need opposite treatment:
             one means the journey has not begun and the user needs a way to begin it, the
             other means it is under way between turns and offering to restart it would
-            supersede a live interview. Derived from the newest `agent_turns` row for the project,
-            which is what `exists`/`version`/`dirty` cannot say: all three read committed git,
+            supersede a live interview. Derived from the newest main-chat `agent_turns` row for the project (use case
+            `general`; the Issues chat's turns are excluded), which is what `exists`/`version`/`dirty` cannot say: all three read committed git,
             and a kickoff writes nothing until it lands. The overview's spec card needs it to
             say *Writing requirements* while the platform-fired `/start` runs, and the spec
             view needs it to explain an empty workspace instead of offering a file picker.
@@ -9340,6 +9399,18 @@ components:
           x-go-type-skip-optional-pointer: false
         scope:
           $ref: '#/components/schemas/TurnScope'
+        issueNumber:
+          description: The issue whose thread this turn runs on. Required with view=issue;
+            refused with any other view.
+          # Keep an explicit pointer: 'absent' (every view but issue) differs from a number.
+          x-go-type-skip-optional-pointer: false
+          minimum: 1
+          type: integer
+        view:
+          # Keep an explicit pointer under the global prefer-skip-optional-pointer:
+          # the handler must distinguish 'absent' (the main chat) from a view.
+          x-go-type-skip-optional-pointer: false
+          $ref: '#/components/schemas/ChatView'
       required:
       - instruction
       type: object
@@ -9411,6 +9482,18 @@ components:
           type: string
         scope:
           $ref: '#/components/schemas/TurnScope'
+        issueNumber:
+          description: The issue whose thread this turn runs on. Required with view=issue;
+            refused with any other view.
+          # Keep an explicit pointer: 'absent' (every view but issue) differs from a number.
+          x-go-type-skip-optional-pointer: false
+          minimum: 1
+          type: integer
+        view:
+          # Keep an explicit pointer under the global prefer-skip-optional-pointer:
+          # the handler must distinguish 'absent' (the main chat) from a view.
+          x-go-type-skip-optional-pointer: false
+          $ref: '#/components/schemas/ChatView'
       required:
       - instruction
       type: object
@@ -9636,13 +9719,15 @@ components:
         turn's id; requirements_missing means the design use-case has no
         requirements to work from; conversation_rotated means the addressed
         thread is no longer the project's current one — re-resolve via
-        list-conversations and retry.
+        list-conversations and retry; issue_closed means the issue view's
+        issue is closed, so it has no thread.
       properties:
         code:
           enum:
           - turn_in_progress
           - requirements_missing
           - conversation_rotated
+          - issue_closed
           type: string
         activeTurnId:
           type: string

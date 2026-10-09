@@ -17,3 +17,5 @@ smaller part (1 / (1 + φ) ≈ 38.2%), the page the larger. The rule is
   live golden share.
 - **Phone width:** the chat is an overlay at a fixed `CHAT_OVERLAY_WIDTH`, with
   no handle; nothing sits beside it to split with.
+- **One thread:** the Issues chat and an issue's chat take the panel in place
+  of the main chat (ADR-0003), so every thread has the panel's width.

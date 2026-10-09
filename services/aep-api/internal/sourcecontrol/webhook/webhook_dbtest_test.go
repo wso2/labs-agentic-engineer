@@ -186,6 +186,11 @@ func TestDeliveryStore_Persist_DuplicateAfterLeaseExpiryReClaims(t *testing.T) {
 	if !res.Claimed || res.Attempts != 2 || res.AlreadyProcessed {
 		t.Fatalf("a duplicate after lease expiry must be Claimed as attempt 2, got %+v", res)
 	}
+	// The take-over runs the delivery GitHub sent first, so it carries that
+	// first receipt, not its own.
+	if want := newTestClock().Now(); !res.ReceivedAt.Equal(want) {
+		t.Fatalf("ReceivedAt = %v, want the first receipt %v", res.ReceivedAt, want)
+	}
 }
 
 func TestDeliveryStore_MarkFailed_HoldsTheDeliveryForItsBackoff(t *testing.T) {

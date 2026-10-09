@@ -16,7 +16,11 @@
 
 package spec
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"unicode/utf16"
+)
 
 // TestDesignOrCollabTurn pins the shared gate both mcpForTurn and the
 // dispatched TurnRequest.WebSearch flag key off: a design-flow turn or any
@@ -68,5 +72,28 @@ func TestCatalogTurn(t *testing.T) {
 				t.Errorf("catalogTurn(%+v) = %v, want %v", tc.job, got, tc.want)
 			}
 		})
+	}
+}
+
+// capOutcome holds a stored outcome to the wire's 400 UTF-16 units (the agents
+// service counts JS string length), cutting to 399 + "…" without splitting a
+// surrogate pair.
+func TestCapOutcome(t *testing.T) {
+	units := func(s string) int { return len(utf16.Encode([]rune(s))) }
+	if got := capOutcome("Filed #12."); got != "Filed #12." {
+		t.Fatalf("short outcome changed: %q", got)
+	}
+	exact := strings.Repeat("x", 398) + "😀" // 400 units
+	if got := capOutcome(exact); got != exact {
+		t.Fatalf("a 400-unit outcome must pass unchanged, got %d units", units(got))
+	}
+	long := strings.Repeat("é", 450)
+	if got := capOutcome(long); units(got) != 400 || got != strings.Repeat("é", 399)+"…" {
+		t.Fatalf("capOutcome(450 é) = %d units", units(got))
+	}
+	// The 399th unit is the high half of an emoji: the emoji goes whole.
+	emoji := strings.Repeat("x", 398) + strings.Repeat("😀", 5)
+	if got := capOutcome(emoji); got != strings.Repeat("x", 398)+"…" {
+		t.Fatalf("capOutcome split a surrogate pair: %q", got[len(got)-8:])
 	}
 }

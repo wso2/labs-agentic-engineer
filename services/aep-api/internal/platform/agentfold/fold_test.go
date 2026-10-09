@@ -381,6 +381,23 @@ func TestManifestOfAndIsEmpty(t *testing.T) {
 	}
 }
 
+// An Issues turn's manifest carries its outcome (its last reply); it parses
+// off the wire and rides the Manifest. Other turns carry none.
+func TestManifestOf_Outcome(t *testing.T) {
+	var part StreamPart
+	wire := `{"type":"manifest","files":{},"deleted":[],"outcome":"Filed #12: Save button does nothing."}`
+	if err := json.Unmarshal([]byte(wire), &part); err != nil {
+		t.Fatal(err)
+	}
+	m, ok := ManifestOf(part)
+	if !ok || m.Outcome != "Filed #12: Save button does nothing." {
+		t.Fatalf("outcome = %q ok=%v", m.Outcome, ok)
+	}
+	if m, _ := ManifestOf(StreamPart{Type: "manifest"}); m.Outcome != "" {
+		t.Fatalf("no outcome on the wire, got %q", m.Outcome)
+	}
+}
+
 func TestSnapshotFilter(t *testing.T) {
 	if !KeepInTurnSnapshot("specs/requirements/prd.md") ||
 		!KeepInTurnSnapshot("a.dsl") ||

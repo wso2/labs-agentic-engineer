@@ -16,34 +16,65 @@
  * under the License.
  */
 
-import type { ReactNode } from "react";
-import { Alert, Box, Button, Skeleton, Typography } from "@wso2/oxygen-ui";
+import { useState, type ReactNode } from "react";
+import { createLink } from "@tanstack/react-router";
+import { Alert, Box, Button, Link, Skeleton, Typography } from "@wso2/oxygen-ui";
 import { ExternalLink } from "@wso2/oxygen-ui-icons-react";
 import { stamp } from "../../../lib/stamp";
-import { TaskLog } from "../../builds/components/TaskLog";
+import { useVersionLedger } from "../../builds/api/runs";
 import { statusLine } from "../../builds/model/taskRow";
+import { useIssueThreadState } from "../../agent-chat/useIssueThread";
 import { CardOverlay } from "../../projects/components/CardOverlay";
+import { useHandToCodingAgent } from "../api/handOff";
 import { useIssueDetail, useProjectIssues } from "../api/issues";
 import {
   attentionLabel,
   attentionNeedsPerson,
   attentionWhy,
+  canHandToCodingAgent,
   codingAgentTookOn,
   issueOrigin,
   issueStateLabel,
   issueText,
 } from "../model/issues";
+import { ComponentPicker } from "./ComponentPicker";
 import { ORIGIN_LABEL } from "./IssuesPage";
 
 // An Issue card, over the Issues Page: the issue's text, who opened it, its
 // newest status line, why it needs a person, and, once the coding agent has
-// taken it on, the agent's log on it (the same log the Build card's task row
-// shows). It sets no Turn scope: no agent works on one issue from the chat,
-// so the chat stays on the whole product.
+// taken it on, which version's build is working it (the coding agent's log is
+// that build's, on its Build card). An open issue has an agent of its own, whose chat the chat panel
+// draws beside the card; a closed one has none, and the card says it is
+// closed (the issue list's word, or the server's once its chat was removed).
 //
-// Handing an issue to the coding agent has no operation a person can call
-// yet: today it is done on GitHub, by adding the `aep` label. The button is
-// shown, disabled, saying so.
+// An open issue the coding agent has not taken on (it is not armed in a
+// version's milestone) can be handed to it from here, unless it is of a kind
+// the platform works another way: the person picks the design's component it
+// is about, and once aep-api has it the card says so; once the issue list
+// reads it taken on, the card points to the version working it.
+
+// The router's typed `to`/`params` over the theme's link (as the rail does).
+const RouterLink = createLink(Link);
+
+/**
+ * Where the coding agent works an issue it took on: the build of the version
+ * whose milestone the issue is in, on the version ledger. Without a ledger
+ * entry for that milestone (not read yet, or none), the sentence names none.
+ */
+function WorkingVersion({ projectName, milestoneNumber }: { projectName: string; milestoneNumber: number }) {
+  const ledger = useVersionLedger(projectName);
+  const version = ledger.data?.find((b) => b.milestoneNumber === milestoneNumber)?.tag;
+  if (!version) return <Typography variant="body2">The coding agent is working on it.</Typography>;
+  return (
+    <Typography variant="body2">
+      The coding agent works it in version{" "}
+      <RouterLink to="/projects/$projectName/builds/$version" params={{ projectName, version }}>
+        {version}
+      </RouterLink>
+      .
+    </Typography>
+  );
+}
 
 function Part({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -75,6 +106,9 @@ function IssueBody({ projectName, issueNumber }: { projectName: string; issueNum
   const issues = useProjectIssues(projectName);
   const detail = useIssueDetail(projectName, issueNumber);
   const issue = issues.data?.find((i) => i.Number === issueNumber);
+  const closed = useIssueThreadState(projectName, issueNumber) === "closed";
+  const handOff = useHandToCodingAgent(projectName, issueNumber);
+  const [picking, setPicking] = useState(false);
 
   if (!issue) {
     if (issues.isPending || (issues.isError && detail.isPending)) return <Skeleton variant="rounded" height={200} />;
@@ -92,6 +126,9 @@ function IssueBody({ projectName, issueNumber }: { projectName: string; issueNum
   const line = detail.data ? statusLine(detail.data) : null;
   const text = issueText(issue.Body);
   const tookOn = codingAgentTookOn(issue);
+  const canHand = !tookOn && !handOff.isSuccess && !closed && canHandToCodingAgent(issue);
+  // Closed by the server's word while the list still lags: the header says closed too.
+  const stateLabel = issueStateLabel(closed && issue.State !== "closed" ? { State: "closed" } : issue);
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5, maxWidth: "72ch" }}>
@@ -101,9 +138,10 @@ function IssueBody({ projectName, issueNumber }: { projectName: string; issueNum
         </Typography>
         <Typography variant="body2" color="text.secondary">
           {ORIGIN_LABEL[origin.kind]} · Opened by {origin.by} ·{" "}
-          {issueStateLabel(issue)}
+          {stateLabel}
         </Typography>
       </Box>
+      {closed && <Alert severity="info">This issue is closed.</Alert>}
       {reason && (
         <Alert severity={attentionNeedsPerson(reason) ? "warning" : "info"}>
           <strong>{attentionLabel(reason)}.</strong> {attentionWhy(reason)}
@@ -120,17 +158,23 @@ function IssueBody({ projectName, issueNumber }: { projectName: string; issueNum
         >
           Open on GitHub
         </Button>
-        {!tookOn && issue.State !== "closed" && (
-          <>
-            <Button size="small" variant="contained" disabled>
-              Hand to the coding agent
-            </Button>
-            <Typography variant="caption" color="text.secondary">
-              Not available here yet. On GitHub, the <code>aep</code> label hands it over.
-            </Typography>
-          </>
+        {canHand && !picking && (
+          <Button size="small" variant="contained" onClick={() => setPicking(true)}>
+            Hand to the coding agent
+          </Button>
         )}
       </Box>
+      {canHand && picking && (
+        <ComponentPicker
+          projectName={projectName}
+          handOff={handOff}
+          onCancel={() => {
+            handOff.reset();
+            setPicking(false);
+          }}
+        />
+      )}
+      {handOff.isSuccess && <Alert severity="success">Handed to the coding agent.</Alert>}
       <Part title="Status">
         {detail.isPending ? (
           <Skeleton width="60%" />
@@ -164,11 +208,9 @@ function IssueBody({ projectName, issueNumber }: { projectName: string; issueNum
           </Typography>
         )}
       </Part>
-      {tookOn && (
-        <Part title="The coding agent's log">
-          <Box sx={{ border: 1, borderColor: "divider", borderRadius: 2, overflow: "hidden" }}>
-            <TaskLog projectName={projectName} issueNumber={issueNumber} />
-          </Box>
+      {tookOn && issue.milestoneNumber && (
+        <Part title="The coding agent">
+          <WorkingVersion projectName={projectName} milestoneNumber={issue.milestoneNumber} />
         </Part>
       )}
     </Box>

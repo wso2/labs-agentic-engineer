@@ -20,21 +20,27 @@ import { useNavigate } from "@tanstack/react-router";
 import { Box, Button } from "@wso2/oxygen-ui";
 import { useSpecModel } from "../../spec/useSpecWorkspace";
 import type { NoteAction } from "../chatLog";
+import { useOpenIssuesChat } from "../useOpenIssuesChat";
 import { useStartInterview } from "../useStartInterview";
 
 /**
  * A note's next steps, under it: open a version on the Builds card, review a
- * prototype, or start the next feature's interview. The same steps the card offers, so the chat
+ * prototype, go back to the Issues chat, or start the next feature's interview. The same steps the card offers, so the chat
  * and the card never disagree about what comes next.
  */
 export function NoteActions({ projectName, actions }: { projectName: string; actions: NoteAction[] }) {
   const navigate = useNavigate();
   const interview = useStartInterview(projectName);
   const features = useSpecModel(projectName).data?.features;
+  const openIssuesChat = useOpenIssuesChat(projectName);
 
   const act = (action: NoteAction) => {
     if (action.kind === "open-build") {
       void navigate({ to: "/projects/$projectName/builds/$version", params: { projectName, version: action.version } });
+      return;
+    }
+    if (action.kind === "open-issues") {
+      void openIssuesChat();
       return;
     }
     if (action.kind === "open-prototype") {

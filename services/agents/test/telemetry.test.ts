@@ -92,6 +92,7 @@ test("a turn's functionId reaches a registered telemetry integration", async () 
   // no key and no capture file.
   const { registerTelemetry } = await import("ai");
   const { runTurn } = await import("../src/agents/main/run-turn.js");
+  const { createMainAgent } = await import("../src/agents/main/agent.js");
   const { mockModel } = await import("../src/shared/mock-model.js");
 
   const seen: (string | undefined)[] = [];
@@ -104,8 +105,7 @@ test("a turn's functionId reaches a registered telemetry integration", async () 
   try {
     await runTurn({
       model: mockModel([{ kind: "text", text: "Done." }]),
-      instructions: "You are a spec agent.",
-      tools: {},
+      agentFor: (run) => createMainAgent({ instructions: "You are a spec agent.", tools: {} }, run),
       messages: [],
       prompt: "hello",
       telemetry: { functionId: "default/staff-maintain/design" },

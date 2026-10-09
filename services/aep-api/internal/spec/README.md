@@ -26,7 +26,7 @@ flowchart LR
 ## Slices
 | Slice | Use-cases | Entry |
 |---|---|---|
-| `genaiturns` | create / get / active / stream turn + get-conversation (the AgentTurn lifecycle) + list/rotate the project's conversation threads (#430) | `.../agents/{cid}/messages`, `.../agents/conversations`, `.../turns/...` |
+| `genaiturns` | create / get / active / stream turn + get-conversation (the AgentTurn lifecycle) + list a chat view's conversation thread / rotate the main one (#430) | `.../agents/{cid}/messages`, `.../agents/conversations`, `.../turns/...` |
 | `files` | list / read / apply files over the project workspace | `GET/POST .../files...` |
 | `tags` | list the project's spec version tags, newest first by creation time | `GET .../tags` |
 | `skills` | list / create / update / delete / import / sync / get the org Skill library | `/skills...` |
@@ -157,6 +157,44 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   non-current id with 409 `conversation_rotated` (the single-era rule — it relaxes to "belongs to
   this project" when multiple live threads land). Spec content itself is not gorm — it lives in git,
   reached through sourcecontrol's `Workspace`/gitfs engine.
+- **Each chat view owns its conversation** (`chat_view.go`). A create-turn body, the
+  list-conversations query and the active-turn query may name a `view` (`issues`; absent = the main
+  chat), and the view picks a use case — `general` for the main chat, `issues` for the Issues page.
+  The use case is the thread scope in `project_conversations`, the namespace of the agents-service
+  history, and the one-active-turn slot: `ux_agent_turns_active_use_case` admits one running turn per
+  (org, project, use case), so an Issues turn never blocks the spec chat nor waits on it. An Issues
+  turn is always a plain chat turn — no `/<skill>` recognition, no spec room (a `collab` flag is
+  ignored), and a spec scope or prototype feedback is refused with 400. Rehydrate is addressed by
+  thread id alone, so it asks the thread store which use case the id belongs to. The kickoff guard
+  and the status poll read the main chat's newest turn only.
+- **A closed issue's thread is removed** (`issue_threads.go`). `RemoveIssueThread` deletes every
+  `project_conversations` row of the issue's `issue-<n>` use case (current and demoted) **created
+  before the event that caused it** — the close (`close_issue`: now; webhook: `issue.closed_at`), or
+  the reopen (`issue.updated_at`), else the delivery's first receipt (`webhook.ReceivedAt`, which a
+  replay still carries) — so a late reopen never takes the fresh thread started after it; then
+  each one's agents-service conversation (`DELETE /conversations/:id`; a failure is logged and the
+  rows go anyway — the agents store's TTL sweep reaps the orphan). Three triggers, so it is
+  idempotent: the issue agent's `close_issue` and GitHub's `issues.closed` and `issues.reopened`
+  webhooks (app root, no echo filter; a reopen removes whatever a lost close left, so a reopened
+  issue always starts a fresh thread). A turn running on the thread is never interrupted: the
+  removal is marked **for that turn**, with its bound (a second removal for the turn keeps the later
+  one), and its end performs it — `finishTurn` after the terminal
+  write, or `TurnSweeper` failing it after a crash (`TurnSwept`) — mark-then-re-read / take-once,
+  so exactly one side removes. A running row whose heartbeat is older than the sweep threshold is
+  a dead turn: the removal runs now. A mark is taken only by its own turn; any other turn's end
+  drops it, so it never deletes a thread a later turn is using. The mark lives in memory —
+  aep-api is one replica; a restart drops it and the rows stay until the next close or a reopen
+  (a closed issue's thread is refused anyway). An agents-side run that outlives aep-api's turn
+  timeout or the sweep can save its history after the `DELETE`; the agents store's TTL reaps it.
+- **The Issues outcome reaches the main chat** (`turn_runner.go`). An Issues turn's terminal
+  manifest carries its `outcome` (`Filed #N: <title>` when it filed, else its last reply; ≤ 400 chars), stored on `agent_turns.outcome`.
+  A main-chat dispatch reads `BranchOutcomes` — the Issues turns that FINISHED (`updated_at`) with
+  an outcome since the main conversation's previous terminal turn was created, or since the thread
+  was created for its first turn — and, when there are any, sends one `branchNotes` entry
+  (`{view: "issues", turns, outcome}`, the most recently finished outcome, capped to 400 UTF-16
+  units) so the agents service can tell the main agent what happened there. Counting by finish
+  time keeps an Issues turn that overlapped a main dispatch for the next one; a note read by a
+  main turn that then fails is not re-sent.
 - **A conversation rotates near a smaller context window** (`context_rotation.go`). The spec agents
   have no compaction. When the org's model connection states a `ContextWindow`, StartTurn reads the
   conversation's last measured context (`agent_turns.context_tokens`: the final `finish-step`

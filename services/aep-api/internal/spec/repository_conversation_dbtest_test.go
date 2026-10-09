@@ -25,6 +25,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/wso2/aep/aep-api/internal/platform/dbtest"
 	"github.com/wso2/aep/aep-api/internal/spec"
@@ -294,4 +295,181 @@ func TestConversationRepo_RotateIfCurrentMintsOneSuccessor(t *testing.T) {
 	if again, _ := repo.ResolveCurrent(ctx, "o1", "p1", "general", "ada"); again.ID != now.ID {
 		t.Fatalf("a stale RotateIfCurrent moved current: %q -> %q", now.ID, again.ID)
 	}
+}
+
+// CreatedAt reads a thread's creation time — current or demoted — and the
+// zero time for an unknown or non-uuid id (never a cast error).
+func TestConversationRepo_CreatedAt(t *testing.T) {
+	t.Parallel()
+	repo := spec.NewConversationRepository(dbtest.New(t))
+	ctx := context.Background()
+
+	old, err := repo.ResolveCurrent(ctx, "o1", "p1", "general", "ada")
+	if err != nil {
+		t.Fatalf("ResolveCurrent: %v", err)
+	}
+	fresh, err := repo.Rotate(ctx, "o1", "p1", "general", "ada")
+	if err != nil {
+		t.Fatalf("Rotate: %v", err)
+	}
+	for _, row := range []*spec.ProjectConversation{old, fresh} {
+		got, err := repo.CreatedAt(ctx, "o1", "p1", "general", row.ID)
+		// Postgres keeps microseconds; the row in hand carries Go's nanoseconds.
+		if err != nil || got.Sub(row.CreatedAt).Abs() >= time.Microsecond {
+			t.Fatalf("CreatedAt(%s) = (%v, %v), want %v", row.ID, got, err, row.CreatedAt)
+		}
+	}
+	if got, err := repo.CreatedAt(ctx, "o1", "p1", "issues", fresh.ID); err != nil || !got.IsZero() {
+		t.Fatalf("CreatedAt(other use case) = (%v, %v), want zero", got, err)
+	}
+	if got, err := repo.CreatedAt(ctx, "o1", "p1", "general", "abc123"); err != nil || !got.Equal(time.Time{}) {
+		t.Fatalf("CreatedAt(non-uuid) = (%v, %v), want (zero, nil)", got, err)
+	}
+}
+
+// UseCaseOf names the use case of any thread — current or demoted — so a read
+// addressed by thread id alone (rehydrate) finds the namespace its turns were
+// stored under; an id the project does not hold names none.
+func TestConversationRepo_UseCaseOf(t *testing.T) {
+	t.Parallel()
+	repo := spec.NewConversationRepository(dbtest.New(t))
+	ctx := context.Background()
+
+	issue, err := repo.ResolveCurrent(ctx, "o1", "p1", "issue-7", "ada")
+	if err != nil {
+		t.Fatalf("ResolveCurrent: %v", err)
+	}
+	if _, err := repo.Rotate(ctx, "o1", "p1", "issue-7", "ada"); err != nil {
+		t.Fatalf("Rotate: %v", err)
+	}
+	main, err := repo.ResolveCurrent(ctx, "o1", "p1", "general", "ada")
+	if err != nil {
+		t.Fatalf("ResolveCurrent general: %v", err)
+	}
+
+	cases := []struct {
+		project, id, want string
+	}{
+		{"p1", issue.ID, "issue-7"},
+		{"p1", main.ID, "general"},
+		{"p2", issue.ID, ""},
+		{"p1", "11111111-1111-4111-8111-111111111111", ""},
+		{"p1", "abc123", ""},
+	}
+	for _, tc := range cases {
+		got, err := repo.UseCaseOf(ctx, "o1", tc.project, tc.id)
+		if err != nil || got != tc.want {
+			t.Errorf("UseCaseOf(%s, %s) = (%q, %v), want (%q, nil)", tc.project, tc.id, got, err, tc.want)
+		}
+	}
+}
+
+// DeleteUseCase removes every thread of one use case — current and demoted —
+// and names them; every other scope's threads stay.
+func TestConversationRepo_DeleteUseCase(t *testing.T) {
+	t.Parallel()
+	repo := spec.NewConversationRepository(dbtest.New(t))
+	ctx := context.Background()
+
+	resolve := func(project, useCase string) string {
+		t.Helper()
+		row, err := repo.ResolveCurrent(ctx, "o1", project, useCase, "ada")
+		if err != nil {
+			t.Fatalf("ResolveCurrent %s/%s: %v", project, useCase, err)
+		}
+		return row.ID
+	}
+	demoted := resolve("p1", "issue-7")
+	current, err := repo.Rotate(ctx, "o1", "p1", "issue-7", "ada")
+	if err != nil {
+		t.Fatalf("Rotate: %v", err)
+	}
+	keep := map[string][2]string{
+		"main":     {"general", resolve("p1", "general")},
+		"issues":   {"issues", resolve("p1", "issues")},
+		"issue 8":  {"issue-8", resolve("p1", "issue-8")},
+		"issue 70": {"issue-70", resolve("p1", "issue-70")},
+	}
+	otherProject := resolve("p2", "issue-7")
+	// The org fence: another org's project of the same id keeps its thread.
+	otherOrgRow, err := repo.ResolveCurrent(ctx, "o2", "p1", "issue-7", "ada")
+	if err != nil {
+		t.Fatalf("ResolveCurrent o2/p1/issue-7: %v", err)
+	}
+
+	got, err := repo.DeleteUseCase(ctx, "o1", "p1", "issue-7", time.Now())
+	if err != nil {
+		t.Fatalf("DeleteUseCase: %v", err)
+	}
+	if len(got) != 2 || !containsAll(got, demoted, current.ID) {
+		t.Fatalf("deleted = %v, want the demoted %s and current %s", got, demoted, current.ID)
+	}
+	for _, id := range []string{demoted, current.ID} {
+		if ok, err := repo.Exists(ctx, "o1", "p1", "issue-7", id); err != nil || ok {
+			t.Errorf("Exists(%s) = (%v, %v) after delete, want (false, nil)", id, ok, err)
+		}
+	}
+	for name, k := range keep {
+		if ok, err := repo.IsCurrent(ctx, "o1", "p1", k[0], k[1]); err != nil || !ok {
+			t.Errorf("%s thread gone after deleting issue-7: (%v, %v)", name, ok, err)
+		}
+	}
+	if ok, err := repo.IsCurrent(ctx, "o1", "p2", "issue-7", otherProject); err != nil || !ok {
+		t.Errorf("another project's issue-7 thread gone: (%v, %v)", ok, err)
+	}
+	if ok, err := repo.IsCurrent(ctx, "o2", "p1", "issue-7", otherOrgRow.ID); err != nil || !ok {
+		t.Errorf("another org's issue-7 thread gone: (%v, %v)", ok, err)
+	}
+
+	// Idempotent: nothing left to delete.
+	again, err := repo.DeleteUseCase(ctx, "o1", "p1", "issue-7", time.Now())
+	if err != nil || len(again) != 0 {
+		t.Fatalf("second DeleteUseCase = (%v, %v), want (none, nil)", again, err)
+	}
+	// A later resolve mints a fresh thread.
+	if fresh := resolve("p1", "issue-7"); fresh == demoted || fresh == current.ID {
+		t.Fatalf("resolve after delete returned a deleted thread %s", fresh)
+	}
+}
+
+// DeleteUseCase takes only the threads created before its bound — the event
+// that caused the removal; a thread started after it stays, current.
+func TestConversationRepo_DeleteUseCaseKeepsLaterThreads(t *testing.T) {
+	t.Parallel()
+	repo := spec.NewConversationRepository(dbtest.New(t))
+	ctx := context.Background()
+
+	earlier, err := repo.ResolveCurrent(ctx, "o1", "p1", "issue-7", "ada")
+	if err != nil {
+		t.Fatalf("ResolveCurrent: %v", err)
+	}
+	reopened := time.Now()
+	later, err := repo.Rotate(ctx, "o1", "p1", "issue-7", "ada")
+	if err != nil {
+		t.Fatalf("Rotate: %v", err)
+	}
+
+	got, err := repo.DeleteUseCase(ctx, "o1", "p1", "issue-7", reopened)
+	if err != nil {
+		t.Fatalf("DeleteUseCase: %v", err)
+	}
+	if len(got) != 1 || got[0] != earlier.ID {
+		t.Fatalf("deleted = %v, want only the earlier thread %s", got, earlier.ID)
+	}
+	if ok, err := repo.IsCurrent(ctx, "o1", "p1", "issue-7", later.ID); err != nil || !ok {
+		t.Fatalf("the thread started after the bound: IsCurrent = (%v, %v), want it kept", ok, err)
+	}
+}
+
+func containsAll(have []string, want ...string) bool {
+	set := map[string]bool{}
+	for _, h := range have {
+		set[h] = true
+	}
+	for _, w := range want {
+		if !set[w] {
+			return false
+		}
+	}
+	return true
 }

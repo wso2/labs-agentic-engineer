@@ -287,12 +287,13 @@ func (c *Client) ListMilestoneIssues(ctx context.Context, owner, repo string, cr
 				labels = append(labels, l.Name)
 			}
 			out = append(out, sourcecontrol.IssueInfo{
-				Number: r.Number,
-				Title:  r.Title,
-				Body:   r.Body,
-				URL:    r.HTMLURL,
-				State:  r.State,
-				Labels: labels,
+				Number:          r.Number,
+				Title:           r.Title,
+				Body:            r.Body,
+				URL:             r.HTMLURL,
+				State:           r.State,
+				Labels:          labels,
+				MilestoneNumber: filter.Number,
 			})
 		}
 		// Page length counts PRs too, so it — not len(out) — decides the walk.

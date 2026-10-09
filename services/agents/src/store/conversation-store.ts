@@ -105,7 +105,7 @@ export interface Conversation {
    * (the read path falls back to the raw message for those).
    */
   turns: TurnJournalEntry[];
-  /** `awaiting-human` = the turn ended on a HITL question call (ask_question / ask_questions). */
+  /** `awaiting-human` = the turn ended on a HITL question call (ask_question / ask_questions) or an accepted hand-off call. */
   status: "active" | "awaiting-human" | "done";
   /** Store-owned timestamps. */
   createdAt: Date;
@@ -121,4 +121,10 @@ export interface ConversationStore {
   get(id: string): Promise<Conversation | null>;
   /** Upsert the WHOLE aggregate (last-write-wins for v1). */
   save(c: Conversation): Promise<void>;
+  /**
+   * Remove the aggregate; `true` when it existed. Deleting an unknown id is not
+   * an error — callers (aep-api removing a closed issue's thread) treat absent
+   * as the goal state.
+   */
+  delete(id: string): Promise<boolean>;
 }

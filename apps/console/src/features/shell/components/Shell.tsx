@@ -16,16 +16,18 @@
  * under the License.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Outlet, useMatches, useNavigate, useRouterState, useSearch } from "@tanstack/react-router";
 import { Box } from "@wso2/oxygen-ui";
 import { ErrorBoundary } from "../../../components/ErrorBoundary";
 import { ChatPanel } from "../../agent-chat/components/ChatPanel";
 import { OrgChatPanel } from "../../agent-chat/components/OrgChatPanel";
+import { useBranchSummary } from "../../agent-chat/useBranchSummary";
 import { chatStore, useOpenQuestionsWhenAsked, useRefreshOnTurnEnd } from "../../agent-chat/useProjectChat";
-import { ChatPanelContext, type ChatPanelControls } from "../chatPanel";
+import { ChatPanelContext } from "../chatPanel";
 import { shellScope } from "../scope";
 import { CHAT_OVERLAY_WIDTH, PHONE, PHONE_QUERY, RAIL_WIDTH } from "../layout";
+import { useChatControls } from "../useChatControls";
 import { useChatWidth } from "../useChatWidth";
 import { ActivityRail } from "./ActivityRail";
 import { ChatResizeHandle } from "./ChatResizeHandle";
@@ -38,9 +40,10 @@ function atPhoneWidth(): boolean {
  * The app's frame: the activity rail, the chat panel, and the main
  * area where the routes draw (a base page, and a card over it).
  *
- * The chat follows the entity in view: inside a project it is the project's
- * conversation; on an org Page it is the organization's, which is not available
- * yet and shows as such. It starts open on a wide screen, beside the page in
+ * The chat follows the entity in view: inside a project it holds one thread,
+ * the page's: the project's main conversation, the Issues chat on the Issues
+ * page, an open issue's own chat on its card (`ChatPanel`); on an org Page it is the organization's,
+ * which is not available yet and shows as such. It starts open on a wide screen, beside the page in
  * the golden ratio and resizable (`useChatWidth`), and closed at phone width,
  * where it opens as an overlay beside the rail.
  */
@@ -49,8 +52,8 @@ export function Shell() {
   const leaf = matches[matches.length - 1];
   const scope = shellScope({
     routeId: leaf?.routeId ?? "",
-    params: (leaf?.params ?? {}) as { projectName?: string },
-    search: (leaf?.search ?? {}) as { file?: unknown },
+    params: (leaf?.params ?? {}) as { projectName?: string; number?: string },
+    search: (leaf?.search ?? {}) as { file?: unknown; issue?: unknown },
   });
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
@@ -62,9 +65,11 @@ export function Shell() {
   const chatShown = chatOpen && !onNewProject;
 
   const chatWidth = useChatWidth();
-  const chatControls = useMemo<ChatPanelControls>(() => ({ open: () => setChatOpen(true) }), []);
+  const openChat = useCallback(() => setChatOpen(true), []);
+  const { controls: chatControls, composeRequest, clearComposeRequest } = useChatControls(scope, openChat);
   useRefreshOnTurnEnd();
   useOpenQuestionsWhenAsked();
+  useBranchSummary(scope);
 
   // Arriving from New project (`?chat=open` on the overview): the kickoff is
   // already running, so the chat opens, at phone width too, to show it. The
@@ -135,6 +140,9 @@ export function Shell() {
                   page={project.page}
                   card={project.card}
                   specFile={project.specFile}
+                  issueNumber={project.issueNumber}
+                  composeRequest={composeRequest}
+                  onComposeApplied={clearComposeRequest}
                   onClose={() => setChatOpen(false)}
                 />
               ) : (

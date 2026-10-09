@@ -22,6 +22,29 @@ requests.
 into a reviewable change, and `applyToolCall` folds the streamed calls through the
 canonical `FileBundle` ops to reconstruct file state — no second matcher.
 
+## Agents and the loop
+
+Each agent is a `ToolLoopAgent` built in its own module by a factory, following the AI
+SDK's building-agents guidance: `createMainAgent` (`src/agents/main/agent.ts`, the spec
+editor), `createIssuesAgent` (`src/agents/issues/agent.ts`) and `createIssueAgent`
+(`src/agents/issue/agent.ts`). A factory takes what the agent IS (its deps: tools,
+instructions, or for a view's agent what it builds them from) and `AgentRunSettings` (`src/agents/run-settings.ts`), what `runTurn` decided for
+this turn: the model built from the org's connection, the step cap, the output ceiling,
+retries, provider options, `instructionsWrap` (the system prompt, with the cache
+breakpoint when caching is on) and `prepareStep` (the rolling breakpoint). Every agent
+is assembled by one helper, `buildToolLoopAgent`, which stops at the step cap, on an
+accepted question call (`questionStop`) or on an accepted hand-off call (`handOffStop`),
+and leaves an absent option off entirely.
+
+`runTurn` takes `agentFor(run)` rather than tools and instructions: it pushes the user
+message, which is what fixes the turn prompt's index for the rolling breakpoint, then
+calls `agentFor` once and streams the agent it returns. `runConversationTurn` picks the
+factory: the Issues view's turns get `createIssuesAgent`, which merges the turn's MCP
+tools under its own and gates `create_issue`; an issue's thread gets `createIssueAgent`,
+which keeps that issue's MCP tools and gates every write; every other turn gets `createMainAgent`
+over the tool set it assembles (files or task-plan, then MCP, register draft and web
+search).
+
 ## Locked decisions
 
 | Decision | Why |
@@ -48,6 +71,81 @@ canonical `FileBundle` ops to reconstruct file state — no second matcher.
 | **The INSTRUCTED skill is always inlined** (every non-chat instruction opens "Load the `<skill>` skill and follow it") | naming a skill and then waiting to be asked for it spends a whole model step on a body we already hold — measured at 3.8s on `/start`, 3.6s on a plan turn. Covers org-authored flows too, since resolution runs through the `SkillSource`, not this repo. Guidance a flow is CERTAIN to read therefore belongs in a skill rather than a `references/` file: references are not inlinable (ADR-0002) |
 | **A file write settles at its own call** ([ADR-0004](./ADR-0004-a-write-settles-at-its-own-call.md)) | the SDK queues a step's tool calls and runs them all at `model-call-end`, so a batched design turn's first file had no verdict until the last file's body finished streaming — four completed documents shown as pending for minutes. A bundle op is a pure function of the bundle and the args, and the args close at `tool-input-end`, so it runs there and its `tool-result` rides its own `tool-call`; the ledger memoises per `toolCallId`, so the SDK's later `execute()` re-reads that verdict instead of re-applying the op |
 | **SSE event types in `src/contracts/sse-events.ts`** | one shared definition for producer + playground, owned by the service; `OpResult` / tool-input types re-exported from the domain Zod schemas (no parallel copy) |
+
+## Views
+
+A **view** is a main-panel view of the console that owns an agent of its own. The turn
+body's optional `view` (`VIEWS` in `@aep/agent-stream`; absent means the spec agent)
+selects that view's agent in place of the spec editor:
+`toolsetFor(turn, view)` returns `issues` for `view: "issues"`, `issue` for
+`view: "issue"`, and otherwise derives `files`/`task-plan` from the turn. `runConversationTurn` runs an `issues` turn on
+`createIssuesAgent` (`src/agents/issues/agent.ts`: the report classifier, the question
+tools, the turn's MCP tools under them, Issues-agent instructions, no spec bundle), and
+it stops on an accepted question call like every agent, so a "File this issue?" card
+ends the turn awaiting the user. Adding a view is one entry in `VIEWS`, one tool set,
+one `src/agents/<view>/` with its `agent.ts` factory and one entry in `VIEW_AGENTS`
+(`src/agents/views.ts`); a view the main agent hands reports to also has one entry each
+in `HAND_OFF_TOOLS` and `HAND_OFF_DESCRIPTIONS` (`src/agents/main/tools/hand-off.ts`).
+Only the Issues view receives a hand-off and only its chat leaves the main chat a branch
+note (`BRANCH_NOTE_VIEWS`); a view's agent works on no spec, so its prompt is the user's
+message alone, with no divergence note and no branch note.
+
+An **issue's thread** (`view: "issue"`) is the chat on one filed issue's card. The turn
+also carries `issueNumber` (a positive integer: required for that view, a 400 on any
+other), which `createIssueAgent` names in its prompt. Its tools are the question tools and,
+from the turn's MCP block, the issue's own tools by contract name (`get_issue`,
+`list_components`, `comment_issue`, `edit_issue`, `close_issue`, `reopen_issue`,
+`hand_to_coding_agent`); anything else the server lists is left out. The MCP token names
+the issue, so the tools act on it alone. Its turns carry no `outcome`.
+
+The Issues agent files on one explicit answer. The prompt has it call a single
+`ask_question` with the exact question `FILE_QUESTION` and the exact options `FILE_IT`
+(flagged `recommended: true`) and "Change it". `gateCreateIssue` (`filing-gate.ts`) wraps
+the MCP tool named `create_issue`: unless the turn's instruction is the single-answer
+serialization of `FILE_IT` to `FILE_QUESTION` (a batched answer never qualifies), the tool
+refuses with an error that tells the model what to ask. Once confirmed, the tool executes
+at most once in the turn; any later call is refused, so injected text in an earlier tool
+result, or a retry after a timeout that did file, cannot file twice, and a failed first
+attempt is reported to the user rather than retried silently.
+
+Every write an issue's agent makes waits the same way, generalised
+(`src/agents/confirmation.ts`: `answeredWith`, `refusing`, `onceAsShown`, which the filing
+gate uses too). `CONFIRMATIONS` (`issue/confirm-gate.ts`) gives each write tool its question
+and option: "Post this comment?" → "Post it", "Apply this edit?" → "Apply it", "Close this
+issue?" → "Close it", "Reopen this issue?" → "Reopen it", "Hand this to the coding agent?"
+→ "Hand it over", each with "Not now". `gateWrites` lets the one tool the turn's single
+answer confirms run once and refuses every other write with an error naming its question;
+`get_issue` and `list_components` are never gated. The prompt reads the issue first,
+drafts each change, asks its question, and before a hand-off asks which component (the
+options from `list_components`); a "Deploy a version first" answer is relayed as is.
+
+A gate binds the tool AND its arguments to the card the user answered, not only which
+write runs. The agent puts the exact change in the confirm option's `description`, in one
+canonical rendering per tool (`describeChange` beside `CONFIRMATIONS`: the comment; "Title:
+…" and/or "Body:\n…"; the reason; "Component: …"; nothing for a reopen; `describeFiling`
+for `create_issue`: title, kind and body). An argument the rendering does not name is shown
+too, so nothing reaches the tool unshown. In the answer turn `runConversationTurn` hands the
+agent the card the user is answering, read from the history the service stored before the
+turn (`answerableQuestion`), never the instruction or this turn's model output. It is the
+card the console lets the user answer: the one question call (`ask_question`, or an
+`ask_questions` batch of one question) accepted since the user's last message. Two cards
+in that turn, a batch of several, an unreadable input, or a card from before the user's
+last message is no card. The confirmed tool runs only when that card asked its own
+question, exactly one of its options answers as the confirm label (a repeated label, "Post
+it " or "Post it — later" make the card ambiguous) and is that label, and its description
+equals the call's rendering (CRLF→LF, blank lines before and whitespace after dropped; a
+first line's indentation counts). Otherwise the call is refused ("Not done: …"), which uses
+up nothing, as the confirmed change is still the only one that can run. A change holding a
+character the card cannot show faithfully (a control character other than a line break or
+tab, a format character such as a bidi override or a zero-width space, a line separator, or
+another default-ignorable character) is refused whatever the card says, naming the code
+point. No card in the history (an answer typed by hand) refuses too. A note on the answer does not change what was confirmed: the
+prompts have the agent ask again with the revised text.
+
+The report classifier (`classify_report`, Jev) never blocks a turn. Below 0.8 confidence,
+or for a `question`, it asks the agent to clarify; a missing key, a non-2xx response, a
+malformed body, a network error or the 5 s timeout all yield kind `unknown` with
+`needsClarification`, and the agent asks the user which kind the report is.
 
 ## Prototype write gate
 

@@ -120,7 +120,7 @@ func (r *Replayer) Once(ctx context.Context) error {
 			"attempt", d.Attempts, "result", "replaying")
 		r.runner.run(ctx, deliveryAttempt{
 			deliveryID: d.DeliveryID, event: d.Event, action: d.Action, ocOrgID: d.OcOrgID,
-			attempt: d.Attempts, payload: d.Payload, source: "replay",
+			attempt: d.Attempts, receivedAt: d.ReceivedAt, payload: d.Payload, source: "replay",
 		})
 	}
 	return nil

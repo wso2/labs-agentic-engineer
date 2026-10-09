@@ -260,6 +260,27 @@ type TurnRequest struct {
 	// byte-identical to a surface-free turn. Pinned by @aep/agent-stream's
 	// Surface.
 	Surface string `json:"surface,omitempty"`
+	// View names the console view the turn was sent from: "issues" for the
+	// Issues page's agent, "issue" for one issue's agent, omitted for the main
+	// chat. The agents service picks that view's agent (prompt + tools).
+	// Pinned by @aep/agent-stream's View.
+	View string `json:"view,omitempty"`
+	// IssueNumber is the issue an "issue" view turn is about; omitted for
+	// every other view.
+	IssueNumber int `json:"issueNumber,omitempty"`
+	// BranchNotes tell a main-chat turn what the other views' chats did since
+	// its conversation's previous turn: at most one per view, omitted when none
+	// ran. The agents service prepends each to the main agent's prompt. Pinned
+	// by @aep/agent-stream's BranchNote.
+	BranchNotes []BranchNote `json:"branchNotes,omitempty"`
+}
+
+// BranchNote is one view's chat since the main chat's previous turn: how many
+// turns completed there with an outcome, and the newest outcome (≤ 400 chars).
+type BranchNote struct {
+	View    string `json:"view"`
+	Turns   int    `json:"turns"`
+	Outcome string `json:"outcome"`
 }
 
 // TurnConnection is the turn's model connection on the wire: everything the
@@ -426,7 +447,7 @@ func (e *UpstreamError) Error() string {
 	return fmt.Sprintf("agents service pre-stream status %d: %s", e.StatusCode, e.Body)
 }
 
-// Client is the agents-service turn/rehydrate surface.
+// Client is the agents-service turn/rehydrate/delete surface.
 type Client interface {
 	// Turn POSTs a turn and, on 200, returns the raw SSE body for verbatim
 	// passthrough (caller must Close). conversationID is the already-namespaced
@@ -440,6 +461,11 @@ type Client interface {
 	// GetConversation returns the raw {messages: [...]} JSON for chat rehydrate.
 	// A non-200 (e.g. 404 unknown id) is returned as *UpstreamError.
 	GetConversation(ctx context.Context, conversationID, orgID string) (json.RawMessage, error)
+
+	// DeleteConversation removes a thread from the agents store (a closed
+	// issue's). Idempotent: an id the store does not hold (404) is nil. Any
+	// other non-2xx is returned as *UpstreamError.
+	DeleteConversation(ctx context.Context, conversationID, orgID string) error
 }
 
 // Config wires the client. Secret + Audience (+ optional Issuer) drive the M2M
@@ -529,6 +555,27 @@ func (c *client) GetConversation(ctx context.Context, conversationID, orgID stri
 		return nil, &UpstreamError{StatusCode: resp.StatusCode, Body: string(body)}
 	}
 	return json.RawMessage(body), nil
+}
+
+func (c *client) DeleteConversation(ctx context.Context, conversationID, orgID string) error {
+	url := c.baseURL + "/conversations/" + conversationID
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return fmt.Errorf("create delete-conversation request: %w", err)
+	}
+	if err := c.attachAuth(orgID, httpReq); err != nil {
+		return err
+	}
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("agents service delete-conversation request: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode/100 == 2 {
+		return nil
+	}
+	return &UpstreamError{StatusCode: resp.StatusCode, Body: string(body)}
 }
 
 // attachAuth mints the per-call M2M bearer and sets the X-Org-Id header, which

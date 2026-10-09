@@ -341,6 +341,10 @@ type IssueInfo struct {
 	ClosedAt        string `json:"-"`
 	Labels          []string
 	AttentionReason string
+	// MilestoneNumber is the milestone the issue is in (0 for none): a
+	// version's, which the coding agent works. Adoption puts a handed-over
+	// issue in the deployed version's.
+	MilestoneNumber int
 }
 
 // CompareResult is the per-file change summary between two refs the lineage

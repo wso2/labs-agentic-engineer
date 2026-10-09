@@ -17,7 +17,7 @@
  */
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 import { SAMPLE_COMPONENT, SAMPLE_MANIFEST, SAMPLE_SOURCE } from "../../../mocks/fixtures/prototype";
@@ -40,6 +40,7 @@ const written = (...components: string[]) =>
 let chat: ProjectChat;
 vi.mock("../useProjectChat", () => ({
   useProjectChat: () => chat,
+  chatStoreFor: () => ({}),
   chatStore: {},
   canSend: () => true,
 }));
@@ -47,6 +48,7 @@ vi.mock("../../spec/useSpecWorkspace", () => ({ useSpecModel: () => ({ data: { f
 vi.mock("../useStartInterview", () => ({ useStartInterview: () => ({ start: vi.fn(), ready: true, waiting: false }) }));
 const navigate = vi.fn();
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => navigate }));
+vi.mock("../../shell/chatPanel", () => ({ useChatPanel: () => ({ open: vi.fn(), compose: vi.fn() }) }));
 
 // jsdom has no ResizeObserver, which the thread uses to follow its growth.
 vi.stubGlobal(
@@ -142,5 +144,62 @@ describe("a prototype review in the conversation", () => {
     renderThread();
     fireEvent.click(screen.getByRole("button", { name: "Open prototypes" }));
     expect(navigate).toHaveBeenCalledWith({ to: "/projects/$projectName/prototype", params: { projectName: "acme" }, search: {} });
+  });
+});
+
+describe("a From Issues note in the conversation", () => {
+  it("offers Reopen, which goes back to the Issues page where its chat is", async () => {
+    chat = ready([{ kind: "note", id: "n1", text: "From Issues · 2 messages · Filed #41.", actions: [{ kind: "open-issues", label: "Reopen" }] }]);
+    renderThread();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Reopen" })));
+    expect(navigate).toHaveBeenCalledWith({ to: "/projects/$projectName/issues", params: { projectName: "acme" } });
+  });
+
+  it("keeps Reopen on the newest note only, and every note's text", () => {
+    chat = ready([
+      { kind: "note", id: "n1", text: "From Issues · 2 messages · Filed #41.", actions: [{ kind: "open-issues", label: "Reopen" }] },
+      { kind: "note", id: "n2", text: "From Issues · 1 message · Filed #42.", actions: [{ kind: "open-issues", label: "Reopen" }] },
+    ]);
+    renderThread();
+    expect(screen.getByText(/Filed #41/)).toBeTruthy();
+    expect(screen.getByText(/Filed #42/)).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "Reopen" })).toHaveLength(1);
+  });
+
+  it("leaves an older note's other actions alone", () => {
+    chat = ready([
+      {
+        kind: "note",
+        id: "n1",
+        text: "From Issues · Filed #41.",
+        actions: [
+          { kind: "open-issues", label: "Reopen" },
+          { kind: "open-build", label: "Open build", version: "v1" },
+        ],
+      },
+      { kind: "note", id: "n2", text: "From Issues · Filed #42.", actions: [{ kind: "open-issues", label: "Reopen" }] },
+    ]);
+    renderThread();
+    expect(screen.getAllByRole("button", { name: "Reopen" })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Open build" })).toBeTruthy();
+  });
+});
+
+describe("an issue the Issues agent filed", () => {
+  it("shows Continue on #N under the reply; Open goes to the issue's card, where its chat is", async () => {
+    chat = ready([
+      { kind: "user", id: "u1", text: "File it", state: "sent", turnId: "t1" },
+      { kind: "filed", id: "f1", turnId: "t1", toolCallId: "c1", issueNumber: 15 },
+      { kind: "agent", id: "a1", turnId: "t1", text: "Filed #15." },
+    ]);
+    renderThread();
+    const line = screen.getByTestId("filed-issue");
+    expect(line.textContent).toBe("Continue on #15 · Open");
+    expect(screen.getByText("Filed #15.").compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Open" })));
+    expect(navigate).toHaveBeenCalledWith({
+      to: "/projects/$projectName/issues/$number",
+      params: { projectName: "acme", number: "15" },
+    });
   });
 });

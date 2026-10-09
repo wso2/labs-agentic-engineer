@@ -143,7 +143,7 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// admission-mutex unique index, which AutoMigrate cannot express.
 		ctxStep("executions", RunExecutions),
 		// agent_turns table (AutoMigrated from the model) gains the D18
-		// one-active-turn-per-project partial unique index.
+		// one-active-turn partial unique index (per project and use case).
 		ctxStep("agent_turns", RunAgentTurns),
 		// tasks-github-native cutover: drop component_tasks + the
 		// git_repositories.github_project_id cache column (both AutoMigrate-only,

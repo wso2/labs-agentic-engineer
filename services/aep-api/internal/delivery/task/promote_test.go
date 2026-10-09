@@ -19,8 +19,14 @@ package task
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/wso2/aep/aep-api/internal/delivery"
+	"github.com/wso2/aep/aep-api/internal/gen"
+	"github.com/wso2/aep/aep-api/internal/platform/apierr"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // promote-task-from-issue is the SRE/RCA handoff's dispatch leg. It is ADOPTION
@@ -118,15 +124,60 @@ func TestPromoteAndExecute_NilEnsurer_SkipsPreCheck(t *testing.T) {
 	}
 }
 
-// The adopter's refusal reaches the caller verbatim: the console and the MCP
-// server both render it, and "no milestone for the deployed version — trigger a
-// build" is the message a human needs.
+// The adopter's refusal reaches the caller unwrapped: the console and the
+// issue agent's hand-off tool both render it as the sentence a human needs.
 func TestPromoteAndExecute_AdopterErrorPropagates(t *testing.T) {
-	adopter := &fakeAdopter{err: errors.New("no milestone for the deployed version — trigger a build")}
+	adopter := &fakeAdopter{err: delivery.ErrNoDeployedMilestone}
 	cmds, _ := newPromoteCommands([]string{"user-service"}, adopter)
 
 	err := cmds.PromoteAndExecute(context.Background(), "org1", "proj1", "user-service", 42)
-	if err == nil || !strings.Contains(err.Error(), "no milestone for the deployed version") {
-		t.Fatalf("err = %v, want the adopter's refusal verbatim", err)
+	if !errors.Is(err, delivery.ErrNoDeployedMilestone) {
+		t.Fatalf("err = %v, want the adopter's refusal", err)
+	}
+}
+
+// A project with no deployed version has no milestone to adopt into: the REST
+// route answers 409 with the sentence the console shows the user as-is.
+func TestPromoteTaskFromIssue_NoDeployedVersionIs409(t *testing.T) {
+	cmds, _ := newPromoteCommands([]string{"user-service"}, &fakeAdopter{err: delivery.ErrNoDeployedMilestone})
+	_, err := NewHandler(nil, cmds).PromoteTaskFromIssue(context.Background(), gen.PromoteTaskFromIssueRequestObject{
+		ProjectName: "proj1", IssueNumber: 42, Body: &gen.PromoteTaskFromIssueJSONRequestBody{ComponentName: "user-service"},
+	})
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusConflict {
+		t.Fatalf("err = %v, want a 409", err)
+	}
+	if want := "Deploy a version first: the coding agent works in a deployed version's milestone."; apiErr.Message != want {
+		t.Errorf("message = %q, want %q", apiErr.Message, want)
+	}
+}
+
+// Every refusal of adoption is a 409 in the platform's own words: an issue it
+// will not adopt is said so, never answered with a 202 that did nothing.
+func TestPromoteTaskFromIssue_RefusalsAre409(t *testing.T) {
+	for _, refusal := range []error{delivery.ErrIssueClosed, delivery.ErrNotCodingWork} {
+		cmds, _ := newPromoteCommands([]string{"user-service"}, &fakeAdopter{err: refusal})
+		_, err := NewHandler(nil, cmds).PromoteTaskFromIssue(context.Background(), gen.PromoteTaskFromIssueRequestObject{
+			ProjectName: "proj1", IssueNumber: 42, Body: &gen.PromoteTaskFromIssueJSONRequestBody{ComponentName: "user-service"},
+		})
+		var apiErr *apierr.Error
+		if !errors.As(err, &apiErr) || apiErr.Status != http.StatusConflict {
+			t.Fatalf("%v: err = %v, want a 409", refusal, err)
+		}
+		if apiErr.Message != refusal.Error() {
+			t.Errorf("message = %q, want %q", apiErr.Message, refusal.Error())
+		}
+	}
+}
+
+// An issue the host does not have is a 404, not a server fault.
+func TestPromoteTaskFromIssue_UnknownIssueIs404(t *testing.T) {
+	cmds, _ := newPromoteCommands([]string{"user-service"}, &fakeAdopter{err: sourcecontrol.ErrIssueNotFound})
+	_, err := NewHandler(nil, cmds).PromoteTaskFromIssue(context.Background(), gen.PromoteTaskFromIssueRequestObject{
+		ProjectName: "proj1", IssueNumber: 42, Body: &gen.PromoteTaskFromIssueJSONRequestBody{ComponentName: "user-service"},
+	})
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusNotFound || apiErr.Message != "issue not found" {
+		t.Fatalf("err = %v, want a 404 \"issue not found\"", err)
 	}
 }

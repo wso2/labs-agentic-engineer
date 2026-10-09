@@ -223,6 +223,24 @@ func (e BuildSummaryWaitingReason) Valid() bool {
 	}
 }
 
+// Defines values for ChatView.
+const (
+	Issue  ChatView = "issue"
+	Issues ChatView = "issues"
+)
+
+// Valid indicates whether the value is a known member of the ChatView enum.
+func (e ChatView) Valid() bool {
+	switch e {
+	case Issue:
+		return true
+	case Issues:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DeploymentGuardrailStatus.
 const (
 	GuardrailApplied     DeploymentGuardrailStatus = "applied"
@@ -1189,6 +1207,7 @@ func (e TimelineEventEmitter) Valid() bool {
 // Defines values for TurnConflictCode.
 const (
 	ConversationRotated TurnConflictCode = "conversation_rotated"
+	IssueClosed         TurnConflictCode = "issue_closed"
 	RequirementsMissing TurnConflictCode = "requirements_missing"
 	TurnInProgress      TurnConflictCode = "turn_in_progress"
 )
@@ -1197,6 +1216,8 @@ const (
 func (e TurnConflictCode) Valid() bool {
 	switch e {
 	case ConversationRotated:
+		return true
+	case IssueClosed:
 		return true
 	case RequirementsMissing:
 		return true
@@ -1680,6 +1701,9 @@ type BuildSummaryStatus string
 
 // BuildSummaryWaitingReason Why an in-progress version is waiting rather than moving. Empty for the ordinary between-cycles park, which needs no explanation. `external-values` is the deploy gate — the run is built and ready to deploy, and every remaining blocker is a value only a human can supply. It is carried here so a ledger row can say the version is waiting on the reader instead of reading as a run an agent is still working; the dependency NAMES stay on MilestoneRunView, where the run read that has them is already being made.
 type BuildSummaryWaitingReason string
+
+// ChatView The main-panel view whose agent the chat talks to. Absent = the project's main chat. `issues` is the Issues page's chat; `issue` is one issue's own chat, named by `issueNumber`.
+type ChatView string
 
 // ClientSecretOutputBody defines model for ClientSecretOutputBody.
 type ClientSecretOutputBody struct {
@@ -2190,6 +2214,9 @@ type IssueInfo struct {
 
 	// AttentionReason Console attention state. Omitted when the issue needs no attention.
 	AttentionReason IssueInfoAttentionReason `json:"attentionReason,omitempty"`
+
+	// MilestoneNumber The number of the issue's milestone, if any (handing an issue over puts it in the deployed version's and arms it with the `aep` label). Omitted when the issue is in none.
+	MilestoneNumber int64 `json:"milestoneNumber,omitempty"`
 }
 
 // IssueInfoAttentionReason Console attention state. Omitted when the issue needs no attention.
@@ -3301,7 +3328,7 @@ type SourceDocumentRow struct {
 
 // SpecStage Spec-stage aggregate on ProjectStatus (#184). Approved/draft is derived, not stored — version set and not dirty = approved (vN); dirty = draft changes (vN+); no version = unpublished draft; exists false = no spec yet.
 type SpecStage struct {
-	// Agent Whether an agent is working on this project's spec right now, and how the last attempt ended (#562). `never-started` — no turn has EVER run for this project; `""` — a turn has run and the newest one completed; `working` — a turn is in flight; `failed` — the newest turn ended in failure and none has run since. `never-started` is distinct from `""` because the two need opposite treatment: one means the journey has not begun and the user needs a way to begin it, the other means it is under way between turns and offering to restart it would supersede a live interview. Derived from the newest `agent_turns` row for the project, which is what `exists`/`version`/`dirty` cannot say: all three read committed git, and a kickoff writes nothing until it lands. The overview's spec card needs it to say *Writing requirements* while the platform-fired `/start` runs, and the spec view needs it to explain an empty workspace instead of offering a file picker.
+	// Agent Whether an agent is working on this project's spec right now, and how the last attempt ended (#562). `never-started` — no turn has EVER run for this project; `""` — a turn has run and the newest one completed; `working` — a turn is in flight; `failed` — the newest turn ended in failure and none has run since. `never-started` is distinct from `""` because the two need opposite treatment: one means the journey has not begun and the user needs a way to begin it, the other means it is under way between turns and offering to restart it would supersede a live interview. Derived from the newest main-chat `agent_turns` row for the project (use case `general`; the Issues chat's turns are excluded), which is what `exists`/`version`/`dirty` cannot say: all three read committed git, and a kickoff writes nothing until it lands. The overview's spec card needs it to say *Writing requirements* while the platform-fired `/start` runs, and the spec view needs it to explain an empty workspace instead of offering a file picker.
 	Agent string `json:"agent"`
 
 	// AgentFlow WHICH work the running turn is doing — the `/<skill>` token it runs under (`start`, `design`, `settle`, `amend`, …); `""` for plain chat or when nothing is running (#575). `agent` says an agent is working; this says on what, which the spec rail needs to pulse the right section.
@@ -3580,7 +3607,7 @@ type TurnAnchorNode struct {
 	Name string `json:"name"`
 }
 
-// TurnConflict create-turn 409 body. turn_in_progress carries the active turn's id; requirements_missing means the design use-case has no requirements to work from; conversation_rotated means the addressed thread is no longer the project's current one — re-resolve via list-conversations and retry.
+// TurnConflict create-turn 409 body. turn_in_progress carries the active turn's id; requirements_missing means the design use-case has no requirements to work from; conversation_rotated means the addressed thread is no longer the project's current one — re-resolve via list-conversations and retry; issue_closed means the issue view's issue is closed, so it has no thread.
 type TurnConflict struct {
 	ActiveTurnID string           `json:"activeTurnId,omitempty"`
 	Code         TurnConflictCode `json:"code"`
@@ -3609,6 +3636,9 @@ type TurnInputBody struct {
 	// Deliberately a field and NOT a `/command` prefix on `instruction`: a command IS the user's message (the console adds nothing to a line they typed), and an anchored turn carries prose they wrote in their own words, so a prefix would put machinery in their voice. Mirrors the console's own resolve/reconsider intent, whose only job is the same. Absent for a turn with no anchor.
 	Intent TurnInputBodyIntent `json:"intent,omitempty"`
 
+	// IssueNumber The issue whose thread this turn runs on. Required with view=issue; refused with any other view.
+	IssueNumber *int `json:"issueNumber,omitempty"`
+
 	// PrototypeFeedback A prototype review batch. Valid only when `instruction` is the `/prototype` command and `collab` is true, and never together with `anchor`/`intent`: a batch aims at stable prototype ids, not at a selection in a document. Room turns only, because the room's committer is the one path an agent's revision reaches git by. When set, `instruction` is `/prototype` alone or followed by the batch's own `component`. Absent for every other turn. JSON-only: a review batch carries no attachments, so the multipart form has no such part.
 	PrototypeFeedback *PrototypeFeedbackInput `json:"prototypeFeedback,omitempty"`
 
@@ -3616,6 +3646,9 @@ type TurnInputBody struct {
 	//
 	// A scope FOCUSES the turn; it fences nothing. The agent reads `prd.md` and the feature's file first, and may still change any file the message implies, saying in its reply which other files it touched. Every edit lands directly: what the agent decided on its own is tagged `*assumed*` in the requirements, and that tag is the user's review.
 	Scope TurnScope `json:"scope,omitempty"`
+
+	// View The main-panel view whose agent the chat talks to. Absent = the project's main chat. `issues` is the Issues page's chat; `issue` is one issue's own chat, named by `issueNumber`.
+	View *ChatView `json:"view,omitempty"`
 }
 
 // TurnInputBodyIntent What the user wants done with `anchor` — `change` rewrites the selected nodes in place, `discuss` opens the same selection as a grilling. Read by the agents service when it renders the anchor into the prompt; the two differ only in how that preamble is phrased.
@@ -3652,10 +3685,16 @@ type TurnInputMultipart struct {
 	// Deliberately a field and NOT a `/command` prefix on `instruction`: a command IS the user's message (the console adds nothing to a line they typed), and an anchored turn carries prose they wrote in their own words, so a prefix would put machinery in their voice. Mirrors the console's own resolve/reconsider intent, whose only job is the same. Absent for a turn with no anchor.
 	Intent TurnInputMultipartIntent `json:"intent,omitempty"`
 
+	// IssueNumber The issue whose thread this turn runs on. Required with view=issue; refused with any other view.
+	IssueNumber *int `json:"issueNumber,omitempty"`
+
 	// Scope What the user was looking at when they sent this message, so the agent reads it in that light: a feature's file open in the spec (`feature`, with its ID), or the design review (`design-review`). Absent means the whole product — the product page, any other spec file, or anywhere else in the project — and such a turn reads exactly as it did before scopes existed.
 	//
 	// A scope FOCUSES the turn; it fences nothing. The agent reads `prd.md` and the feature's file first, and may still change any file the message implies, saying in its reply which other files it touched. Every edit lands directly: what the agent decided on its own is tagged `*assumed*` in the requirements, and that tag is the user's review.
 	Scope TurnScope `json:"scope,omitempty"`
+
+	// View The main-panel view whose agent the chat talks to. Absent = the project's main chat. `issues` is the Issues page's chat; `issue` is one issue's own chat, named by `issueNumber`.
+	View *ChatView `json:"view,omitempty"`
 }
 
 // TurnInputMultipartIntent As `TurnInputBody.intent`. What the user wants done with `anchor` — `change` rewrites the selected nodes in place, `discuss` opens the same selection as a grilling. Read by the agents service when it renders the anchor into the prompt; the two differ only in how that preamble is phrased.
@@ -3983,6 +4022,15 @@ type StreamActivityParams struct {
 	LastEventID string `json:"Last-Event-ID,omitempty"`
 }
 
+// ListConversationsParams defines parameters for ListConversations.
+type ListConversationsParams struct {
+	// View The main-panel view whose agent the chat talks to. Absent = the project's main chat.
+	View *ChatView `form:"view,omitempty" json:"view,omitempty"`
+
+	// IssueNumber The issue whose thread to read. Required with view=issue; refused with any other view.
+	IssueNumber *int `form:"issueNumber,omitempty" json:"issueNumber,omitempty"`
+}
+
 // GetBuildLogsParams defines parameters for GetBuildLogs.
 type GetBuildLogsParams struct {
 	// Since Return only entries stamped AFTER this epoch-millis cursor — feed back the previous response's `nextCursor`. Absent reads from the beginning. Millis rather than a line offset because the cursor must survive the hand-over from a live pod tail to the captured snapshot, where a line count is meaningless but a timestamp still orders correctly.
@@ -4059,6 +4107,15 @@ type ListTasksParams struct {
 
 // ListTasksParamsState defines parameters for ListTasks.
 type ListTasksParamsState string
+
+// GetActiveTurnParams defines parameters for GetActiveTurn.
+type GetActiveTurnParams struct {
+	// View The main-panel view whose agent the chat talks to. Absent = the project's main chat.
+	View *ChatView `form:"view,omitempty" json:"view,omitempty"`
+
+	// IssueNumber The issue whose thread to read. Required with view=issue; refused with any other view.
+	IssueNumber *int `form:"issueNumber,omitempty" json:"issueNumber,omitempty"`
+}
 
 // StreamTurnParams defines parameters for StreamTurn.
 type StreamTurnParams struct {

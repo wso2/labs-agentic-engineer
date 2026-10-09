@@ -487,6 +487,12 @@ The chat thread that belongs to one entity: a project, a Skill, a Resource, or t
 organization. The chat shows the Conversation of the entity in view.
 _Avoid_: session, chat (the chat is the panel that shows a Conversation).
 
+**Chat view**:
+The main-panel view whose agent the chat talks to: the Issues Page has its own;
+everything else talks to the project's main chat. Each chat view owns its own
+conversation.
+_Avoid_: branch, sub-agent (on screen).
+
 **Turn scope**:
 What one turn of a Conversation is about, set by the Card in view: a feature, the
 whole product, the design review. It focuses the agent and fences nothing.

@@ -31,6 +31,7 @@ routes/projects/$projectName/
     $env/configure.tsx         /projects/$p/deploy/staging/configure  Configure card
   issues/route.tsx           the Issues Page         /projects/$p/issues
     $number.tsx                /projects/$p/issues/14  Issue card
+    questions.tsx              /projects/$p/issues/questions  Questions card (the Issues chat's; an issue's with ?issue=14)
 ```
 
 - **A Page is a layout route.** It renders `PageWithCards` around its content:
@@ -55,8 +56,8 @@ routes/projects/$projectName/
   (`PAGE_ROUTES`, and `ORG_PAGE_ROUTES` for the org's), which are Cards
   (`CARD_ROUTES` and `ORG_CARD_ROUTES`, both read by `cardOfRoute`), and the
   Page each Card is over (`pageOfCard`; `ORG_CARD_PAGE`). The rail's active
-  item, the chat's breadcrumb, the Turn scope and `CardOverlay`'s close all
-  read them, so a new Card is a route file plus its rows there; a new project
+  item, the chat's thread (`chatViewFor`), the Turn scope and `CardOverlay`'s
+  close all read them, so a new Card is a route file plus its rows there; a new project
   Page also needs its path in `CardOverlay`'s `PAGE_PATH`.
 - **A card with a draft guards it**: `LeaveGuard` (`features/shell/`) asks
   before any navigation off the card while the draft is dirty (close,
@@ -88,8 +89,65 @@ opened from the rail (the Settings icon above the user menu), not from the
 Dashboard, and keeps its section in the address (`?section=github|ai|usage`).
 
 The Issues Page lists the project's GitHub issues (incidents the SRE agent
-filed, the platform's own, people's), those that need attention first; an
-Issue card is over it and sets no Turn scope either. The Dashboard's Alerts
+filed, the platform's own, people's), those that need attention first. It
+has a chat of its own, a branch of the project's main chat. The chat panel
+holds one thread, the page's (ADR-0003): with no card open (`chatViewFor`
+reads the Page and Card as the `issues` view) that is the Issues agent's
+chat, in place of the main chat. Its breadcrumb reads **<org> › <Project> ›
+Issues**; the project crumb goes back to the overview and the main chat.
+Create Issue, a hand-off's New Issue, Reopen and the threads menu all go to
+the page. When the user leaves the Issues page the main chat gets its From
+Issues note. The Issues chat's thread and running turn are its alone, about
+"the project's issues", with no spec room and no Turn scope (the composer's
+scope is not sent; `viewTurnBody` sends the words and the view). The Issues agent files
+issues, so its turn ending re-reads the issue list. When it files #N, a
+**Continue on #N · Open** line follows its reply (read from the `create_issue`
+result, in the stream and in the history); Open goes to that issue's card.
+
+An Issue card is over the Page (the Issues chat's thread and any running turn
+are kept in its store while the card is open; an unsent draft is not). An open
+issue has an agent of its own on a thread of its own (the `issue` view with
+the issue's number, use case `issue-<n>`; one chat store per issue,
+`chatStoreFor("issue", n)`), which the panel holds on its card, breadcrumb
+**<org> › <Project> › Issues › #N** (Issues goes back to the Issues chat). Its turn
+ending re-reads the issue list and that issue's detail, so a comment, an edit
+or a close shows at once. A closed issue has none: closing an issue removes its
+thread, the card says **This issue is closed.** and the panel holds the main chat.
+An open issue the coding agent has not taken on can be handed to it from the
+card. Taken on is what aep-api's adoption leaves: the issue armed (`aep`),
+not halted (`aep:halted`; a halted issue can be handed over again, which
+clears the halt), and in a version's milestone (`milestoneNumber` on the
+issue list), so it holds across a reload. **Hand to the coding agent** opens a
+picker of the design's components (`design/dependencies`, one entry per
+component; no design, no components), **Hand it over** calls
+`promote-from-issue` with the one picked, and the card says **Handed to the
+coding agent.** until the issue list reads it taken on; from then the card
+says which version works it — the version ledger's entry for the issue's
+milestone, linked to its Build card, where the coding agent's log is (the
+issue's own task log is empty: a coding run's log is the build's). A 409 (no
+deployed version, the issue closed, a kind the coding agent does not take on)
+shows the server's words in the picker. The card offers no button for the
+kinds it can tell the platform works another way (validation, provision,
+development, a configuration-only incident).
+Whether it is open is the issue list's word, or the server's 409
+`issue_closed` on resolving or sending to its thread (`closedIssues.ts`, which
+stands until the list shows it closed too); when the issue in view turns from
+open to closed, its chat goes, the main chat takes the panel and gets **Issue #N was closed;
+its chat was removed.**, a local line never sent to the agent, posted only while
+the chat panel is mounted. Closed, the issue's chat is forgotten in this tab
+(`forgetIssueChat`), so a reopen starts on a fresh, empty thread, and the card's
+header says closed too while the list lags. The threads menu lists each issue
+chat that holds something (opened in this tab).
+
+The Issues chat's questions (ADR-0002) are answered on a Questions card of
+their own over this Page (`issues/questions`, `chatViewFor` reads it as the
+`issues` view), so a question asked here never points to the overview or
+answers the main chat; a send closes back to the Issues Page. An issue's chat's
+questions (its agent confirms every change on one: the change is the confirm
+option's description) are answered on the same card naming the issue
+(`issues/questions?issue=N`, the `issue` view), which opens by itself only on
+that issue's card and closes back to it, on a send or its X (`CardOverlay`'s
+`back`). The Dashboard's Alerts
 link straight to Issue cards: they are every project's issues that need
 attention (`features/issues/useAlerts.ts` asks each project, as no read
 answers for the org), and the rail's logo counts those that need a person.

@@ -17,22 +17,27 @@
  */
 
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Box, Button, CircularProgress, Typography } from "@wso2/oxygen-ui";
+import { Box, Button, CircularProgress, Link, Typography } from "@wso2/oxygen-ui";
 import { CircleAlert, Sparkles } from "@wso2/oxygen-ui-icons-react";
 import { visuallyHidden } from "../../../components/visuallyHidden";
 import { usePrototypeNotes } from "../../prototype/usePrototypeNotes";
 import { usePrototypeRequestsText } from "../../prototype/usePrototypeRequestsText";
 import { useSpecModel } from "../../spec/useSpecWorkspace";
-import { interviewWriteUp, openQuestionId, userLineText, type ChatItem } from "../chatLog";
+import { interviewWriteUp, openQuestionId, userLineText, withFiledLast, type ChatItem, type NoteAction } from "../chatLog";
 import type { PrototypeFeedback } from "../turnScope";
-import { chatStore, useProjectChat } from "../useProjectChat";
+import type { ChatView } from "../chatView";
+import { useOpenIssueChat } from "../useOpenIssuesChat";
+import { chatStoreFor, useProjectChat } from "../useProjectChat";
 import { ActivityLine } from "./ActivityLine";
+import { HandOffCard } from "./HandOffCard";
 import { InterviewFollowUp } from "./InterviewFollowUp";
 import { NoteActions } from "./NoteActions";
 import { QuestionsPointer } from "./QuestionsPointer";
 
 // The conversation, oldest first: what the user said, what the agent said,
-// a compact line for each file it wrote, and its questions as cards. After an
+// a compact line for each file it wrote, its questions as cards, and its
+// announcement when it hands a request to Issues; under the Issues agent's
+// reply, the issue it filed, to go on in that issue's own chat. After an
 // interview has written its feature, the walk and the next feature follow;
 // after a prototype turn has written a valid prototype, Open prototype.
 
@@ -102,6 +107,18 @@ function AgentRow({ text }: { text: string }) {
         {text}
       </Typography>
     </Box>
+  );
+}
+
+/** Under the reply that filed an issue: go on in the issue's own chat. */
+function FiledRow({ issueNumber, onOpen }: { issueNumber: number; onOpen: () => void }) {
+  return (
+    <Typography data-testid="filed-issue" variant="caption" color="text.secondary" component="p" sx={{ pl: 4 }}>
+      Continue on #{issueNumber} ·{" "}
+      <Link component="button" type="button" variant="caption" onClick={onOpen} sx={{ verticalAlign: "baseline" }}>
+        Open
+      </Link>
+    </Typography>
   );
 }
 
@@ -179,8 +196,25 @@ function useStickToBottom() {
   return setNode;
 }
 
-export function Thread({ projectName }: { projectName: string }) {
-  const chat = useProjectChat(projectName);
+/** A note's actions: Reopen only on the newest From Issues note, as it goes back to the one Issues chat. */
+function actionsFor(actions: NoteAction[] | undefined, newestReopen: boolean): NoteAction[] {
+  return newestReopen ? (actions ?? []) : (actions ?? []).filter((a) => a.kind !== "open-issues");
+}
+
+export function Thread({
+  projectName,
+  view = "main",
+  issueNumber,
+}: {
+  projectName: string;
+  /** The view whose chat this is: its retries go to that view's agent. */
+  view?: ChatView;
+  /** The issue whose chat this is, in the issue view. */
+  issueNumber?: number;
+}) {
+  const chat = useProjectChat(projectName, view, issueNumber);
+  const store = chatStoreFor(view, issueNumber);
+  const openIssueChat = useOpenIssueChat(projectName);
   const features = useSpecModel(projectName).data?.features;
   const { items, turn } = chat;
   const running = turn.phase !== "idle";
@@ -189,6 +223,10 @@ export function Thread({ projectName }: { projectName: string }) {
   const featurePaths = useMemo(() => new Set((features ?? []).map((f) => f.path)), [features]);
   const followUp = running ? null : interviewWriteUp(items, featurePaths);
   const prototypeNotes = usePrototypeNotes(projectName, items, running);
+  const newestReopenId = useMemo(
+    () => items.filter((i) => i.kind === "note" && i.actions?.some((a) => a.kind === "open-issues")).at(-1)?.id,
+    [items],
+  );
   // Nothing from the agent yet since the last message: say it is working.
   const lastItem = items.at(-1);
   const waitingForOutput = running && (!lastItem || lastItem.kind === "user");
@@ -209,7 +247,7 @@ export function Thread({ projectName }: { projectName: string }) {
           <Typography variant="body2" color="text.secondary">
             {chat.error}
           </Typography>
-          <Button size="small" variant="outlined" onClick={() => chatStore.retry(projectName)}>
+          <Button size="small" variant="outlined" onClick={() => store.retry(projectName)}>
             Try again
           </Button>
         </Box>
@@ -220,7 +258,11 @@ export function Thread({ projectName }: { projectName: string }) {
     return (
       <Centered>
         <Typography variant="body2" color="text.secondary">
-          No messages yet. The conversation about this project shows here.
+          {view === "issues"
+            ? "Tell me what's broken or what you need, and I'll draft an issue."
+            : view === "issue"
+              ? "Ask me about this issue, or tell me what to do with it."
+              : "No messages yet. The conversation about this project shows here."}
         </Typography>
       </Centered>
     );
@@ -247,27 +289,40 @@ export function Thread({ projectName }: { projectName: string }) {
         gap: 1.5,
       }}
     >
-      {items.map((item) => (
-        <Fragment key={item.id}>
-          {item.kind === "user" && <UserRow projectName={projectName} item={item} />}
-          {(item.kind === "agent" || item.kind === "note") && <AgentRow text={item.text} />}
-          {item.kind === "note" && item.actions && <NoteActions projectName={projectName} actions={item.actions} />}
-          {item.kind === "activity" && <ActivityLine item={item} features={features ?? []} />}
-          {item.kind === "error" && <ErrorRow text={item.text} />}
-          {item.kind === "question" && (
-            <Box sx={{ pl: 4 }}>
-              <QuestionsPointer projectName={projectName} item={item} open={item.id === openQuestion} />
-            </Box>
-          )}
-          {followUp?.afterId === item.id && <InterviewFollowUp projectName={projectName} path={followUp.path} />}
-          {prototypeNotes.has(item.id) && (
-            <>
-              <AgentRow text={prototypeNotes.get(item.id)!.text} />
-              <NoteActions projectName={projectName} actions={prototypeNotes.get(item.id)!.actions} />
-            </>
-          )}
-        </Fragment>
-      ))}
+      {withFiledLast(items).map((item) => {
+        const noteActions = item.kind === "note" ? actionsFor(item.actions, item.id === newestReopenId) : [];
+        return (
+          <Fragment key={item.id}>
+            {item.kind === "user" && <UserRow projectName={projectName} item={item} />}
+            {(item.kind === "agent" || item.kind === "note") && <AgentRow text={item.text} />}
+            {noteActions.length > 0 && <NoteActions projectName={projectName} actions={noteActions} />}
+            {item.kind === "activity" && <ActivityLine item={item} features={features ?? []} />}
+            {item.kind === "handoff" && <HandOffCard projectName={projectName} item={item} />}
+            {item.kind === "filed" && (
+              <FiledRow issueNumber={item.issueNumber} onOpen={() => void openIssueChat(item.issueNumber)} />
+            )}
+            {item.kind === "error" && <ErrorRow text={item.text} />}
+            {item.kind === "question" && (
+              <Box sx={{ pl: 4 }}>
+                <QuestionsPointer
+                  projectName={projectName}
+                  item={item}
+                  open={item.id === openQuestion}
+                  view={view}
+                  {...(issueNumber !== undefined ? { issueNumber } : {})}
+                />
+              </Box>
+            )}
+            {followUp?.afterId === item.id && <InterviewFollowUp projectName={projectName} path={followUp.path} />}
+            {prototypeNotes.has(item.id) && (
+              <>
+                <AgentRow text={prototypeNotes.get(item.id)!.text} />
+                <NoteActions projectName={projectName} actions={prototypeNotes.get(item.id)!.actions} />
+              </>
+            )}
+          </Fragment>
+        );
+      })}
       {waitingForOutput && <Working />}
     </Box>
   );

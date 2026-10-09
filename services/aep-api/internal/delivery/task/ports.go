@@ -139,12 +139,15 @@ type TurnClient interface {
 }
 
 // Adopter hands an issue to the coding agent: file it under the deployed
-// version's milestone and start an incident run over that milestone unless one
-// is already live. *eventcore.Events satisfies it, wired at the composition
-// root — this package names no sibling slice (the task ⊥ run arch lock).
+// version's milestone, arm it, and start an incident run over that milestone
+// unless one is already live. *eventcore.Events satisfies it, wired at the
+// composition root — this package names no sibling slice (the task ⊥ run arch
+// lock). It refuses with one of delivery.AdoptionRefusal's sentinels an issue
+// it will not take.
 //
-// The issue is assumed to be BARE (no milestone): the one caller is the SRE/RCA
-// handoff, which files the issue and immediately promotes it.
+// The issue is read for its labels and state, and placed as if BARE (no
+// milestone): its callers are the console's Issue card and the issue agent's
+// hand-off, which hand over issues the platform has not placed.
 type Adopter interface {
 	AdoptIssue(ctx context.Context, orgID, projectID string, issueNumber int) error
 }

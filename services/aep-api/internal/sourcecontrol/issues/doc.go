@@ -20,7 +20,11 @@
 // In→out:  bound org + project (+ labels/query) → the created issue, or a ranked list.
 // Ports:   sourcecontrol.IssueService.
 // The SRE agent's handoff reaches the same service through sre_mcp.go: two MCP
-// tools, mounted by edge behind auth.SREHandoffVerifier.
+// tools, mounted by edge behind auth.SREHandoffVerifier. The console's agents
+// reach it through one endpoint behind auth.IssuesMCPVerifier: the Issues
+// view's agent searches and files (user_mcp.go), an issue's agent reads and
+// works its one issue (issue_mcp.go; ports Promoter, ComponentLister,
+// IssueThreadRemover).
 // Invariant: IssueInfo's wire keys are CAPITALIZED — the shape the SRE
 // handoff's search_related_issues answers too, which the agent's skill reads.
 // The contract documents it; do not "fix" it.

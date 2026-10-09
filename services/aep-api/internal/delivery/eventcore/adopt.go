@@ -27,12 +27,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
-// ErrNoDeployedMilestone is adoption's honest refusal: a bare issue joins the
-// DEPLOYED version's milestone, and a project that has never completed a build
-// has no such version. The message is written for a human because the console
-// dispatch path returns it to one verbatim.
-var ErrNoDeployedMilestone = errors.New("no milestone for the deployed version — trigger a build")
-
 // AdoptTarget is the issue being handed to the coding agent, plus the
 // milestone it already belongs to (0 when it is a bare issue). The webhook
 // path reads both out of the payload — every issues delivery embeds the full
@@ -59,20 +53,29 @@ type AdoptTarget struct {
 //
 // The rules, in order:
 //
-//   - An issue that already has a milestone keeps it. The human put it there.
+//   - A closed issue is refused (delivery.ErrIssueClosed), and so is one that
+//     is not the coding agent's to work (delivery.ErrNotCodingWork): another
+//     species' issue, or an incident classified as configuration-only. The
+//     webhook path logs the refusal; a hand-off answers it to the person.
+//   - An unarmed issue is armed (a task run works armed issues only), and a
+//     halted one has its halt cleared: handing it over is the decision to try
+//     again.
+//   - On the webhook path, an issue that already has a milestone keeps it: the
+//     human put it there. A hand-off by number (promote-from-issue) reads no
+//     milestone, so its issue is placed as a bare one.
 //   - A bare issue joins the deployed version's milestone — the version it is
 //     an incident against. With no deployed version there is nothing to attach
-//     it to, and the caller gets ErrNoDeployedMilestone rather than a guess.
+//     it to, and the caller gets delivery.ErrNoDeployedMilestone rather than a guess.
 //   - If a run is already live on that milestone, this is a no-op: the run
 //     re-reads its milestone at the next cycle boundary and picks the issue up
 //     there. Starting a second run on one milestone would put two agents on
 //     one branch.
 //   - Otherwise an incident run starts over that milestone.
 //
-// Adoption does NOT stamp the arming label. The working set is read from the
-// milestone, and arming IS the human's act of adoption — inventing a second,
-// platform-authored path to the same state would make "who adopted this"
-// unanswerable.
+// Adoption stamps the arming label only where the issue lacks it. On the
+// webhook path the human's `aep` IS the adoption, so nothing is stamped; a
+// hand-off from the console or an agent is the person's act too, made through
+// the platform, and the label is what puts the issue in the run's working set.
 //
 // Nor does it stamp a KIND. An armed issue carrying none reads as a bug to every
 // working-set predicate (delivery.InDevWorkingSet), which is what a human
@@ -90,20 +93,21 @@ func (e *Events) AdoptIssue(ctx context.Context, orgID, projectID string, target
 			return err
 		}
 		if issue == nil {
-			return fmt.Errorf("adopt issue: issue %d not found", target.Number)
+			return fmt.Errorf("adopt issue: issue %d: %w", target.Number, sourcecontrol.ErrIssueNotFound)
 		}
 		target.Labels = issue.Labels
 		target.State = issue.State
 	}
+	// A run works open issues only.
+	if strings.EqualFold(target.State, "closed") {
+		return delivery.ErrIssueClosed
+	}
 	if sourcecontrol.HasIncidentLabel(target.Labels) {
-		if strings.EqualFold(target.State, "closed") {
-			return nil
-		}
 		// Task 3 owns classification; its durable identity namespace separates
 		// config-only records from code/mixed work without parsing issue prose.
 		for _, label := range target.Labels {
 			if strings.HasPrefix(strings.ToLower(label), "dedupe:sre-config-") {
-				return nil
+				return delivery.ErrNotCodingWork
 			}
 		}
 	}
@@ -111,14 +115,7 @@ func (e *Events) AdoptIssue(ctx context.Context, orgID, projectID string, target
 	// another species must not be pulled into a bug-fix run, and it must not be
 	// moved into the deployed version's milestone on the way there either.
 	if !delivery.AdoptableByATaskRun(target.Labels) {
-		slog.DebugContext(ctx, "eventcore: not adopting — this issue is another run species' work",
-			"issue", target.Number, "kind", delivery.KindOf(target.Labels))
-		return nil
-	}
-	if sourcecontrol.HasIncidentLabel(target.Labels) && !delivery.HasLabel(target.Labels, delivery.LabelAgentWork) {
-		if err := e.p.Writer.Label(ctx, orgID, projectID, target.Number, delivery.LabelAgentWork); err != nil {
-			return err
-		}
+		return delivery.ErrNotCodingWork
 	}
 	milestone := MilestoneRef{Number: target.MilestoneNumber, Title: target.MilestoneTitle}
 	if milestone.Number == 0 {
@@ -127,7 +124,7 @@ func (e *Events) AdoptIssue(ctx context.Context, orgID, projectID string, target
 			return err
 		}
 		if deployed == nil {
-			return ErrNoDeployedMilestone
+			return delivery.ErrNoDeployedMilestone
 		}
 		milestone = MilestoneRef{Number: deployed.MilestoneNumber, Title: deployed.MilestoneTitle}
 		if e.p.Issues != nil {
@@ -137,6 +134,26 @@ func (e *Events) AdoptIssue(ctx context.Context, orgID, projectID string, target
 		}
 		slog.InfoContext(ctx, "eventcore: adopted a bare issue into the deployed version's milestone",
 			"issue", target.Number, "milestone", milestone.Number, "version", milestone.Title)
+	}
+	// Arm it, once it is in the milestone (so the echo of the label, on an
+	// install without an App, already reads the milestone): a task run's working
+	// set reads armed issues only, so an issue in the milestone without `aep`
+	// would never be worked. An issue adopted by webhook carries it already (the
+	// label is the trigger); one handed over from the console, by its agent or by
+	// the SRE handoff is armed here, by that hand-off.
+	if !delivery.HasLabel(target.Labels, delivery.LabelAgentWork) {
+		if err := e.p.Writer.Label(ctx, orgID, projectID, target.Number, delivery.LabelAgentWork); err != nil {
+			return err
+		}
+	}
+	// A halted issue handed over again is a person deciding the work is worth
+	// another attempt — one of the two decisions that clear a halt
+	// (delivery.LabelHalted). Left on, the reconcile sweep would keep skipping
+	// the issue this hand-off just put in front of a run.
+	if delivery.HasLabel(target.Labels, delivery.LabelHalted) {
+		if err := e.p.Writer.Unlabel(ctx, orgID, projectID, target.Number, delivery.LabelHalted); err != nil {
+			return err
+		}
 	}
 
 	live, err := e.p.Runs.LiveRunForMilestone(ctx, orgID, projectID, milestone.Number)
@@ -270,7 +287,7 @@ func (e *Events) Revalidate(ctx context.Context, orgID, projectID string, milest
 		return "", derr
 	}
 	if deployed == nil {
-		return "", ErrNoDeployedMilestone
+		return "", delivery.ErrNoDeployedMilestone
 	}
 	if deployed.MilestoneNumber != milestone.Number {
 		return "", delivery.ErrVersionNotDeployed

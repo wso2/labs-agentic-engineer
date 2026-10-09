@@ -20,6 +20,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { FilePart, ModelMessage } from "ai";
 import { runTurn } from "../src/agents/main/run-turn.js";
+import { createMainAgent } from "../src/agents/main/agent.js";
 import { buildFileToolSet } from "../src/agents/main/tools/files.js";
 import { FileBundle, type StreamPart } from "@aep/agent-stream";
 import { SEED_FILES } from "./seed-files.js";
@@ -45,8 +46,7 @@ test("runTurn streams events, runs server-side execute, appends messages, return
   const messages: ModelMessage[] = [];
   const res = await runTurn({
     model,
-    instructions: "test",
-    tools,
+    agentFor: (run) => createMainAgent({ instructions: "test", tools }, run),
     messages,
     prompt: "change it",
     onEvent: (p) => events.push(p),
@@ -76,8 +76,7 @@ test("runTurn appends only (history grows across turns)", async () => {
 
   await runTurn({
     model: mockModel([{ kind: "text", text: "first" }]),
-    instructions: "t",
-    tools: buildFileToolSet(bundle).tools,
+    agentFor: (run) => createMainAgent({ instructions: "t", tools: buildFileToolSet(bundle).tools }, run),
     messages,
     prompt: "turn one",
   });
@@ -86,8 +85,7 @@ test("runTurn appends only (history grows across turns)", async () => {
 
   await runTurn({
     model: mockModel([{ kind: "text", text: "second" }]),
-    instructions: "t",
-    tools: buildFileToolSet(bundle).tools,
+    agentFor: (run) => createMainAgent({ instructions: "t", tools: buildFileToolSet(bundle).tools }, run),
     messages,
     prompt: "turn two",
   });
@@ -107,8 +105,7 @@ test("runTurn attaches file parts alongside the text prompt when fileParts is gi
 
   await runTurn({
     model: mockModel([{ kind: "text", text: "ok" }]),
-    instructions: "t",
-    tools: buildFileToolSet(bundle).tools,
+    agentFor: (run) => createMainAgent({ instructions: "t", tools: buildFileToolSet(bundle).tools }, run),
     messages,
     prompt: "read the brief",
     fileParts: [filePart],
@@ -128,8 +125,7 @@ test("runTurn with no fileParts keeps the plain string content (byte-identical t
 
   await runTurn({
     model: mockModel([{ kind: "text", text: "ok" }]),
-    instructions: "t",
-    tools: buildFileToolSet(bundle).tools,
+    agentFor: (run) => createMainAgent({ instructions: "t", tools: buildFileToolSet(bundle).tools }, run),
     messages,
     prompt: "change it",
   });
@@ -143,8 +139,7 @@ test("runTurn with an EMPTY fileParts array also keeps the plain string content"
 
   await runTurn({
     model: mockModel([{ kind: "text", text: "ok" }]),
-    instructions: "t",
-    tools: buildFileToolSet(bundle).tools,
+    agentFor: (run) => createMainAgent({ instructions: "t", tools: buildFileToolSet(bundle).tools }, run),
     messages,
     prompt: "change it",
     fileParts: [],

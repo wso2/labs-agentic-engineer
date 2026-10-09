@@ -27,6 +27,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // Handler serves the task read surface (list-tasks / get-task) plus the
@@ -35,9 +36,10 @@ import (
 // and plan operations the retired Huma surface also carried (plan-tasks,
 // execute-task, hold-task, unhold-task) are NOT in the committed contract and
 // were deliberately dropped from the HTTP edge (parked proposal in
-// packages/contracts/workflows). promote-task-from-issue STAYS in the
-// contract, though nothing in this repository calls it: the SRE handoff's
-// create_issue adopts and dispatches the issue itself.
+// packages/contracts/workflows). promote-task-from-issue STAYS: the console's
+// Issue card calls it to hand an issue to the coding agent, and the issue
+// agent's hand_to_coding_agent tool runs the same command (the SRE handoff's
+// create_issue adopts the issue itself).
 type Handler struct {
 	reads    *Reads
 	commands *Commands
@@ -150,10 +152,14 @@ func mapTaskCommandError(err error) error {
 		return apierr.NotFound("task not found")
 	case errors.Is(err, ErrProjectRepoNotFound):
 		return apierr.NotFound(ErrProjectRepoNotFound.Error())
-	case errors.Is(err, ErrIssueClosed):
-		return apierr.Conflict("issue is closed")
+	case errors.Is(err, sourcecontrol.ErrIssueNotFound):
+		return apierr.NotFound("issue not found")
 	case errors.Is(err, ErrComponentNameRequired):
 		return apierr.BadRequest(ErrComponentNameRequired.Error())
+	case delivery.AdoptionRefusal(err) != nil:
+		// Adoption declined the issue (no deployed version, closed, not the
+		// coding agent's): the 409 says why, in the words the person reads.
+		return apierr.Conflict(delivery.AdoptionRefusal(err).Error())
 	default:
 		return apierr.Internal("internal error")
 	}

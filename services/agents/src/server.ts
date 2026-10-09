@@ -55,11 +55,16 @@ import {
   isTurnSpec,
   isCollabConfig,
   isSurface,
+  isView,
+  isBranchNotes,
   isTurnAim,
   isTurnScope,
   isTurnAttachmentsOrAbsent,
   isTurnConnection,
   SURFACES,
+  VIEWS,
+  OUTCOME_MAX_CHARS,
+  type BranchNote,
   type CollabConfig,
   type McpConfig,
   type ProviderWaitPart,
@@ -70,6 +75,7 @@ import {
   type TurnScope,
   type TurnJournal,
   type TurnSpec,
+  type View,
 } from "@aep/agent-stream";
 import { composeInstruction, eagerSkillsFor, scopeFactFor, toolsetFor, wantsRegisterDraftTool } from "./prompts/turn.js";
 import type { ConversationStore } from "./store/conversation-store.js";
@@ -161,6 +167,28 @@ function isJournal(v: unknown): v is TurnJournal {
   return typeof a.id === "string" && a.id !== "" && typeof a.displayName === "string" && a.displayName !== "";
 }
 
+/**
+ * The cross-tenant fence for the conversation read/delete routes (§12): the
+ * id's org segment must equal the caller's X-Org-Id claim. Answers the
+ * refusal itself (400 malformed id, 403 org mismatch) and returns false then.
+ */
+function passesOrgFence(req: Request, res: Response, id: string): boolean {
+  try {
+    const claim = req.header("x-org-id");
+    if (!claim || conversationOrgId(id) !== claim) {
+      res.status(403).json({ error: "conversation org does not match the caller's organization" });
+      return false;
+    }
+    return true;
+  } catch (err) {
+    if (err instanceof WorkspaceRefError) {
+      res.status(err.status).json({ error: err.message });
+      return false;
+    }
+    throw err;
+  }
+}
+
 function startSSE(res: Response): void {
   res.status(200);
   res.setHeader("Content-Type", "text/event-stream");
@@ -228,6 +256,9 @@ export function createApp(deps: CreateAppDeps): Express {
       collab?: unknown;
       webSearch?: unknown;
       surface?: unknown;
+      view?: unknown;
+      issueNumber?: unknown;
+      branchNotes?: unknown;
       eagerSkills?: unknown;
       model?: unknown;
       connection?: unknown;
@@ -291,6 +322,46 @@ export function createApp(deps: CreateAppDeps): Express {
         return;
       }
       surface = body.surface;
+    }
+    // The main-panel view the user is in selects that view's agent (the Issues
+    // page → the issues tool set, a filed issue's thread → the issue tool set).
+    // Absent → the spec agent; unknown → a 400.
+    let view: View | undefined;
+    if (body.view !== undefined) {
+      if (!isView(body.view)) {
+        res.status(400).json({ error: `view must be one of: ${VIEWS.join(", ")}` });
+        return;
+      }
+      view = body.view;
+    }
+    // The issue an issue-view turn works on: its agent's prompt names it (the
+    // tools it acts with are fenced to it by their own token). Required for
+    // that view, refused on every other, so a number can never ride a turn it
+    // does not describe.
+    let issueNumber: number | undefined;
+    if (view === "issue") {
+      if (typeof body.issueNumber !== "number" || !Number.isInteger(body.issueNumber) || body.issueNumber < 1) {
+        res.status(400).json({ error: "issueNumber must be a positive integer for the issue view" });
+        return;
+      }
+      issueNumber = body.issueNumber;
+    } else if (body.issueNumber !== undefined) {
+      res.status(400).json({ error: "issueNumber is accepted only for the issue view" });
+      return;
+    }
+    // What the other views' chats did since the previous turn (aep-api reads
+    // it from its turn rows). Bounded on the way in: it lands in the prompt.
+    let branchNotes: BranchNote[] | undefined;
+    if (body.branchNotes !== undefined) {
+      if (!isBranchNotes(body.branchNotes)) {
+        res.status(400).json({
+          error:
+            "branchNotes must be an array of at most one { view, turns, outcome } per view: a known view, " +
+            `a positive integer turns, an outcome of at most ${OUTCOME_MAX_CHARS} characters`,
+        });
+        return;
+      }
+      branchNotes = body.branchNotes;
     }
     // aim (#666): what the user pointed at, and what for. Parsed BEFORE the
     // instruction because it leads the wording, and reused for the journal
@@ -367,14 +438,15 @@ export function createApp(deps: CreateAppDeps): Express {
     const instruction = composeInstruction(turn, {
       previousTurnFailed: body.previousTurnFailed === true,
       headless: body.headless === true,
+      ...(view ? { view } : {}),
       ...(scope ? { scope: scopeFactFor(scope, Object.keys(files)) } : {}),
       ...(aim ? { aim } : {}),
     });
 
     // toolset: which domain tools to register (§9.3). DERIVED from the turn —
     // planning registers the task tools and no file tools, everything else
-    // mutates the bundle.
-    const toolset: Toolset = toolsetFor(turn);
+    // mutates the bundle — unless the user's view owns an agent of its own.
+    const toolset: Toolset = toolsetFor(turn, view);
 
     // mcp (optional, dependency-management migration Phase 5): the BFF-minted
     // discovery endpoint + short-lived bearer for this turn. Absent → no MCP
@@ -517,7 +589,8 @@ export function createApp(deps: CreateAppDeps): Express {
     // up front, skipping the loadSkill round-trip. DERIVED from the turn —
     // which guidance a flow needs is a property of the flow, not of the call,
     // so a console CTA, a typed command and a playground run cannot diverge.
-    const derivedEager = eagerSkillsFor(turn, scope);
+    // A view's agent carries no spec flows, so there is nothing to inline.
+    const derivedEager = view ? [] : eagerSkillsFor(turn, scope);
     const eagerSkills = derivedEager.length > 0 ? derivedEager : undefined;
 
     // Build the per-turn model from the connection (fail as a pre-stream 500).
@@ -612,12 +685,14 @@ export function createApp(deps: CreateAppDeps): Express {
         ...(references.unreadable.length ? { unreadableReferences: references.unreadable } : {}),
         ...(chatAttachments.length ? { chatAttachments } : {}),
         ...(toolset ? { toolset } : {}),
+        ...(issueNumber !== undefined ? { issueNumber } : {}),
         ...(wantsRegisterDraftTool(turn, projectId) ? { registerDraft: true } : {}),
         ...(mcp ? { mcp } : {}),
         ...(journal ? { journal: { ...journal, turnId } } : {}),
         ...(eagerSkills ? { eagerSkills } : {}),
         webSearch: body.webSearch === true,
         ...(surface ? { surface } : {}),
+        ...(branchNotes?.length ? { branchNotes } : {}),
         ...(roomPeer ? { collabPeer: roomPeer } : {}),
         model,
         connection: conn,
@@ -657,24 +732,11 @@ export function createApp(deps: CreateAppDeps): Express {
   });
 
   app.get("/conversations/:id", requireAuth, async (req: Request, res: Response) => {
-    // The same cross-tenant fence as the turn POST (§12): the id's org segment
-    // must equal the caller's X-Org-Id claim. The M2M token is shared, so
-    // without this any holder could read another org's thread — which now
-    // carries per-turn author identities (#463).
+    // The same cross-tenant fence as the turn POST (§12). The M2M token is
+    // shared, so without it any holder could read another org's thread — which
+    // now carries per-turn author identities (#463).
     const id = req.params.id as string;
-    try {
-      const claim = req.header("x-org-id");
-      if (!claim || conversationOrgId(id) !== claim) {
-        res.status(403).json({ error: "conversation org does not match the caller's organization" });
-        return;
-      }
-    } catch (err) {
-      if (err instanceof WorkspaceRefError) {
-        res.status(err.status).json({ error: err.message });
-        return;
-      }
-      throw err;
-    }
+    if (!passesOrgFence(req, res, id)) return;
     const conv = await deps.store.get(id);
     if (!conv) {
       res.status(404).json({ error: "conversation not found" });
@@ -690,6 +752,17 @@ export function createApp(deps: CreateAppDeps): Express {
       createdAt: conv.createdAt,
       updatedAt: conv.updatedAt,
     });
+  });
+
+  // aep-api removes a closed issue's thread (round three §4). Idempotent:
+  // absent is the goal state, so an unknown id is 204 too. aep-api never sends
+  // this while a turn on the thread is running (it defers the removal to the
+  // turn's end), so a turn's final save cannot resurrect the thread.
+  app.delete("/conversations/:id", requireAuth, async (req: Request, res: Response) => {
+    const id = req.params.id as string;
+    if (!passesOrgFence(req, res, id)) return;
+    await deps.store.delete(id);
+    res.status(204).end();
   });
 
   // Body-parser errors (invalid JSON, malformed payloads) → a clean 400.

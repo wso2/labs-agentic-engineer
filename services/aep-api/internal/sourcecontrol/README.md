@@ -26,6 +26,8 @@ flowchart LR
 | Slice | Use-case | Entry |
 |---|---|---|
 | `issues` | file / search a project's issues | `POST`+`GET /projects/{projectName}/issues` |
+| `issues` (Issues agent) | the console Issues view's agent searches / files issues on its one project | `POST /internal/v1/issues/mcp` (`search_issues`, `create_issue`; `user_mcp.go`) |
+| `issues` (issue agent) | one issue's chat agent reads and works that one issue | the same endpoint on an issue token (`get_issue`, `list_components`, `comment_issue`, `edit_issue`, `close_issue`, `reopen_issue`, `hand_to_coding_agent`; `issue_mcp.go`) |
 
 *In the domain root rather than a slice: repo lifecycle, workspace, webhook register/receive (including
 the delivery ledger and its `webhook.Replayer`), and installation lifecycle.*
@@ -38,6 +40,9 @@ the delivery ledger and its `webhook.Replayer`), and installation lifecycle.*
 | `IssueService`, `RepoService` | offers | every domain that needs repos, issues or milestones |
 | `IssueAdopter` | needs | delivery admission for newly filed or reopened SRE work; refusal is returned as `adoptionError` |
 | `IncidentRecurrence` | needs | durable recurrence evidence before reopening; defaults to the GitHub-body ledger writer |
+| `issues.Promoter` | needs | the issue agent's hand-off — delivery's promote command (adapted in `app`); answers `issues.HandOffRefusedError` (no deployed version, a closed issue, not the coding agent's) in the words the user reads |
+| `issues.ComponentLister` | needs | the design's component names, sorted (spec's design, adapted in `app`) |
+| `issues.IssueThreadRemover` | needs (optional) | removes a closed issue's chat thread after `close_issue` — the threads created before the close, never one started after it; must not wait on the calling turn nor use its ctx once it returns; a failure is logged, never the tool's. `close_issue` posts the reason as a comment before closing, and says so when it could not |
 
 ## Owns
 - `git_repositories` (the repo coordinate registry) and `webhook_deliveries` — gorm + entities in this
@@ -47,6 +52,16 @@ the delivery ledger and its `webhook.Replayer`), and installation lifecycle.*
 - The bare-mirror workspace handle, and the GitHub host connection state.
 
 ## Invariants — don't break
+- **The Issues agent is fenced to one project.** `user_mcp.go` takes org + project only from the
+  `auth.IssuesMCPScope` bound from a per-turn token (aud `aep-api-issues-mcp`, claims `ocOrgId` +
+  `projectId`); no tool schema declares a project, org or labels, and unknown arguments are ignored.
+  Labels are server-set: `[kind, src/user]` with kind `bug | feature | improvement`. The tool names are
+  a contract with the agents service's filing gate, which keys on `create_issue`.
+- **An issue's agent is fenced to one issue.** The same endpoint serves a token minted with
+  `IssueIssueMCPToken` (claim `issueNumber` beside `ocOrgId` + `projectId`) the issue tools only, and
+  every one acts on the claimed number — no schema declares a number, project, org or labels. Each
+  token lists and calls only its own set; anything else is a tool error. Writes are confirmed by the
+  agents service's gate before they reach here; the tool names are its contract.
 - **SRE creation owns incident identity and outcomes.** A trusted transport binds the opaque incident
   identity with `WithIncidentContext`. Creation combines it with tenant/project and normalized component,
   ignoring the client dedupe key. `ops.ClassifyActions` determines classification; config-only ledger
@@ -80,6 +95,12 @@ the delivery ledger and its `webhook.Replayer`), and installation lifecycle.*
   1000 items). The bell polls the unfiltered list per alerting project every minute, so the cap bounds
   that poll's rate cost. Past it the oldest issues are missing from the list (logged); `GetIssue` still
   reads any issue by number. Paging the API contract itself is the follow-up if repositories outgrow it.
+- **A filed issue is listed at once (read-your-writes).** GitHub's list endpoint lags a creation by 3-10 s,
+  so `ListIssues` merges in the issues this process filed in the last minute (`recent_issues.go`, per
+  `owner/repo`) that GitHub's answer lacks and that satisfy the label filter, newest first; an entry is
+  dropped when GitHub lists it or after 60 s. The platform's own close, reopen and title/body edits update
+  the remembered entry in place, and the dedupe lookups read the same merged list. The memory is per process: it holds for the single
+  replica the deployment runs, and a list answered by another replica still sees the lag.
 - **`Host` is provider-neutral.** GitHub specifics live in `githubhost`; nothing above it names GitHub
   — including whether an op rides REST or GraphQL.
 - **A milestone is addressed by NUMBER, never by title.** Titles are renamable, and the host enforces
@@ -121,8 +142,10 @@ the delivery ledger and its `webhook.Replayer`), and installation lifecycle.*
   replayed. The last failed attempt logs `webhook: delivery abandoned` and the row keeps its error.
   What a delivery past its window was for is `eventcore`'s reconcile sweeps' to heal
   (`webhook.ReplayHorizon` sets their grace). Every handler must stay idempotent: a replay re-runs
-  whatever the failed attempt got through. A routing failure is answered before anything is
-  persisted, so nothing replays it.
+  whatever the failed attempt got through, and a replay can run long after the event, so a handler
+  that needs the event's time reads the payload's own stamp, else `webhook.ReceivedAt(ctx)` — the
+  delivery's first receipt, carried by every attempt. A routing failure is answered before anything
+  is persisted, so nothing replays it.
 - **A stored delivery never carries a published credential.** Every verified webhook delivery's
   body is persisted to `webhook_payloads` — for audit, and as what the `Replayer` re-runs — so a comment the
   platform posts *on purpose* carrying credentials would land in the database in cleartext, the one

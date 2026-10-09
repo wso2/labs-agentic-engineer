@@ -24,7 +24,9 @@
 import type { components } from "../../../generated/aep-api";
 import { client } from "../../../api/client";
 import { apiErrorMessage } from "../../../api/errors";
+import { wireQuery, type ChatView } from "../chatView";
 import type { TurnBody } from "../turnScope";
+import { IssueClosedError } from "./errors";
 
 export type TurnStatus = components["schemas"]["TurnStatus"];
 type TurnConflict = components["schemas"]["TurnConflict"];
@@ -64,8 +66,9 @@ export async function startTurn(projectName: string, conversationId: string, bod
   if (error || data === undefined) {
     if (response.status === 409) {
       // The pinned TurnConflict: turn_in_progress / requirements_missing /
-      // conversation_rotated (#430).
+      // conversation_rotated (#430) / issue_closed.
       const conflict = error as Partial<TurnConflict> | undefined;
+      if (conflict?.code === "issue_closed") throw new IssueClosedError();
       if (conflict?.code === "conversation_rotated") throw new ConversationRotatedError();
       if (conflict?.code === "turn_in_progress") throw new TurnInProgressError(conflict.activeTurnId);
     }
@@ -74,10 +77,11 @@ export async function startTurn(projectName: string, conversationId: string, bod
   return data.turnId;
 }
 
-/** The project's running turn, or null (204, or the read failed). */
-export async function getActiveTurn(projectName: string): Promise<TurnStatus | null> {
+/** The project's running turn in a view (the main chat's by default; an issue's by its number), or null (204, or the read failed). */
+export async function getActiveTurn(projectName: string, view?: ChatView, issueNumber?: number): Promise<TurnStatus | null> {
+  const query = wireQuery(view, issueNumber);
   const { data, error, response } = await client.GET("/projects/{projectName}/turns/active", {
-    params: { path: { projectName } },
+    params: { path: { projectName }, ...(query ? { query } : {}) },
   });
   if (response.status === 204 || error || data === undefined) return null;
   return data;

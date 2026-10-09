@@ -17,8 +17,8 @@
 package spec_test
 
 // DB tier for the agent_turns store: the D18 partial-unique guard
-// (ux_agent_turns_active), the guarded Finish, and the stale-heartbeat sweep —
-// against a real migrated Postgres (dbtest; skipped under -short).
+// (ux_agent_turns_active_use_case), the guarded Finish, and the stale-heartbeat
+// sweep — against a real migrated Postgres (dbtest; skipped under -short).
 
 import (
 	"context"
@@ -58,7 +58,7 @@ func TestTurnRepo_GuardAndLifecycle(t *testing.T) {
 	repo := spec.NewTurnRepository(dbtest.New(t), nil)
 	ctx := context.Background()
 
-	first, err := repo.TryStart(ctx, newTurn("o1", "p1", "c1", "requirements-chat"))
+	first, err := repo.TryStart(ctx, newTurn("o1", "p1", "c1", "general"))
 	if err != nil {
 		t.Fatalf("first TryStart: %v", err)
 	}
@@ -66,9 +66,9 @@ func TestTurnRepo_GuardAndLifecycle(t *testing.T) {
 		t.Fatalf("first row = %+v", first)
 	}
 
-	// D18: a second start on the same project (any use case / conversation)
+	// D18: a second start on the same project and use case (any conversation)
 	// hits the partial unique index and returns the active row.
-	active, err := repo.TryStart(ctx, newTurn("o1", "p1", "c2", "design-generate"))
+	active, err := repo.TryStart(ctx, newTurn("o1", "p1", "c2", "general"))
 	if err != spec.ErrTurnActive {
 		t.Fatalf("second TryStart err = %v, want spec.ErrTurnActive", err)
 	}
@@ -76,12 +76,12 @@ func TestTurnRepo_GuardAndLifecycle(t *testing.T) {
 		t.Fatalf("active = %+v, want the first row", active)
 	}
 	// A different project is not blocked.
-	if _, err := repo.TryStart(ctx, newTurn("o1", "p2", "c1", "requirements-chat")); err != nil {
+	if _, err := repo.TryStart(ctx, newTurn("o1", "p2", "c1", "general")); err != nil {
 		t.Fatalf("other-project TryStart: %v", err)
 	}
 
 	// GetActive / Get honour the (org, project) fence.
-	got, err := repo.GetActive(ctx, "o1", "p1")
+	got, err := repo.GetActive(ctx, "o1", "p1", "general")
 	if err != nil || got == nil || got.ID != first.ID {
 		t.Fatalf("GetActive = (%+v, %v)", got, err)
 	}
@@ -116,7 +116,7 @@ func TestTurnRepo_GuardAndLifecycle(t *testing.T) {
 		len(decodePaths(done.Paths)) != 1 {
 		t.Fatalf("terminal row = %+v", done)
 	}
-	if active, _ := repo.GetActive(ctx, "o1", "p1"); active != nil {
+	if active, _ := repo.GetActive(ctx, "o1", "p1", "general"); active != nil {
 		t.Fatalf("guard not released: %+v", active)
 	}
 
@@ -130,8 +130,74 @@ func TestTurnRepo_GuardAndLifecycle(t *testing.T) {
 	}
 
 	// Guard released → a new turn on the project is admitted.
-	if _, err := repo.TryStart(ctx, newTurn("o1", "p1", "c1", "requirements-chat")); err != nil {
+	if _, err := repo.TryStart(ctx, newTurn("o1", "p1", "c1", "general")); err != nil {
 		t.Fatalf("post-terminal TryStart: %v", err)
+	}
+}
+
+// The one-active-turn guard is per use case: the Issues chat runs beside the
+// spec chat, so a running turn in one never blocks the other — while a second
+// turn in the SAME use case is still refused with the row that holds it.
+func TestTryStart_GuardIsPerUseCase(t *testing.T) {
+	t.Parallel()
+	repo := spec.NewTurnRepository(dbtest.New(t), nil)
+	ctx := context.Background()
+
+	general, err := repo.TryStart(ctx, newTurn("o1", "p1", "c-main", "general"))
+	if err != nil {
+		t.Fatalf("general TryStart: %v", err)
+	}
+	issues, err := repo.TryStart(ctx, newTurn("o1", "p1", "c-issues", "issues"))
+	if err != nil {
+		t.Fatalf("issues TryStart beside a running general turn: %v", err)
+	}
+
+	active, err := repo.TryStart(ctx, newTurn("o1", "p1", "c-issues", "issues"))
+	if err != spec.ErrTurnActive {
+		t.Fatalf("second issues TryStart err = %v, want spec.ErrTurnActive", err)
+	}
+	if active == nil || active.ID != issues.ID {
+		t.Fatalf("second issues TryStart returned %+v, want the running issues row %s", active, issues.ID)
+	}
+
+	got, err := repo.GetActive(ctx, "o1", "p1", "general")
+	if err != nil || got == nil || got.ID != general.ID {
+		t.Fatalf("GetActive(general) = (%+v, %v), want the general row %s", got, err, general.ID)
+	}
+	got, err = repo.GetActive(ctx, "o1", "p1", "issues")
+	if err != nil || got == nil || got.ID != issues.ID {
+		t.Fatalf("GetActive(issues) = (%+v, %v), want the issues row %s", got, err, issues.ID)
+	}
+}
+
+// Newest answers for one use case: the kickoff guard and the status poll ask
+// about the spec chat, so an Issues turn — however recent — is not their answer.
+func TestNewest_ScopedToUseCase(t *testing.T) {
+	t.Parallel()
+	repo := spec.NewTurnRepository(dbtest.New(t), nil)
+	ctx := context.Background()
+	t0 := time.Now().UTC().Add(-time.Minute)
+
+	older := newTurn("o1", "p1", "c-main", "general")
+	older.CreatedAt = t0
+	general, err := repo.TryStart(ctx, older)
+	if err != nil {
+		t.Fatalf("general TryStart: %v", err)
+	}
+	newer := newTurn("o1", "p1", "c-issues", "issues")
+	newer.CreatedAt = t0.Add(30 * time.Second)
+	issues, err := repo.TryStart(ctx, newer)
+	if err != nil {
+		t.Fatalf("issues TryStart: %v", err)
+	}
+
+	got, err := repo.Newest(ctx, "o1", "p1", "general")
+	if err != nil || got == nil || got.ID != general.ID {
+		t.Fatalf("Newest(general) = (%+v, %v), want the older general row %s", got, err, general.ID)
+	}
+	got, err = repo.Newest(ctx, "o1", "p1", "issues")
+	if err != nil || got == nil || got.ID != issues.ID {
+		t.Fatalf("Newest(issues) = (%+v, %v), want the issues row %s", got, err, issues.ID)
 	}
 }
 
@@ -330,5 +396,101 @@ func TestTurnRepo_SumUsageByProjectHost(t *testing.T) {
 	}
 	if h := got["p-mixed"].Host; h != "" {
 		t.Errorf("p-mixed host = %q, want \"\" (mixed hosts)", h)
+	}
+}
+
+// An Issues turn's outcome (its last reply) lands on its row; a turn without
+// one keeps the column NULL.
+func TestTurnRepo_FinishStoresTheOutcome(t *testing.T) {
+	t.Parallel()
+	repo := spec.NewTurnRepository(dbtest.New(t), nil)
+	ctx := context.Background()
+
+	withOutcome, err := repo.TryStart(ctx, newTurn("o1", "p1", "c-issues", "issues"))
+	if err != nil {
+		t.Fatalf("TryStart: %v", err)
+	}
+	if ok, err := repo.Finish(ctx, withOutcome.ID, spec.TurnTerminal{Status: "completed", NoChanges: true, Outcome: "Filed #12."}); err != nil || !ok {
+		t.Fatalf("Finish = (%v, %v)", ok, err)
+	}
+	got, _ := repo.Get(ctx, "o1", "p1", withOutcome.ID)
+	if got.Outcome == nil || *got.Outcome != "Filed #12." {
+		t.Fatalf("row outcome = %v, want Filed #12.", got.Outcome)
+	}
+
+	without, err := repo.TryStart(ctx, newTurn("o1", "p1", "c-issues", "issues"))
+	if err != nil {
+		t.Fatalf("second TryStart: %v", err)
+	}
+	if ok, err := repo.Finish(ctx, without.ID, spec.TurnTerminal{Status: "completed", NoChanges: true}); err != nil || !ok {
+		t.Fatalf("Finish = (%v, %v)", ok, err)
+	}
+	got, _ = repo.Get(ctx, "o1", "p1", without.ID)
+	if got.Outcome != nil {
+		t.Fatalf("row outcome = %q, want NULL", *got.Outcome)
+	}
+}
+
+// BranchOutcomes counts the completed turns of one project's use case that
+// FINISHED after `since` and carry an outcome, and returns the most recently
+// finished one's. A turn created before `since` that finished after it (it ran
+// while the main turn was being dispatched) IS counted; one that finished
+// before it, another project's, another use case's, a failed one and one
+// without an outcome are not.
+func TestTurnRepo_BranchOutcomes(t *testing.T) {
+	t.Parallel()
+	db := dbtest.New(t)
+	repo := spec.NewTurnRepository(db, nil)
+	ctx := context.Background()
+	since := time.Now().UTC().Add(-time.Hour)
+
+	// run starts a turn created at `at` and finishes it; finishedAt, when
+	// set, overrides the finish time Finish stamped (now) on updated_at.
+	run := func(project, useCase string, at time.Time, term spec.TurnTerminal, finishedAt *time.Time) {
+		t.Helper()
+		row := newTurn("o1", project, "c-"+useCase, useCase)
+		row.CreatedAt = at
+		started, err := repo.TryStart(ctx, row)
+		if err != nil {
+			t.Fatalf("TryStart: %v", err)
+		}
+		if ok, err := repo.Finish(ctx, started.ID, term); err != nil || !ok {
+			t.Fatalf("Finish = (%v, %v)", ok, err)
+		}
+		got, _ := repo.Get(ctx, "o1", project, started.ID)
+		if !got.UpdatedAt.After(since) {
+			t.Fatalf("Finish left updated_at at %v, want the finish time", got.UpdatedAt)
+		}
+		if finishedAt != nil {
+			if err := db.Exec("UPDATE agent_turns SET updated_at = ? WHERE id = ?", *finishedAt, started.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	done := func(outcome string) spec.TurnTerminal {
+		return spec.TurnTerminal{Status: "completed", NoChanges: true, Outcome: outcome}
+	}
+	at := func(d time.Duration) *time.Time { v := since.Add(d); return &v }
+
+	if turns, latest, err := repo.BranchOutcomes(ctx, "o1", "p1", "issues", since); err != nil || turns != 0 || latest != "" {
+		t.Fatalf("no turns: BranchOutcomes = (%d, %q, %v), want (0, \"\", nil)", turns, latest, err)
+	}
+
+	run("p1", "issues", since.Add(-2*time.Minute), done("finished before since"), at(-time.Minute))
+	run("p2", "issues", since.Add(time.Minute), done("another project"), nil)
+	run("p1", "general", since.Add(2*time.Minute), done("another use case"), nil)
+	run("p1", "issues", since.Add(3*time.Minute), done("Which page is it on?"), at(4*time.Minute))
+	run("p1", "issues", since.Add(5*time.Minute), spec.TurnTerminal{Status: "failed", Reason: "stream-died", Outcome: "failed"}, nil)
+	run("p1", "issues", since.Add(6*time.Minute), done(""), nil)
+	// Created before `since`, finished after it (now): counted, and the most
+	// recently finished, so its outcome is the latest.
+	run("p1", "issues", since.Add(-time.Minute), done("Filed #12: Save button does nothing."), nil)
+
+	turns, latest, err := repo.BranchOutcomes(ctx, "o1", "p1", "issues", since)
+	if err != nil || turns != 2 || latest != "Filed #12: Save button does nothing." {
+		t.Fatalf("BranchOutcomes = (%d, %q, %v), want (2, the most recently finished outcome, nil)", turns, latest, err)
+	}
+	if turns, _, _ := repo.BranchOutcomes(ctx, "o1", "p1", "issues", time.Time{}); turns != 3 {
+		t.Fatalf("since zero: turns = %d, want 3 (the earlier-finished row counts too)", turns)
 	}
 }

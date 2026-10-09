@@ -20,6 +20,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
@@ -129,6 +131,17 @@ func (d designComponents) ComponentPaths(ctx context.Context, orgID, projectID s
 		paths[c.Name] = strings.Trim(c.AppPath, "/")
 	}
 	return paths, nil
+}
+
+// ListComponents lists the design's component names as authored, sorted — the
+// issue agent's hand-off choices. Empty when there is no design. Satisfies
+// scissues.ComponentLister.
+func (d designComponents) ListComponents(ctx context.Context, orgID, projectID string) ([]string, error) {
+	paths, err := d.ComponentPaths(ctx, orgID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	return slices.Sorted(maps.Keys(paths)), nil
 }
 
 // DeclaredResources maps each design component to its App Path plus the wiring

@@ -82,7 +82,8 @@ func knownTurnErrorCode(code string) bool {
 }
 
 // ErrTurnActive is returned by TryStart when another turn holds the D18
-// one-active-turn-per-project guard; the accompanying row is the active turn.
+// one-active-turn guard (per project and chat view); the accompanying row is
+// the active turn.
 var ErrTurnActive = errors.New("a turn is already running for this project")
 
 // TurnTerminal is the terminal state Finish stamps onto a running row.
@@ -108,6 +109,9 @@ type TurnTerminal struct {
 	// ContextTokens is the conversation's context size at the turn's end
 	// (AgentTurn.ContextTokens); nil when the turn left no measure.
 	ContextTokens *int64
+	// Outcome is an Issues turn's outcome (the filing, else its last reply) off its manifest
+	// (AgentTurn.Outcome); "" when there was none.
+	Outcome string
 	// SpecEdited is true when the turn authored real spec changes: a committed
 	// turn whose fold produced a net change, or a room-scoped turn whose agent
 	// edited the collab doc (issue #239 — the activity feed's agent-authorship
@@ -122,12 +126,13 @@ type TurnTerminal struct {
 }
 
 // TurnRepository is the agent_turns row store (design D17/D18): the durable
-// turn record, the one-active guard, and the stale-heartbeat sweep. Lookups
+// turn record, the one-active guard (per project and use case — one per chat
+// view), and the stale-heartbeat sweep. Lookups
 // miss with (nil, nil), matching the house convention.
 type TurnRepository interface {
 	// TryStart INSERTs the running row; on conflict with the D18 partial
-	// unique index it fetches and returns the active row alongside
-	// ErrTurnActive. On success the passed row (ID populated) is returned.
+	// unique index (one running row per org, project and use case) it fetches
+	// and returns the active row of t.UseCase alongside ErrTurnActive. On success the passed row (ID populated) is returned.
 	TryStart(ctx context.Context, t *AgentTurn) (*AgentTurn, error)
 
 	// Heartbeat bumps heartbeat_at on a still-running row (no-op otherwise).
@@ -142,8 +147,9 @@ type TurnRepository interface {
 	// tenant fence for the status/stream endpoints. (nil, nil) on miss.
 	Get(ctx context.Context, orgID, projectID, turnID string) (*AgentTurn, error)
 
-	// GetActive returns the project's running turn, or (nil, nil).
-	GetActive(ctx context.Context, orgID, projectID string) (*AgentTurn, error)
+	// GetActive returns the project's running turn in one use case, or
+	// (nil, nil).
+	GetActive(ctx context.Context, orgID, projectID, useCase string) (*AgentTurn, error)
 
 	// LastTerminal returns the most recent completed/failed turn of a
 	// conversation — the D20 filesChangedExternally / divergence-note input.
@@ -155,6 +161,15 @@ type TurnRepository interface {
 	// severed stream) left the saved history as it was, so it is skipped
 	// rather than read as an empty conversation.
 	LastContextTokens(ctx context.Context, orgID, projectID, conversationID string) (*int64, error)
+
+	// BranchOutcomes counts the project's COMPLETED turns of one use case
+	// that FINISHED after `since` and carry an outcome, and returns the most
+	// recently finished one's outcome ("" when there are none). The main
+	// chat's dispatch reads the Issues chat this way to tell its agent what
+	// happened there since its own previous turn (agentsvc.BranchNote).
+	// Finished, not created: an Issues turn still running when the main turn
+	// was dispatched must reach the NEXT main turn rather than neither.
+	BranchOutcomes(ctx context.Context, orgID, projectID, useCase string, since time.Time) (turns int, latest string, err error)
 
 	// NewestCompletedFlow returns the project's most recent COMPLETED turn of
 	// one flow ("design", "start", …), or (nil, nil) when it has run none.
@@ -171,16 +186,18 @@ type TurnRepository interface {
 	// find, per feature, the run that last designed it (E1).
 	CompletedFlows(ctx context.Context, orgID, projectID, flow string, limit int) ([]AgentTurn, error)
 
-	// Newest returns the project's most recent turn row, running or terminal,
-	// across every conversation — or (nil, nil) when nothing has ever run.
+	// Newest returns the project's most recent turn row in one use case,
+	// running or terminal, across every conversation of it — or (nil, nil)
+	// when nothing has ever run there.
 	//
-	// Two callers, both needing "has this project ever had an agent work on
-	// it, and what is it doing now" (#562): the kickoff's idempotence guard,
-	// and the status poll's spec.agent field. Project-scoped rather than
+	// Two callers, both asking about the spec chat (UseCaseGeneral) "has this
+	// project ever had an agent work on it, and what is it doing now" (#562):
+	// the kickoff's idempotence guard, and the status poll's spec.agent field.
+	// Use-case-scoped so an Issues turn is never mistaken for spec work; NOT
 	// conversation-scoped BECAUSE rotation exists — a rotated thread would
 	// otherwise make an interviewed project look untouched and re-fire the
 	// kickoff into it.
-	Newest(ctx context.Context, orgID, projectID string) (*AgentTurn, error)
+	Newest(ctx context.Context, orgID, projectID, useCase string) (*AgentTurn, error)
 
 	// SweepStale fails every running row whose heartbeat predates olderThan
 	// (reason stream-died, message "replica crashed or hung") and returns the
@@ -223,7 +240,7 @@ func (r *turnRepository) TryStart(ctx context.Context, t *AgentTurn) (*AgentTurn
 		if res.RowsAffected > 0 {
 			return t, nil
 		}
-		active, err := r.GetActive(ctx, t.OrgID, t.ProjectID)
+		active, err := r.GetActive(ctx, t.OrgID, t.ProjectID, t.UseCase)
 		if err != nil {
 			return nil, err
 		}
@@ -254,6 +271,9 @@ func (r *turnRepository) Finish(ctx context.Context, id string, terminal TurnTer
 	}
 	if terminal.ContextTokens != nil {
 		updates["context_tokens"] = *terminal.ContextTokens
+	}
+	if terminal.Outcome != "" {
+		updates["outcome"] = terminal.Outcome
 	}
 	if u := terminal.Usage; u != nil {
 		updates["input_tokens"] = u.InputTokens
@@ -320,10 +340,11 @@ func (r *turnRepository) Get(ctx context.Context, orgID, projectID, turnID strin
 	return &t, nil
 }
 
-func (r *turnRepository) GetActive(ctx context.Context, orgID, projectID string) (*AgentTurn, error) {
+func (r *turnRepository) GetActive(ctx context.Context, orgID, projectID, useCase string) (*AgentTurn, error) {
 	var t AgentTurn
 	err := r.db.WithContext(ctx).
-		Where("org_id = ? AND project_id = ? AND status = ?", orgID, projectID, turnStatusRunning).
+		Where("org_id = ? AND project_id = ? AND use_case = ? AND status = ?",
+			orgID, projectID, useCase, turnStatusRunning).
 		First(&t).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
@@ -367,20 +388,52 @@ func (r *turnRepository) LastContextTokens(ctx context.Context, orgID, projectID
 	return &tokens[0], nil
 }
 
+// BranchOutcomes uses updated_at as the finish time: a terminal row is never
+// written again (Heartbeat and Finish are guarded on status running, the sweep
+// only claims running rows, and Finish's Updates stamps updated_at), so on a
+// completed row updated_at is when it finished.
+//
+// No index of its own: the (org_id, project_id) prefix of
+// `ix_agent_turns_project_newest` narrows the read to one project's turns and
+// the rest is a heap filter. It runs once per main-chat dispatch — never on a
+// poll — and a project holds hundreds of turns, not millions.
+func (r *turnRepository) BranchOutcomes(ctx context.Context, orgID, projectID, useCase string, since time.Time) (int, string, error) {
+	finished := r.db.WithContext(ctx).
+		Model(&AgentTurn{}).
+		Where("org_id = ? AND project_id = ? AND use_case = ? AND status = ? AND updated_at > ? AND outcome IS NOT NULL",
+			orgID, projectID, useCase, turnStatusCompleted, since)
+	var turns int64
+	if err := finished.Session(&gorm.Session{}).Count(&turns).Error; err != nil || turns == 0 {
+		return 0, "", err
+	}
+	var latest []string
+	if err := finished.Session(&gorm.Session{}).Order("updated_at DESC").Limit(1).Pluck("outcome", &latest).Error; err != nil {
+		return 0, "", err
+	}
+	if len(latest) == 0 { // finished between the two reads' snapshots; nothing to say
+		return 0, "", nil
+	}
+	return int(turns), latest[0], nil
+}
+
 // Newest reads one row off `ix_agent_turns_project_newest`
 // (org_id, project_id, created_at DESC — migrate/agent_turns.go), whose column
 // order IS this query's, so it is a single index read rather than a sort of
 // every turn the project has ever run. That matters: the status poll runs this
 // every 5s per viewer while an agent works.
 //
-// A RUNNING row is always the newest one the project has: TryStart's partial
-// unique admits at most one, and no later row can be inserted while it holds
-// the guard — so ordering by creation is enough to find it, with no status
-// precedence.
-func (r *turnRepository) Newest(ctx context.Context, orgID, projectID string) (*AgentTurn, error) {
+// The use case is filtered as the index is walked, so the read also steps over
+// the other chat view's turns newer than the answer — the Issues chat's recent
+// turns, bounded by that chat's own volume rather than the project's history.
+//
+// A RUNNING row is always the newest one its use case has: TryStart's partial
+// unique admits at most one per use case, and no later row of that use case
+// can be inserted while it holds the guard — so ordering by creation is enough
+// to find it, with no status precedence.
+func (r *turnRepository) Newest(ctx context.Context, orgID, projectID, useCase string) (*AgentTurn, error) {
 	var t AgentTurn
 	err := r.db.WithContext(ctx).
-		Where("org_id = ? AND project_id = ?", orgID, projectID).
+		Where("org_id = ? AND project_id = ? AND use_case = ?", orgID, projectID, useCase).
 		Order("created_at DESC").
 		First(&t).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {

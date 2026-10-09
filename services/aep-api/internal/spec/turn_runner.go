@@ -34,6 +34,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf16"
 
 	"github.com/wso2/aep/aep-api/internal/clients/agentsvc"
 	"github.com/wso2/aep/aep-api/internal/contracts"
@@ -62,6 +63,7 @@ type turnJob struct {
 	orgID            string
 	projectID        string
 	flow             string               // recognised `/<skill>` token ("start", "design", …); "" for plain chat
+	chat             ChatScope            // the chat the turn was sent from (validated at admission)
 	conversationID   string               // FE-chosen uuid (agent_turns key)
 	nsConversationID string               // namespaced agents-service id
 	turn             agentsvc.TurnSpec    // what this turn is FOR (the agents service composes the text)
@@ -245,10 +247,18 @@ func journalAuthorFrom(ctx context.Context) *agentsvc.JournalAuthor {
 // the agents service calls back into. Returns nil (no MCP block) when the minter
 // / base URL are not wired, when the turn is none of those, or when minting
 // fails — a turn without MCP is
-// byte-identical to today, so this is best-effort.
+// byte-identical to today, so this is best-effort. An Issues-view turn gets the
+// project-fenced issue tools instead (issuesMCPForTurn), whatever its flow, and
+// an issue-view turn the same endpoint on a token fenced to its one issue.
 func (s *Service) mcpForTurn(ctx context.Context, job turnJob) *agentsvc.MCPBlock {
 	if s.mcpTokens == nil || s.mcpBaseURL == "" {
 		return nil
+	}
+	switch job.chat.View {
+	case ChatViewIssues:
+		return s.issuesMCPForTurn(ctx, job)
+	case ChatViewIssue:
+		return s.issueMCPForTurn(ctx, job)
 	}
 	if !catalogTurn(job) {
 		return nil
@@ -265,10 +275,48 @@ func (s *Service) mcpForTurn(ctx context.Context, job turnJob) *agentsvc.MCPBloc
 	}
 }
 
+// issuesMCPForTurn mints the Issues turn's MCP block: a token (aud
+// aep-api-issues-mcp) fenced to the turn's org AND project, plus the BFF's
+// issue-tools endpoint. The agent can search and file issues on that one
+// project only. Best-effort like the discovery block: a mint failure dispatches
+// the turn without tools.
+func (s *Service) issuesMCPForTurn(ctx context.Context, job turnJob) *agentsvc.MCPBlock {
+	token, err := s.mcpTokens.IssueIssuesMCPToken(job.orgID, job.projectID)
+	if err != nil {
+		slog.WarnContext(ctx, "genai: issues MCP token mint failed — dispatching turn without issue tools",
+			"turn", job.turnID, "error", err)
+		return nil
+	}
+	return s.issueToolsBlock(token)
+}
+
+// issueMCPForTurn mints an issue turn's MCP block: the issue-tools endpoint on
+// a token fenced to the turn's org, project AND issue number, so the issue's
+// agent reads and writes that one issue whatever it sends. Best-effort like
+// issuesMCPForTurn.
+func (s *Service) issueMCPForTurn(ctx context.Context, job turnJob) *agentsvc.MCPBlock {
+	token, err := s.mcpTokens.IssueIssueMCPToken(job.orgID, job.projectID, job.chat.IssueNumber)
+	if err != nil {
+		slog.WarnContext(ctx, "genai: issue MCP token mint failed — dispatching turn without issue tools",
+			"turn", job.turnID, "issue", job.chat.IssueNumber, "error", err)
+		return nil
+	}
+	return s.issueToolsBlock(token)
+}
+
+// issueToolsBlock is the BFF's issue-tools endpoint carrying token.
+func (s *Service) issueToolsBlock(token string) *agentsvc.MCPBlock {
+	return &agentsvc.MCPBlock{
+		URL:   strings.TrimRight(s.mcpBaseURL, "/") + "/internal/v1/issues/mcp",
+		Token: token,
+	}
+}
+
 // executeTurn produces the turn's terminal state (never panics the goroutine).
 func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 	filesChangedExternally := false
 	previousTurnFailed := false
+	var branchNotes []agentsvc.BranchNote
 	// D20: both flags are server-derived — the last terminal turn of this
 	// conversation landed a ref different from the current base (an Apply,
 	// another conversation's turn, or an external push moved main), and/or it
@@ -277,13 +325,18 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 	if last, err := s.turns.LastTerminal(ctx, job.orgID, job.projectID, job.conversationID); err != nil {
 		slog.WarnContext(ctx, "genai: last-terminal lookup failed — dispatching without the D20 flags",
 			"turn", job.turnID, "error", err)
-	} else if last != nil {
-		landed := last.CommitSHA
-		if landed == "" {
-			landed = last.BaseRef
+	} else {
+		if last != nil {
+			landed := last.CommitSHA
+			if landed == "" {
+				landed = last.BaseRef
+			}
+			filesChangedExternally = landed != job.baseRef
+			previousTurnFailed = last.Status == turnStatusFailed
 		}
-		filesChangedExternally = landed != job.baseRef
-		previousTurnFailed = last.Status == turnStatusFailed
+		if job.chat.View == ChatViewMain {
+			branchNotes = s.branchNotes(ctx, job, last)
+		}
 	}
 
 	// Heartbeat the row for the WHOLE run, starting BEFORE dispatch (D17).
@@ -337,6 +390,9 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 		Collab:                 collab,
 		Journal:                journalFor(job),
 		Surface:                agentsvc.SurfaceConsole,
+		View:                   string(job.chat.View),
+		IssueNumber:            job.chat.IssueNumber,
+		BranchNotes:            branchNotes,
 		// The attachments themselves, not just their names on the journal. Both
 		// are needed and they are NOT the same thing: the journal drives the
 		// chips a reader sees, this is what the MODEL reads. Omitting it made a
@@ -515,16 +571,56 @@ func noManifestTerminal(end agentfold.StreamEnd, agentErr *agentfold.TurnError) 
 	return failedTerminal(turnReasonStreamDied, msg, nil)
 }
 
-// withUsage stamps the manifest's token spend (#249) and the turn's closing
-// context size onto a terminal. A nil manifest leaves both unset: without it
-// the agents service saved nothing into the conversation, so the context the
-// steps reached is not the history the next turn reads. A manifest without
-// usage (pre-capture agents) leaves the spend unset.
+// branchNotes reads what the Issues chat came to since the main chat's
+// previous turn: one note with the Issues turns that finished since and the
+// most recent outcome (capped to the wire's limit), or none when no Issues
+// turn finished with one. Best-effort: a failed read dispatches without the
+// note rather than failing the turn.
+//
+// "Since" is the previous terminal turn's creation — its dispatch read the
+// Issues turns finished by then. A note goes to the turn that read it: if that
+// turn then fails, the next one starts after it and the note is not re-sent
+// (accepted; the failed turn's history already claims it). With no previous
+// turn — a fresh or rotated thread — it is the thread's creation, so the
+// first turn is not handed the project's whole Issues history.
+func (s *Service) branchNotes(ctx context.Context, job turnJob, last *AgentTurn) []agentsvc.BranchNote {
+	var since time.Time
+	switch {
+	case last != nil:
+		since = last.CreatedAt
+	case s.conversations != nil:
+		created, err := s.conversations.CreatedAt(ctx, job.orgID, job.projectID, UseCaseGeneral, job.conversationID)
+		if err != nil {
+			slog.WarnContext(ctx, "genai: conversation lookup failed — dispatching without branch notes",
+				"turn", job.turnID, "error", err)
+			return nil
+		}
+		since = created
+	}
+	turns, latest, err := s.turns.BranchOutcomes(ctx, job.orgID, job.projectID, useCaseIssues, since)
+	if err != nil {
+		slog.WarnContext(ctx, "genai: branch-outcomes lookup failed — dispatching without branch notes",
+			"turn", job.turnID, "error", err)
+		return nil
+	}
+	if turns == 0 {
+		return nil
+	}
+	return []agentsvc.BranchNote{{View: string(ChatViewIssues), Turns: turns, Outcome: capOutcome(latest)}}
+}
+
+// withUsage stamps the manifest's token spend (#249), the turn's closing
+// context size and its outcome (an Issues turn's filing, else its last reply) onto a terminal.
+// A nil manifest leaves all three unset: without it the agents service saved
+// nothing into the conversation, so the context the steps reached is not the
+// history the next turn reads. A manifest without usage (pre-capture agents)
+// leaves the spend unset.
 func withUsage(term TurnTerminal, m *agentfold.Manifest, contextTokens *int64) TurnTerminal {
 	if m == nil {
 		return term
 	}
 	term.ContextTokens = contextTokens
+	term.Outcome = m.Outcome
 	if m.Usage == nil {
 		return term
 	}
@@ -541,7 +637,12 @@ func withUsage(term TurnTerminal, m *agentfold.Manifest, contextTokens *int64) T
 // finishTurn stamps the terminal row state and emits the ONE terminal stream
 // event. A row that is no longer running (swept mid-run) keeps the sweep's
 // verdict — the runner does not overwrite it or emit a competing terminal.
+// Either way the turn is over, so a closed issue's thread removal that waited
+// for it runs last.
 func (s *Service) finishTurn(ctx context.Context, job turnJob, term TurnTerminal) {
+	// The view passed useCaseFor at admission, so this cannot miss.
+	useCase, _ := useCaseFor(job.chat)
+	defer s.removePendingThread(ctx, job.orgID, job.projectID, useCase, job.turnID)
 	ok, err := s.turns.Finish(ctx, job.turnID, term)
 	if err != nil {
 		slog.ErrorContext(ctx, "genai: finish turn row failed", "turn", job.turnID, "error", err)
@@ -561,7 +662,7 @@ func (s *Service) finishTurn(ctx context.Context, job turnJob, term TurnTerminal
 		go func() {
 			hookCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			hook(hookCtx, job.orgID, job.projectID, job.turnID, useCaseGeneral, term.Status)
+			hook(hookCtx, job.orgID, job.projectID, job.turnID, useCase, term.Status)
 		}()
 	}
 }
@@ -671,4 +772,27 @@ func (p *pulseReader) Read(b []byte) (int, error) {
 		}
 	}
 	return n, err
+}
+
+// capOutcome holds a stored outcome to the wire's limit — 400 UTF-16 units,
+// the agents service's JS string length, which 400s a longer one and with it
+// the whole main turn. A longer one (a row written by an older agents
+// service, say) is cut to 399 units + "…", never splitting a surrogate pair.
+func capOutcome(s string) string {
+	const maxUnits = 400
+	units := 0
+	for i, r := range s {
+		n := utf16.RuneLen(r)
+		if n < 0 {
+			n = 1 // invalid UTF-8 decodes as U+FFFD: one unit
+		}
+		if units+n > maxUnits-1 {
+			if len(utf16.Encode([]rune(s))) <= maxUnits {
+				return s
+			}
+			return s[:i] + "…"
+		}
+		units += n
+	}
+	return s
 }

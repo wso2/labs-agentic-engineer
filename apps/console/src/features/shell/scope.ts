@@ -27,6 +27,8 @@
 // the Page each Card is over, are this module's tables
 // (design/pages-and-cards.md).
 
+import type { ChatView } from "../agent-chat/chatView";
+
 /** The org's Pages; "other" is an org-level address that is none of them. */
 export type OrgPage = "dashboard" | "projects" | "new" | "skills" | "resources" | "other";
 
@@ -56,6 +58,12 @@ export type ShellScope =
       card: ProjectCard | null;
       /** The spec card's open file (`?file=`), by its key; null on the product page and off the card. */
       specFile: string | null;
+      /**
+       * The issue in view: an Issue card's (its address), or the one whose
+       * chat the Questions card over the Issues Page answers (`?issue=`).
+       * Null anywhere else, and for an address that names no issue.
+       */
+      issueNumber: number | null;
     };
 
 const ORG_PAGE_ROUTES: Record<string, OrgPage> = {
@@ -89,18 +97,24 @@ const PAGE_ROUTES: Record<string, ProjectPage> = {
   "/projects/$projectName/issues": "issues",
 };
 
-const CARD_ROUTES: Record<string, ProjectCard> = {
-  "/projects/$projectName/_overview/spec": "spec",
-  "/projects/$projectName/_overview/design": "design",
-  "/projects/$projectName/_overview/prototype": "prototype",
-  "/projects/$projectName/_overview/questions": "questions",
-  "/projects/$projectName/builds/$version": "build",
-  "/projects/$projectName/validations/$version": "validation",
-  "/projects/$projectName/deploy/$env/configure": "configure",
-  "/projects/$projectName/issues/$number": "issue",
+/**
+ * Each Card route, with the Page it is drawn over. Most Cards have one route;
+ * the Questions card has two, since the chat that asked decides the Page (the
+ * overview for the main chat, the Issues Page for the Issues chat).
+ */
+const CARD_ROUTES: Record<string, { card: ProjectCard; page: ProjectPage }> = {
+  "/projects/$projectName/_overview/spec": { card: "spec", page: "overview" },
+  "/projects/$projectName/_overview/design": { card: "design", page: "overview" },
+  "/projects/$projectName/_overview/prototype": { card: "prototype", page: "overview" },
+  "/projects/$projectName/_overview/questions": { card: "questions", page: "overview" },
+  "/projects/$projectName/issues/questions": { card: "questions", page: "issues" },
+  "/projects/$projectName/builds/$version": { card: "build", page: "builds" },
+  "/projects/$projectName/validations/$version": { card: "validation", page: "validations" },
+  "/projects/$projectName/deploy/$env/configure": { card: "configure", page: "deploy" },
+  "/projects/$projectName/issues/$number": { card: "issue", page: "issues" },
 };
 
-/** The Page each Card opens over, and closes back to. */
+/** The Page a Card opens over when only the Card is known (the Questions card's default is the overview's). */
 const CARD_PAGE: Record<ProjectCard, ProjectPage> = {
   spec: "overview",
   design: "overview",
@@ -114,32 +128,45 @@ const CARD_PAGE: Record<ProjectCard, ProjectPage> = {
 
 /** The Card a route draws, the org's or a project's, or null when it draws none. */
 export function cardOfRoute(routeId: string): ProjectCard | OrgCard | null {
-  return CARD_ROUTES[routeId] ?? ORG_CARD_ROUTES[routeId] ?? null;
+  return CARD_ROUTES[routeId]?.card ?? ORG_CARD_ROUTES[routeId] ?? null;
 }
 
-/** The Page a project Card is drawn over. */
+/** The Page a project Card is drawn over, when only the Card is known (the Questions card's is the overview). */
 export function pageOfCard(card: ProjectCard): ProjectPage {
   return CARD_PAGE[card];
+}
+
+/** A positive whole number, from an address or a search, or null. */
+function issueNumberOf(value: unknown): number | null {
+  const n = typeof value === "number" ? value : typeof value === "string" && /^\d+$/.test(value) ? Number(value) : NaN;
+  return Number.isInteger(n) && n > 0 ? n : null;
 }
 
 /** The scope of the deepest matched route. */
 export function shellScope(leaf: {
   routeId: string;
-  params: { projectName?: string };
-  search?: { file?: unknown };
+  params: { projectName?: string; number?: string };
+  search?: { file?: unknown; issue?: unknown };
 }): ShellScope {
   const { routeId, params, search } = leaf;
   if (params.projectName && routeId.startsWith("/projects/$projectName")) {
-    const card = CARD_ROUTES[routeId] ?? null;
+    const cardRoute = CARD_ROUTES[routeId];
+    const card = cardRoute?.card ?? null;
     const file = search?.file;
     return {
       kind: "project",
       projectName: params.projectName,
       // An address in a project that is neither a Page nor a Card (one it
       // does not have) reads as the overview's.
-      page: card ? pageOfCard(card) : (PAGE_ROUTES[routeId] ?? "overview"),
+      page: cardRoute ? cardRoute.page : (PAGE_ROUTES[routeId] ?? "overview"),
       card,
       specFile: card === "spec" && typeof file === "string" && file ? file : null,
+      issueNumber:
+        routeId === "/projects/$projectName/issues/$number"
+          ? issueNumberOf(params.number)
+          : routeId === "/projects/$projectName/issues/questions"
+            ? issueNumberOf(search?.issue)
+            : null,
     };
   }
   const orgCard = ORG_CARD_ROUTES[routeId];
@@ -176,18 +203,23 @@ export function cardTitle(card: ProjectCard): string {
 
 /**
  * What a message sent from here would be about, for the line above the
- * composer: the design card talks about the design review; a feature open in
+ * composer: the Issues Page (the issues view) talks about the project's
+ * issues, with the Issues agent; an issue's chat (the issue view), about that
+ * issue, with its own agent; the design card talks about the design review; a feature open in
  * the spec card narrows it to that feature, and a change reaching past it is
  * made there too; everywhere else in a project, the whole product. That
- * includes a Build or Validation card, the Deploy Page, an environment's
- * Configure card and an Issue card: no agent works on one build, one
- * validation, one environment or one issue yet, so they set no Turn scope of
- * their own.
+ * includes a Build or Validation card, the Deploy Page and an environment's
+ * Configure card: no agent works on one build, one validation or one
+ * environment yet, so they set no Turn scope of their own.
  */
 export function chatTopic(
   card: ProjectCard | null,
   openFeature: string | null,
+  view?: ChatView,
+  issueNumber?: number,
 ): { topic: string; note: string | null } {
+  if (view === "issues") return { topic: "the project's issues", note: null };
+  if (view === "issue" && issueNumber !== undefined) return { topic: `issue #${issueNumber}`, note: null };
   if (card === "design" || card === "prototype") return { topic: "the design review", note: null };
   if (card === "spec" && openFeature) {
     return { topic: openFeature, note: "A change that reaches other features is made there too." };

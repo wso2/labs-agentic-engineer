@@ -17,6 +17,7 @@
  */
 
 import { createContext, useContext } from "react";
+import type { ChatView } from "../agent-chat/chatView";
 
 // What a page inside a project can ask of the chat panel beside it. The shell
 // owns whether the panel is open; a page only asks.
@@ -24,6 +25,31 @@ import { createContext, useContext } from "react";
 export interface ChatPanelControls {
   /** Open the chat, at phone width too: something the user started is happening there. */
   open: () => void;
+  /**
+   * Open the chat and put `text` in the composer of the view in focus, focused
+   * with the cursor at the end. Nothing is sent: the user finishes the message.
+   * A caller that is moving the user names the chat it means (`target`): the
+   * view in focus is still the old page's until the move has rendered, and the
+   * request waits for that chat to be in the panel.
+   */
+  compose: (text: string, target?: ComposeTarget) => void;
+}
+
+/** One chat: a view's in a project (an issue's, by its number). */
+export interface ComposeTarget {
+  view: ChatView;
+  projectName: string;
+  issueNumber?: number;
+}
+
+/**
+ * A request to fill one composer: the chat of `view` in `projectName`, nobody
+ * else's. Single-use: the composer that applies it reports the nonce and the
+ * shell clears it, so it is not re-applied when the chat is reopened.
+ */
+export interface ComposeRequest extends ComposeTarget {
+  text: string;
+  nonce: number;
 }
 
 export const ChatPanelContext = createContext<ChatPanelControls | null>(null);

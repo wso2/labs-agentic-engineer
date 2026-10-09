@@ -140,6 +140,26 @@ func TestReplayer_WaitsOutTheBackoff(t *testing.T) {
 	}
 }
 
+// A replay runs long after the delivery arrived; its handlers still see the
+// original receipt, the event time of last resort for a payload without one.
+func TestReplayer_HandlersSeeTheOriginalReceipt(t *testing.T) {
+	t.Parallel()
+	h := newReplayHarness(t)
+	received := h.clock.Now()
+	h.receivedAndFailed(t, "late-replay", 0)
+	h.clock.Advance(10 * time.Minute)
+
+	if err := h.replayer.Once(context.Background()); err != nil {
+		t.Fatalf("Once: %v", err)
+	}
+	if h.handler.count() != 1 {
+		t.Fatalf("want one replay run, got %d", h.handler.count())
+	}
+	if got := h.handler.call(0).receivedAt; !got.Equal(received) {
+		t.Fatalf("handler ReceivedAt = %v, want the original receipt %v", got, received)
+	}
+}
+
 func TestReplayer_StopsAtTheAttemptCap(t *testing.T) {
 	t.Parallel()
 	h := newReplayHarness(t)

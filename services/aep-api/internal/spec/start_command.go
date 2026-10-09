@@ -33,7 +33,7 @@
 //
 // Flows are deliberately NOT a conversation-identity dimension: a flow runs an
 // interview whose answers are ordinary chat turns, so every turn of a project
-// conversation must share one namespace (see useCaseGeneral).
+// conversation must share one namespace (see UseCaseGeneral).
 //
 // The idea only ever rides the FIRST `/start` turn: after that it is in the
 // conversation history, so nothing needs re-attaching.

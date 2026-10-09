@@ -17,7 +17,7 @@
  */
 
 import { useCallback, type ReactNode } from "react";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useNavigate, useParams, type NavigateOptions } from "@tanstack/react-router";
 import { Typography } from "@wso2/oxygen-ui";
 import { CardFrame } from "../../shell/components/CardFrame";
 import { cardTitle, pageOfCard, pageTitle, type ProjectCard, type ProjectPage } from "../../shell/scope";
@@ -38,7 +38,7 @@ const PAGE_PATH = {
 /**
  * A card drawn over the project Page that lists it (scope.ts `pageOfCard`):
  * the page stays rendered under a scrim, and closing (X, Escape, or a click
- * on the scrim) goes back to it. Each card is a route of its own, so this is
+ * on the scrim) goes back to it, or to the `back` it is given. Each card is a route of its own, so this is
  * what the card routes render; the frame itself is the shell's `CardFrame`.
  *
  * Spec, Design and Prototype are one workspace, so their header is the
@@ -52,11 +52,17 @@ const PAGE_PATH = {
 export function CardOverlay({
   card,
   title = cardTitle(card),
+  page = pageOfCard(card),
+  back,
   fill = false,
   actions,
   children,
 }: {
   card: ProjectCard;
+  /** The Page it is over, when the card's own does not say (the Questions card is over the Issues Page for the Issues chat). */
+  page?: ProjectPage;
+  /** Where closing goes instead of the Page, and its name (the Questions card of an issue's chat closes back to the issue's card). */
+  back?: { to: NavigateOptions; name: string };
   title?: string;
   fill?: boolean;
   actions?: ReactNode;
@@ -65,10 +71,9 @@ export function CardOverlay({
   const { projectName } = useParams({ from: "/projects/$projectName" });
   const navigate = useNavigate();
 
-  const page = pageOfCard(card);
   const close = useCallback(
-    () => void navigate({ to: PAGE_PATH[page], params: { projectName } }),
-    [navigate, page, projectName],
+    () => void navigate(back ? back.to : { to: PAGE_PATH[page], params: { projectName } }),
+    [navigate, back, page, projectName],
   );
   const tabbed = card === "spec" || card === "design" || card === "prototype";
   const step = STEP[card];
@@ -92,7 +97,7 @@ export function CardOverlay({
           </>
         )
       }
-      closeHint={page === "overview" ? "Back to project overview" : `Back to ${pageTitle(page)}`}
+      closeHint={back ? `Back to ${back.name}` : page === "overview" ? "Back to project overview" : `Back to ${pageTitle(page)}`}
       onClose={close}
       actions={actions}
       fill={fill}

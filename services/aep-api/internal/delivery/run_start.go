@@ -23,7 +23,7 @@ import "errors"
 // and those two sub-packages may not import each other (`slice ⊥ sibling`) —
 // the same reason ErrTemporalUnavailable lives here.
 //
-// All three are written for a human: the console returns them verbatim.
+// All are written for a human: the console returns them verbatim.
 var (
 	// ErrRunAlreadyLive means a run is already working that milestone. Adoption
 	// treats this as a no-op — the live run picks the issue up at its next
@@ -52,7 +52,34 @@ var (
 	// lost admission race. The paths that re-offer on a timer treat those as
 	// nothing to do; a caller waiting on an answer has to be told.
 	ErrRunNotStarted = errors.New("the run could not be started — the platform is not ready to work this version")
+	// ErrNoDeployedMilestone is adoption's honest refusal: a bare issue joins
+	// the DEPLOYED version's milestone, and a project that has never completed a
+	// build has no such version. Decided in the event plane, rendered by the task
+	// surface's promote route (409) and the issue agent's hand-off tool.
+	ErrNoDeployedMilestone = errors.New("Deploy a version first: the coding agent works in a deployed version's milestone.")
+	// ErrIssueClosed is adoption's refusal of a closed issue: a run works open
+	// issues only, so handing over a closed one would start work on nothing.
+	ErrIssueClosed = errors.New("This issue is closed.")
+	// ErrNotCodingWork is adoption's refusal of an issue another species of run
+	// works (the version's validation task, a dispatch gate, planned work — see
+	// AdoptableByATaskRun) or that asks for no code at all (an incident the SRE
+	// agent classified as configuration-only).
+	ErrNotCodingWork = errors.New("The coding agent doesn't take on this kind of issue.")
 )
+
+// AdoptionRefusal is the refusal err carries when adoption declined the issue
+// for a reason the person can act on — one of the sentinels above, whose text
+// is the sentence they read — or nil for any other failure. The promote route
+// answers it as a 409 and the issue agent's hand-off tool as its tool error,
+// so the two say the same thing.
+func AdoptionRefusal(err error) error {
+	for _, refusal := range []error{ErrNoDeployedMilestone, ErrIssueClosed, ErrNotCodingWork} {
+		if errors.Is(err, refusal) {
+			return refusal
+		}
+	}
+	return nil
+}
 
 // StartRunRequest asks the run supervisor for a run over one milestone.
 //

@@ -94,3 +94,14 @@ test("save upserts; createdAt is preserved, updatedAt advances", async () => {
   assert.equal(second.createdAt.getTime(), first.createdAt.getTime());
   assert.ok(second.updatedAt.getTime() >= second.createdAt.getTime());
 });
+
+test("delete removes the aggregate and says whether it was there", async () => {
+  const store = new InMemoryConversationStore();
+  await store.save(fresh("c1"));
+  await store.save(fresh("c2"));
+
+  assert.equal(await store.delete("c1"), true);
+  assert.equal(await store.get("c1"), null);
+  assert.ok(await store.get("c2"), "a sibling conversation is untouched");
+  assert.equal(await store.delete("c1"), false, "a second delete finds nothing");
+});

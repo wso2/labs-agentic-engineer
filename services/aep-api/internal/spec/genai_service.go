@@ -22,7 +22,7 @@
 // broker (resumable GET …/turns/{id}/stream), folds the file mutations in Go
 // (internal/platform/agentfold), gates the fold on the agents-side manifest,
 // and commits the result straight to main. The durable agent_turns row is the
-// one-active-turn-per-project guard and the crash-safety anchor.
+// one-active-turn guard (per chat view) and the crash-safety anchor.
 package spec
 
 import (
@@ -41,12 +41,13 @@ import (
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
-// useCaseGeneral is the single flow identity every genai turn runs under. The
-// old FE-supplied "useCase" field is gone (#373): flows ride `/<skill>`
-// instructions, and this constant survives only because it is baked into
-// conversation identities (namespacedID) and turn rows — changing it would
-// strand every existing conversation.
-const useCaseGeneral = "general"
+// UseCaseGeneral is the main chat's use case: every turn sent from it runs
+// under this one identity, whatever its flow. The old FE-supplied "useCase"
+// field is gone (#373): flows ride `/<skill>` instructions, and a use case now
+// names a chat view (useCaseFor) — this one survives unchanged because it is
+// baked into conversation identities (namespacedID) and turn rows; changing
+// it would strand every existing conversation.
+const UseCaseGeneral = "general"
 
 // Errors — pre-202, mapped to HTTP status by the huma layer.
 var (
@@ -176,6 +177,10 @@ type TurnInput struct {
 	// already validated by the edge to ride a collab `/prototype` turn. Nil for
 	// every other turn, which then reaches the agents service byte-identical.
 	PrototypeFeedback *agentsvc.PrototypeFeedbackBlock
+	// Chat is the chat the message was sent from (its view, and for the issue
+	// view the issue); it picks the thread, the active-turn slot and what kind
+	// of turn this can be. The zero value is the main chat.
+	Chat ChatScope
 }
 
 // TurnStatus is the read view of one turn (the status GET body).
@@ -244,13 +249,18 @@ func providerLimitHost(t *AgentTurn) string {
 
 // ---- service ---------------------------------------------------------------
 
-// MCPTokenMinter mints a short-lived BFF-signed identity token (aud
-// aep-api-mcp) carrying orgID, for the agents service to call back into the
-// BFF's internal MCP discovery surface on a generation turn.
-// *auth.TaskTokenManager satisfies it via IssueMCPToken; defined here (consumer
-// side) so genai needn't import the platform/auth package.
+// MCPTokenMinter mints the short-lived BFF-signed identity tokens the agents
+// service calls back into the BFF with: IssueMCPToken (aud aep-api-mcp, the org)
+// for the MCP discovery surface on a generation turn, IssueIssuesMCPToken
+// (aud aep-api-issues-mcp, the org + project) for the Issues agent's
+// project-fenced issue tools, and IssueIssueMCPToken (the same audience plus
+// the issue number) for one issue's agent. *auth.TaskTokenManager satisfies
+// it; defined here (consumer side) so genai needn't import the platform/auth
+// package.
 type MCPTokenMinter interface {
 	IssueMCPToken(orgID string) (string, error)
+	IssueIssuesMCPToken(orgID, projectID string) (string, error)
+	IssueIssueMCPToken(orgID, projectID string, issueNumber int) (string, error)
 }
 
 // ServiceDeps wires the genai service. Repos..SkillsRepo are required; MCPTokens
@@ -270,8 +280,12 @@ type ServiceDeps struct {
 	// the current thread, and the single-era admission fence on StartTurn.
 	// Optional (nil skips the fence) — a test seam; production always wires it.
 	Conversations ConversationRepository
-	MCPTokens     MCPTokenMinter
-	MCPBaseURL    string
+	// Issues reads the project's issues for the issue view, which has a thread
+	// only while its issue exists and is open. Optional (nil refuses the issue
+	// view) — a test seam; production always wires it.
+	Issues     IssueReader
+	MCPTokens  MCPTokenMinter
+	MCPBaseURL string
 	// TurnFinishHook, when set, is invoked once with the terminal outcome of
 	// every turn (outcome is "completed" | "failed"). The devflow feature uses
 	// it to signal a waiting design-generate workflow. Best-effort — a nil hook
@@ -315,10 +329,14 @@ type Service struct {
 	snapshots      sourcecontrol.SnapshotProvider
 	skillsRepo     SkillsRepoResolver
 	conversations  ConversationRepository
+	issues         IssueReader
 	mcpTokens      MCPTokenMinter
 	mcpBaseURL     string
 	finishHook     func(ctx context.Context, orgID, projectID, turnID, useCase, outcome string)
 	recorder       TurnActivityRecorder
+	// pendingRemovals are closed issues' threads waiting for their running
+	// turn to finish (issue_threads.go).
+	pendingRemovals pendingRemovals
 }
 
 // NewService wires the genai service.
@@ -334,6 +352,7 @@ func NewService(d ServiceDeps) *Service {
 		heartbeatEvery: turnHeartbeatEvery,
 		skillsRepo:     d.SkillsRepo,
 		conversations:  d.Conversations,
+		issues:         d.Issues,
 		mcpTokens:      d.MCPTokens,
 		mcpBaseURL:     d.MCPBaseURL,
 		finishHook:     d.TurnFinishHook,
@@ -342,16 +361,32 @@ func NewService(d ServiceDeps) *Service {
 }
 
 func (s *Service) StartTurn(ctx context.Context, orgID, projectID string, in TurnInput) (string, error) {
+	// A malformed chat is refused before anything is read.
+	if _, err := useCaseFor(in.Chat); err != nil {
+		return "", err
+	}
+	// An Issues or issue turn is a plain chat about the project's issues: a
+	// spec scope or a prototype review batch has no meaning there, so refuse
+	// it rather than drop it on the floor.
+	if in.Chat.View != ChatViewMain && (in.Scope != nil || in.PrototypeFeedback != nil) {
+		return "", ErrViewTurnFields
+	}
 	if !validConversationID(in.ConversationID) {
 		return "", ErrInvalidConversationID
 	}
-	// #430 admission fence, cheap and first: the addressed thread must be the
-	// project's current one, so a send racing a teammate's rotation fails
+	// A closed issue has no thread to run on (409 issue_closed) — checked
+	// before the fence, which would only say the thread is not current.
+	useCase, err := s.chatUseCase(ctx, orgID, projectID, in.Chat)
+	if err != nil {
+		return "", err
+	}
+	// #430 admission fence, cheap and early: the addressed thread must be the
+	// view's current one, so a send racing a teammate's rotation fails
 	// fast (409 conversation_rotated → the console re-resolves) instead of
 	// landing a turn in a thread nobody is looking at. Nil repo skips — a
 	// test seam; production always wires it.
 	if s.conversations != nil {
-		ok, err := s.conversations.IsCurrent(ctx, orgID, projectID, useCaseGeneral, in.ConversationID)
+		ok, err := s.conversations.IsCurrent(ctx, orgID, projectID, useCase, in.ConversationID)
 		if err != nil {
 			return "", fmt.Errorf("resolve current conversation: %w", err)
 		}
@@ -369,7 +404,7 @@ func (s *Service) StartTurn(ctx context.Context, orgID, projectID string, in Tur
 	if err != nil {
 		return "", err
 	}
-	if err := s.rotateIfContextFull(ctx, orgID, projectID, in.ConversationID, llm.Connection); err != nil {
+	if err := s.rotateIfContextFull(ctx, orgID, projectID, useCase, in.ConversationID, llm.Connection); err != nil {
 		return "", err
 	}
 
@@ -379,8 +414,11 @@ func (s *Service) StartTurn(ctx context.Context, orgID, projectID string, in Tur
 	// like a browser join; no token → the turn cannot join, fail pre-202.
 	// The synthetic Marketplace register project has no spec room (no git
 	// repo; the id is not a DNS label) — ignore collab:true from the panel.
+	// Nor does an Issues or issue turn join it: those agents work on issues
+	// and never edit the spec, and the console's chat sends collab:true from
+	// every view.
 	collabRoomID, collabToken := "", ""
-	if in.Collab && !isMarketplaceRegisterProject(projectID) {
+	if in.Collab && in.Chat.View == ChatViewMain && !isMarketplaceRegisterProject(projectID) {
 		collabToken = auth.GetAuthToken(ctx)
 		if collabToken == "" {
 			return "", ErrCollabNoToken
@@ -407,7 +445,7 @@ func (s *Service) StartTurn(ctx context.Context, orgID, projectID string, in Tur
 			return "", fmt.Errorf("resolve credential: %w", err)
 		}
 		skillsCred = cred
-		nsConversationID = agentsvc.ConversationID(orgID, projectID, useCaseGeneral, in.ConversationID)
+		nsConversationID = agentsvc.ConversationID(orgID, projectID, useCase, in.ConversationID)
 	} else {
 		repo, err := s.resolveRepo(ctx, orgID, projectID)
 		if err != nil {
@@ -422,7 +460,7 @@ func (s *Service) StartTurn(ctx context.Context, orgID, projectID string, in Tur
 			return "", fmt.Errorf("resolve base ref: %w", err)
 		}
 		skillsCred = ref.Cred
-		nsConversationID = namespacedID(repo, useCaseGeneral, in.ConversationID)
+		nsConversationID = namespacedID(repo, useCase, in.ConversationID)
 	}
 
 	skillsRow, err := s.skillsRepo(ctx, orgID)
@@ -454,7 +492,13 @@ func (s *Service) StartTurn(ctx context.Context, orgID, projectID string, in Tur
 	// parses and the agent cannot read (dot-led segments are stripped from
 	// every turn snapshot; an idea typed inline wins). Best-effort — no
 	// descriptor, no idea, and the start skill asks the user instead.
-	turnSpec, flow := s.turnSpecFor(ctx, ref, baseRef, in.Instruction)
+	//
+	// An Issues or issue turn is always a plain chat turn: the skills are spec
+	// flows, so `/design` typed there is words for that agent, not a command.
+	turnSpec, flow := agentsvc.TurnSpec{Kind: agentsvc.TurnKindChat, Text: in.Instruction}, ""
+	if in.Chat.View == ChatViewMain {
+		turnSpec, flow = s.turnSpecFor(ctx, ref, baseRef, in.Instruction)
+	}
 	if in.PrototypeFeedback != nil {
 		turnSpec.PrototypeFeedback = in.PrototypeFeedback
 	}
@@ -466,7 +510,8 @@ func (s *Service) StartTurn(ctx context.Context, orgID, projectID string, in Tur
 	// resolved for the same turn, so the line still describes what was sent.
 	summary := startTurnSummary(in.Instruction, turnSpec)
 
-	// D18 guard: one active turn per project, any use case.
+	// D18 guard: one active turn per project and use case — the Issues chat
+	// and each issue's chat never wait on the spec chat or on each other.
 	// The display record rides the row itself: a client attaching to this turn
 	// reads it off the active-turn response and paints the sender's message,
 	// which no other source can give it until the turn lands (see AgentTurn).
@@ -475,7 +520,7 @@ func (s *Service) StartTurn(ctx context.Context, orgID, projectID string, in Tur
 		OrgID:             orgID,
 		ProjectID:         projectID,
 		ConversationID:    in.ConversationID,
-		UseCase:           useCaseGeneral,
+		UseCase:           useCase,
 		Flow:              flow,
 		BaseRef:           baseRef,
 		SkillsRef:         skillsRef,
@@ -498,6 +543,7 @@ func (s *Service) StartTurn(ctx context.Context, orgID, projectID string, in Tur
 		orgID:            orgID,
 		projectID:        projectID,
 		flow:             flow,
+		chat:             in.Chat,
 		conversationID:   in.ConversationID,
 		nsConversationID: nsConversationID,
 		turn:             turnSpec,
@@ -533,8 +579,15 @@ func (s *Service) TurnStatus(ctx context.Context, orgID, projectID, turnID strin
 	return turnStatusOf(t), nil
 }
 
-func (s *Service) ActiveTurn(ctx context.Context, orgID, projectID string) (*TurnStatus, error) {
-	t, err := s.turns.GetActive(ctx, orgID, projectID)
+// ActiveTurn returns the running turn of one chat, or nil. A read: it does
+// not ask whether an issue is open, so a turn still running after its issue
+// closed (the issue agent closing its own issue) stays reachable on reload.
+func (s *Service) ActiveTurn(ctx context.Context, orgID, projectID string, chat ChatScope) (*TurnStatus, error) {
+	useCase, err := useCaseFor(chat)
+	if err != nil {
+		return nil, err
+	}
+	t, err := s.turns.GetActive(ctx, orgID, projectID, useCase)
 	if err != nil {
 		return nil, fmt.Errorf("get active turn: %w", err)
 	}
@@ -571,20 +624,24 @@ func (s *Service) Rehydrate(ctx context.Context, orgID, projectID, conversationI
 	if !validConversationID(conversationID) {
 		return nil, ErrInvalidConversationID
 	}
+	useCase, err := s.threadUseCase(ctx, orgID, projectID, conversationID)
+	if err != nil {
+		return nil, err
+	}
 	var convID string
 	if isMarketplaceRegisterProject(projectID) {
 		// Synthetic register chat has no git_repositories row — build the
 		// agents tenancy id from the JWT org + path project id directly.
-		convID = agentsvc.ConversationID(orgID, projectID, useCaseGeneral, conversationID)
+		convID = agentsvc.ConversationID(orgID, projectID, useCase, conversationID)
 	} else {
 		repo, err := s.resolveRepo(ctx, orgID, projectID)
 		if err != nil {
 			return nil, err
 		}
-		// Rehydrate is chat-only (single-turn generate flows never rehydrate). The
-		// console omits "useCase", so its turns are namespaced under useCaseGeneral;
-		// reconstruct the id under the same use case the write path stored it with.
-		convID = namespacedID(repo, useCaseGeneral, conversationID)
+		// Rehydrate is chat-only (single-turn generate flows never rehydrate).
+		// Reconstruct the id under the same use case the write path stored it
+		// with — the thread's chat view's.
+		convID = namespacedID(repo, useCase, conversationID)
 	}
 	raw, err := s.client.GetConversation(ctx, convID, orgID)
 	if err != nil {
@@ -597,7 +654,7 @@ func (s *Service) Rehydrate(ctx context.Context, orgID, projectID, conversationI
 			// console treats 404-class failures as "keep painting the local
 			// cache" and an empty-thread 404 would leave stale logs immortal.
 			if s.conversations != nil {
-				known, kerr := s.conversations.Exists(ctx, orgID, projectID, useCaseGeneral, conversationID)
+				known, kerr := s.conversations.Exists(ctx, orgID, projectID, useCase, conversationID)
 				if kerr != nil {
 					return nil, fmt.Errorf("resolve thread existence: %w", kerr)
 				}
@@ -610,6 +667,25 @@ func (s *Service) Rehydrate(ctx context.Context, orgID, projectID, conversationI
 		return nil, err
 	}
 	return raw, nil
+}
+
+// threadUseCase names the use case a thread id belongs to, for a read that is
+// addressed by id alone. The read carries no view, so the thread store
+// answers: the main chat's, the Issues chat's or an issue's; an id the store
+// does not know is looked up under UseCaseGeneral, where rehydrate has always
+// looked. A nil store (test seam) is the main chat.
+func (s *Service) threadUseCase(ctx context.Context, orgID, projectID, conversationID string) (string, error) {
+	if s.conversations == nil {
+		return UseCaseGeneral, nil
+	}
+	useCase, err := s.conversations.UseCaseOf(ctx, orgID, projectID, conversationID)
+	if err != nil {
+		return "", fmt.Errorf("resolve thread use case: %w", err)
+	}
+	if useCase == "" {
+		return UseCaseGeneral, nil
+	}
+	return useCase, nil
 }
 
 func (s *Service) resolveRepo(ctx context.Context, orgID, projectID string) (*sourcecontrol.GitRepository, error) {
