@@ -73,10 +73,16 @@ func storeWith(files map[string]string) *spec.ArtifactStore {
 // mapped external URL for a component (keyed by the k8s component name), or an
 // empty deployment list (no URL resolved yet) for any unmapped component.
 func ocResolving(urlsByComponent map[string]string) *ocmocks.ComponentClientMock {
+	return ocResolvingIn(testWriteTarget, urlsByComponent)
+}
+
+// ocResolvingIn is the same, with the deployments placed in a named environment —
+// so a test can put a sibling somewhere the project does not write to.
+func ocResolvingIn(env string, urlsByComponent map[string]string) *ocmocks.ComponentClientMock {
 	return &ocmocks.ComponentClientMock{
 		ListDeploymentsFunc: func(_ context.Context, _, _, componentName string) (*gen.DeploymentList, error) {
 			if u, ok := urlsByComponent[componentName]; ok && u != "" {
-				return &gen.DeploymentList{Items: []gen.Deployment{{EndpointURL: u}}}, nil
+				return &gen.DeploymentList{Items: []gen.Deployment{{EndpointURL: u, Environment: env}}}, nil
 			}
 			return &gen.DeploymentList{}, nil
 		},
@@ -817,7 +823,7 @@ func Test_componentExternalURL(t *testing.T) {
 	t.Run("nil componentClient → empty", func(t *testing.T) {
 		t.Parallel()
 		svc := NewRuntimeConfigService(nil, nil, nil)
-		if got := svc.componentExternalURL(ctx, "acme", "proj", "web"); got != "" {
+		if got := svc.componentExternalURL(ctx, "acme", "proj", testWriteTarget, "web"); got != "" {
 			t.Errorf("want empty when componentClient is nil; got %q", got)
 		}
 	})
@@ -827,20 +833,21 @@ func Test_componentExternalURL(t *testing.T) {
 		oc := &ocmocks.ComponentClientMock{ListDeploymentsFunc: func(context.Context, string, string, string) (*gen.DeploymentList, error) {
 			return nil, errors.New("boom")
 		}}
-		if got := NewRuntimeConfigService(oc, nil, nil).componentExternalURL(ctx, "acme", "proj", "web"); got != "" {
+		if got := NewRuntimeConfigService(oc, nil, nil).componentExternalURL(ctx, "acme", "proj", testWriteTarget, "web"); got != "" {
 			t.Errorf("want empty on error; got %q", got)
 		}
 	})
 
-	t.Run("returns first non-empty EndpointURL verbatim", func(t *testing.T) {
+	t.Run("returns this environment's EndpointURL verbatim", func(t *testing.T) {
 		t.Parallel()
 		oc := &ocmocks.ComponentClientMock{ListDeploymentsFunc: func(context.Context, string, string, string) (*gen.DeploymentList, error) {
 			return &gen.DeploymentList{Items: []gen.Deployment{
-				{EndpointURL: ""},                  // skipped
-				{EndpointURL: "http://web.local/"}, // returned untrimmed
+				{EndpointURL: "", Environment: testWriteTarget},                  // skipped: no URL
+				{EndpointURL: "http://prod.local/", Environment: "prod"},         // skipped: another environment
+				{EndpointURL: "http://web.local/", Environment: testWriteTarget}, // returned untrimmed
 			}}, nil
 		}}
-		if got := NewRuntimeConfigService(oc, nil, nil).componentExternalURL(ctx, "acme", "proj", "web"); got != "http://web.local/" {
+		if got := NewRuntimeConfigService(oc, nil, nil).componentExternalURL(ctx, "acme", "proj", testWriteTarget, "web"); got != "http://web.local/" {
 			t.Errorf("componentExternalURL = %q; want the first non-empty URL verbatim", got)
 		}
 	})
@@ -1052,4 +1059,152 @@ func Test_FilesForComponent(t *testing.T) {
 			t.Errorf("nil receiver EmitForComponent should be nil; got %v", err)
 		}
 	})
+}
+
+// --- sibling endpoint bindings ----------------------------------------------
+
+// webappCallingSibling renders a web application that depends on a sibling
+// component's endpoint, with the address bound to envKey — the shape the design
+// agent writes and the component's workload.yaml mirrors. An empty envKey omits
+// `envBindings`, which is the "depends on it but the SPA never calls it" case.
+func webappCallingSibling(name, sibling, envKey string) string {
+	endpoint := map[string]any{
+		"component":  "proj-" + sibling,
+		"name":       "http",
+		"visibility": spec.EndpointVisibilityProject,
+	}
+	if envKey != "" {
+		endpoint["envBindings"] = map[string]any{spec.EndpointAddressOutput: envKey}
+	}
+	m := map[string]any{
+		"name": name,
+		"type": "web-application",
+		"dependencies": []map[string]any{{
+			"kind":   "component",
+			"name":   sibling,
+			"wiring": map[string]any{"endpoint": endpoint},
+		}},
+	}
+	b, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		panic(err)
+	}
+	return string(b) + "\n"
+}
+
+// A web app is static files: the consumer is a browser OUTSIDE the cluster, and
+// it reads window._env_ rather than the container's environment. OpenChoreo
+// injects the endpoint's address into the container — correct for a backend, and
+// unreachable for this one, since the address it injects is the in-cluster
+// service DNS. So the binding has to cross into env-config.js, carrying the
+// public URL rather than the one the container was handed.
+//
+// Before this, a web app's sibling-endpoint binding reached the pod and stopped
+// there: every key in window._env_ came from a platform-resource dependency, and
+// a component dependency contributed nothing. The SPA fetched a path that was
+// never routed and the page rendered its empty state with no error anywhere.
+func Test_buildEnvValues_bindsSiblingEndpoints(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	designWith := func(t *testing.T, json string) (*spec.DesignFile, *spec.DesignComponent) {
+		t.Helper()
+		files := map[string]string{
+			spec.DesignRootFile:          rootDesignMd(),
+			"components/web/design.json": json,
+		}
+		d := readDesign(t, files)
+		return d, componentNamed(t, d, "web")
+	}
+
+	t.Run("the bound key carries the sibling's public URL", func(t *testing.T) {
+		t.Parallel()
+		design, web := designWith(t, webappCallingSibling("web", "rooms-api", "ROOMS_API_URL"))
+		oc := ocResolving(map[string]string{"rooms-api": "http://rooms.local/"})
+		svc := NewRuntimeConfigService(oc, nil, nil)
+
+		out, ready := svc.buildEnvValues(ctx, "acme", "proj", testWriteTarget, design, web)
+		if !ready {
+			t.Fatalf("want ready=true; got false (out=%v)", out)
+		}
+		// Trailing slash trimmed: the SPA joins paths onto this.
+		if got := out["ROOMS_API_URL"]; got != "http://rooms.local" {
+			t.Errorf("ROOMS_API_URL = %v; want the sibling's public base URL", got)
+		}
+	})
+
+	// Deferring is the same contract an unresolved platform-resource output has,
+	// and for the same reason: the SPA's typed env shim throws at module load on a
+	// missing key, so a file missing the one URL the app fetches everything from
+	// is a blank page. A retry on the next converge pass is strictly better.
+	t.Run("an unresolved sibling defers the whole file", func(t *testing.T) {
+		t.Parallel()
+		design, web := designWith(t, webappCallingSibling("web", "rooms-api", "ROOMS_API_URL"))
+		svc := NewRuntimeConfigService(ocResolving(nil), nil, nil)
+
+		out, ready := svc.buildEnvValues(ctx, "acme", "proj", testWriteTarget, design, web)
+		if ready {
+			t.Errorf("want ready=false while the sibling has no external URL; got true (out=%v)", out)
+		}
+		if _, present := out["ROOMS_API_URL"]; present {
+			t.Errorf("an unresolved address must not be emitted; got %v", out["ROOMS_API_URL"])
+		}
+	})
+
+	// ListDeployments filters by COMPONENT, not by environment, so a project
+	// deployed to development, staging and production answers with all three.
+	// Taking whichever OpenChoreo listed first would hand a development browser
+	// production's API — a wrong URL the SPA cannot tell from a right one, where
+	// no URL at all is a state this path already defers on.
+	t.Run("a sibling deployed only elsewhere is not this environment's URL", func(t *testing.T) {
+		t.Parallel()
+		design, web := designWith(t, webappCallingSibling("web", "rooms-api", "ROOMS_API_URL"))
+		oc := ocResolvingIn("prod", map[string]string{"rooms-api": "http://rooms.prod/"})
+
+		out, ready := NewRuntimeConfigService(oc, nil, nil).buildEnvValues(ctx, "acme", "proj", testWriteTarget, design, web)
+		if ready {
+			t.Errorf("want ready=false when the sibling is deployed elsewhere; got true (out=%v)", out)
+		}
+		if got, present := out["ROOMS_API_URL"]; present {
+			t.Errorf("emitted %v from another environment", got)
+		}
+	})
+
+	// Not every sibling is one the SPA calls. Inventing a key for an unbound
+	// dependency would put a URL in window._env_ that nothing reads.
+	t.Run("a dependency with no address binding contributes no key", func(t *testing.T) {
+		t.Parallel()
+		design, web := designWith(t, webappCallingSibling("web", "rooms-api", ""))
+		oc := ocResolving(map[string]string{"rooms-api": "http://rooms.local/"})
+
+		out, ready := NewRuntimeConfigService(oc, nil, nil).buildEnvValues(ctx, "acme", "proj", testWriteTarget, design, web)
+		if !ready {
+			t.Fatalf("want ready=true; got false (out=%v)", out)
+		}
+		if len(out) != 0 {
+			t.Errorf("want no keys for an unbound dependency; got %v", out)
+		}
+		if n := len(oc.ListDeploymentsCalls()); n != 0 {
+			t.Errorf("resolved %d URL(s) for a dependency nothing binds; want 0", n)
+		}
+	})
+}
+
+// Only a web app needs this crossing — a backend reads the container environment
+// OpenChoreo already populated, so emitting a file for one would be a second
+// source for the same address.
+func Test_componentEndpointDeps_webAppsOnly(t *testing.T) {
+	t.Parallel()
+	svc := &spec.DesignComponent{
+		Name:          "rooms-api",
+		ComponentType: spec.ComponentTypeService,
+		Dependencies: []spec.Dependency{{
+			Kind:   spec.DependencyKindComponent,
+			Name:   "other",
+			Wiring: &spec.DependencyWiring{Endpoint: &spec.EndpointWiring{EnvBindings: map[string]string{spec.EndpointAddressOutput: "OTHER_URL"}}},
+		}},
+	}
+	if got := componentEndpointDeps(svc); got != nil {
+		t.Errorf("componentEndpointDeps(service) = %v; want nil", got)
+	}
 }

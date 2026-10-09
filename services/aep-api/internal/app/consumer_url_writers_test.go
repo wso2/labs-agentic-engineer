@@ -102,7 +102,9 @@ func pinOriginsClient() *ocmocks.ComponentClientMock {
 		},
 		ListDeploymentsFunc: func(_ context.Context, _, _, componentName string) (*gen.DeploymentList, error) {
 			if u := origins[componentName]; u != "" {
-				return &gen.DeploymentList{Items: []gen.Deployment{{EndpointURL: u}}}, nil
+				// Stamped, as a real ReleaseBinding always is (its spec names the
+				// environment it is bound to) — the origin lookup selects on it.
+				return &gen.DeploymentList{Items: []gen.Deployment{{EndpointURL: u, Environment: pinEnv}}}, nil
 			}
 			return &gen.DeploymentList{}, nil
 		},
