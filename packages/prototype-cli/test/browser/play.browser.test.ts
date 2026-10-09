@@ -51,7 +51,7 @@ describe("prototype preview — playing a prototype", () => {
     await driver.click(page, app.row("Alan Turing"));
     await driver.waitFor(page, app.heading("Alan Turing"));
     await driver.waitFor(page, app.text("contacts-2"));
-    expect(await driver.read(page, host.picker("Screen"), "value")).toBe("screen.contact");
+    expect(await driver.read(page, host.address(), "text")).toBe("prototype://screen.contact");
   });
 
   it("shows the current screen, and a non-default state, in the browser window's address bar", async () => {
@@ -60,6 +60,49 @@ describe("prototype preview — playing a prototype", () => {
     await driver.waitFor(page, host.text("prototype://screen.contact"));
     await driver.select(page, host.picker("State"), "Empty");
     await driver.waitFor(page, host.text("prototype://screen.contact?state=state.empty"));
+  });
+
+  it("keeps the header to the title, and every control in one dock: view, mode, then comments", async () => {
+    expect(await driver.read(page, { where: "host", role: "banner" }, "text")).toBe("Contacts");
+    const dock = await driver.box(page, host.dock());
+    const controls = [host.picker("Role"), host.picker("State"), host.button("Reset data"), host.button("Preview"), host.button("Comment"), host.button("0 comments"), host.button("Save feedback")];
+    const boxes = await Promise.all(controls.map((c) => driver.box(page, c)));
+    // Left to right, all inside the dock.
+    for (const [i, b] of boxes.entries()) {
+      expect(b.x, `control ${i} inside the dock`).toBeGreaterThanOrEqual(dock.x);
+      expect(b.x + b.width).toBeLessThanOrEqual(dock.x + dock.width);
+      expect(b.y).toBeGreaterThanOrEqual(dock.y);
+      if (i > 0) expect(b.x, `control ${i} after control ${i - 1}`).toBeGreaterThan(boxes[i - 1]!.x);
+    }
+    // A whole-screen comment is a click on empty space; the keyboard's is in the comments list, not the dock.
+    expect(await driver.count(page, host.button("Comment on screen"))).toBe(0);
+  });
+
+  it("has no screen or flow picker: the prototype is navigated by clicking through it", async () => {
+    expect(await driver.count(page, { where: "host", role: "combobox" })).toBe(2);
+    expect(await driver.count(page, host.picker("Screen"))).toBe(0);
+    expect(await driver.count(page, host.picker("Flow"))).toBe(0);
+    expect(await driver.count(page, { where: "host", role: "button", name: "Go to", partial: true })).toBe(0);
+  });
+
+  it("never covers the prototype with the dock, and fits the dock at 900px by dropping the selects' labels", async () => {
+    try {
+      for (const width of [1280, 900]) {
+        await driver.resize(page, width, 720);
+        const window = await driver.box(page, host.region("Contacts prototype"));
+        const dock = await driver.box(page, host.dock());
+        expect(window.y + window.height, `at ${width}px`).toBeLessThanOrEqual(dock.y);
+        expect(dock.x).toBeGreaterThanOrEqual(0);
+        expect(dock.x + dock.width).toBeLessThanOrEqual(width);
+      }
+      // Narrow: the selects keep their value, not their inline label.
+      await driver.waitFor(page, host.text("Role"), "hidden");
+      expect(await driver.read(page, host.picker("Role"), "value")).toBe("editor");
+      await driver.resize(page, 1280, 720);
+      await driver.waitFor(page, host.text("Role"));
+    } finally {
+      await driver.resize(page, 1280, 720);
+    }
   });
 
   it("renders differently per role", async () => {
@@ -103,7 +146,7 @@ describe("prototype preview — playing a prototype", () => {
     await driver.select(page, host.picker("Role"), "Viewer");
     await driver.waitFor(page, app.button("Edit"), "hidden");
     await driver.evalInApp(page, `parent.postMessage({ type: "proto:navigate", screenId: "screen.edit" }, "*"); new Promise((r) => setTimeout(r, 500))`);
-    expect(await driver.read(page, host.picker("Screen"), "value")).toBe("screen.contact");
+    expect(await driver.read(page, host.address(), "text")).toBe("prototype://screen.contact");
     expect(await driver.count(page, app.heading("Edit Alan Turing"))).toBe(0);
     // A screen the role does reach still follows.
     await driver.evalInApp(page, `parent.postMessage({ type: "proto:navigate", screenId: "screen.settings" }, "*")`);
@@ -273,7 +316,7 @@ describe("prototype preview — the app shell", () => {
     await driver.waitFor(page, app.text("Employee"));
     await driver.click(page, entry("Account"));
     await driver.waitFor(page, app.heading("Account"));
-    expect(await driver.read(page, host.picker("Screen"), "value")).toBe("screen.account");
+    expect(await driver.read(page, host.address(), "text")).toBe("prototype://screen.account");
     await driver.waitFor(page, entry("Settings"), "hidden");
 
     // A navigation entry shows only for the role that reaches its screen, and the header follows the role.
@@ -292,11 +335,11 @@ describe("prototype preview — the app shell", () => {
     await driver.waitFor(page, app.heading("My requests"));
   });
 
-  it("selects the user menu in Annotate instead of opening it", async () => {
-    await driver.click(page, host.button("Annotate"));
+  it("selects the user menu in Comment mode instead of opening it", async () => {
+    await driver.click(page, host.button("Comment"));
     await driver.frameMode(page, "annotate");
     await driver.click(page, app.element("shell.user"));
-    await driver.waitFor(page, host.text("Selected: Priya Shah"));
+    await driver.waitFor(page, host.dialog("Comment on Priya Shah"));
     expect(await driver.count(page, entry("Account"))).toBe(0);
     await driver.click(page, host.button("Preview"));
   });

@@ -143,6 +143,12 @@ export class Script {
     return this;
   }
 
+  /** The turn fails with `message`, as the platform's `turn-failed` says it; what it said so far is kept. */
+  fail(message: string): { frames: ScriptFrame[]; reply: ConversationMessage[]; failure: string } {
+    this.emit({ type: "turn-failed", message } as StreamPart, 150);
+    return { frames: this.frames, reply: [{ role: "assistant", content: this.parts }], failure: message };
+  }
+
   end(): { frames: ScriptFrame[]; reply: ConversationMessage[] } {
     this.emit({ type: "turn-completed" }, 150);
     const reply: ConversationMessage[] = [{ role: "assistant", content: this.parts }];

@@ -39,7 +39,7 @@ describe("feedbackSummary", () => {
       { ...onPending, stateId: "state.empty", elementIds: [], text: "Say who to ask" },
     );
     expect(feedbackSummary(fb, manifest).split("\n")).toEqual([
-      "Feedback on the Acme Expenses prototype (2 requests)",
+      "Feedback on the Acme Expenses prototype (2 comments)",
       "1. Pending approvals (Manager, Default) — btn.reject, btn.approve: Put Approve on the right",
       "2. Pending approvals (Manager, Nothing to show) — whole screen: Say who to ask",
     ]);
@@ -48,7 +48,7 @@ describe("feedbackSummary", () => {
   it("falls back to ids for names the manifest lacks", () => {
     const fb = feedback({ ...onPending, elementIds: ["btn.reject"], text: "Red" });
     expect(feedbackSummary(fb, null)).toBe(
-      "Feedback on the expense-web prototype (1 request)\n1. screen.pending (manager, state.default) — btn.reject: Red",
+      "Feedback on the expense-web prototype (1 comment)\n1. screen.pending (manager, state.default) — btn.reject: Red",
     );
   });
 

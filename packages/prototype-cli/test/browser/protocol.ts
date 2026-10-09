@@ -21,7 +21,7 @@
 /** Where a target lives: the host page, or the prototype app inside its sandboxed frame. */
 export type Where = "host" | "app";
 
-/** An element, found the way a person would: by role and name, label, text, or (Annotate) element id. */
+/** An element, found the way a person would: by role and name, label, text, or (Comment mode) element id. */
 export interface Target {
   where: Where;
   role?: string;
@@ -34,9 +34,20 @@ export interface Target {
   partial?: boolean;
 }
 
-export type Action = { type: "click" } | { type: "fill"; value: string } | { type: "select"; label: string } | { type: "press"; key: string };
+/** A modifier held through a click, as Playwright names it. */
+export type Modifier = "Shift" | "ControlOrMeta";
+
+export type Action = { type: "click"; modifiers?: Modifier[] } | { type: "fill"; value: string } | { type: "select"; label: string } | { type: "press"; key: string };
 
 export type Reading = "text" | "count" | "value" | "pressed" | "disabled" | "maxlength";
+
+/** Where an element is drawn, in the host page's viewport (CSS pixels): an app element's box is moved out of its frame. */
+export interface Box {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
 export interface Preview {
   id: string;

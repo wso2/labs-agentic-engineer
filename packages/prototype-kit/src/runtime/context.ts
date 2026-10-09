@@ -24,6 +24,7 @@
  */
 
 import { createContext, useContext } from "react";
+import type { FrameScreenPin } from "../host/bridge.js";
 import type { PrototypeManifest } from "../manifest/types.js";
 import type { DataStore } from "./store.js";
 
@@ -37,8 +38,12 @@ export interface KitView {
   screenId: string;
   /** Selected element ids, in selection order (Annotate). */
   selectedKeys: readonly string[];
-  /** Queued requests' numbers per element id on this screen (Annotate). */
+  /** Queued comments' numbers per element id on this screen, drawn as pins in both modes. */
   pins: Readonly<Record<string, readonly number[]>>;
+  /** The element ids on this screen that hold a draft comment, drawn as a hollow pin; none when absent. */
+  drafts?: readonly string[] | undefined;
+  /** Whole-screen comments' pins on this screen, at their spots of the document; none when absent. */
+  screenPins?: readonly FrameScreenPin[] | undefined;
 }
 
 export interface KitContextValue {
@@ -48,8 +53,10 @@ export interface KitContextValue {
   params: Readonly<Record<string, string>>;
   /** Navigate in Preview; a no-op while annotating. */
   go: (screenId: string, params?: Record<string, string>) => void;
-  /** Toggle an element's selection (Annotate). */
-  toggle: (elementKey: string) => void;
+  /** Toggle an element's selection (Annotate); `additive` when the click held Shift (add to the selection rather than start a new one). */
+  toggle: (elementKey: string, additive: boolean) => void;
+  /** A pin on `elementKey` was clicked (either mode): the queued comments' numbers it shows, none for the draft pin. */
+  openPin: (elementKey: string, requests: readonly number[]) => void;
   store: DataStore;
 }
 

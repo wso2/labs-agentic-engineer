@@ -18,7 +18,8 @@
 
 /**
  * Read out, not shown: an `sx` for text only assistive tech should get (who
- * said a chat line; what a Send just found unanswered).
+ * said a chat line; what a Send just found unanswered; that the agent is
+ * revising the prototype).
  */
 export const visuallyHidden = {
   position: "absolute",

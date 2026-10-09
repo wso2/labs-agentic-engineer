@@ -78,6 +78,8 @@ export interface MockTurn {
   prototype?: Record<string, string>;
   /** The review batch a `/prototype` turn carried, journaled with its message as the platform does. */
   prototypeFeedback?: PrototypeFeedback;
+  /** Why the turn failed (its stream ends `turn-failed`); absent when it completed. */
+  failure?: string;
 }
 
 interface State {

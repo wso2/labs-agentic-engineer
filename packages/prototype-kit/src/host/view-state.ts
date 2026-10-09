@@ -34,7 +34,7 @@
 
 import { screensForRole } from "../manifest/screens.js";
 import type { PrototypeManifest } from "../manifest/types.js";
-import type { FrameView } from "./bridge.js";
+import type { FrameScreenPin, FrameView } from "./bridge.js";
 
 export type PrototypeMode = "preview" | "annotate";
 
@@ -55,7 +55,12 @@ export type PrototypeViewEvent =
   | { type: "ENTER_ANNOTATE" }
   | { type: "EXIT_ANNOTATE" }
   | { type: "CLEAR_SELECTION" }
+  /** A Shift-click in Annotate: add the element to the selection, or take it out. */
   | { type: "TOGGLE_SELECTION"; elementKey: string }
+  /** A plain click in Annotate: the element alone is selected (a new comment on it). */
+  | { type: "SELECT_ONLY"; elementKey: string }
+  /** The host selects these elements (to reopen a comment it holds on them, a draft): Annotate, with them selected. */
+  | { type: "SELECT_ELEMENTS"; elementKeys: string[] }
   | { type: "NAVIGATE"; screenId: string }
   | { type: "SET_ROLE"; roleId: string }
   | { type: "SET_FLOW"; flowId: string | null }
@@ -81,6 +86,13 @@ export function reducePrototypeView(manifest: PrototypeManifest, s: PrototypeVie
       return { ...s, selectedKeys: [] };
     case "TOGGLE_SELECTION":
       return toggleSelection(s, e.elementKey);
+    case "SELECT_ONLY":
+      return selects(s, e.elementKey) ? { ...s, selectedKeys: [e.elementKey] } : s;
+    case "SELECT_ELEMENTS": {
+      const annotating: PrototypeViewState = { ...s, mode: "annotate" };
+      const keys = [...new Set(e.elementKeys)];
+      return keys.length > 0 && keys.every((k) => selects(annotating, k)) ? { ...annotating, selectedKeys: keys } : s;
+    }
     case "NAVIGATE":
       if (e.screenId === s.screenId || !screensForRole(manifest, s.roleId).some((x) => x.id === e.screenId)) return s;
       return { ...s, screenId: e.screenId, selectedKeys: [] };
@@ -118,9 +130,14 @@ export function reducePrototypeView(manifest: PrototypeManifest, s: PrototypeVie
   }
 }
 
-/** Select or deselect an element the frame reported a click on: only while annotating, and only an id of sane length. */
+/** Whether a click the frame reported on `key` selects: only while annotating, and only an id of sane length. */
+function selects(s: PrototypeViewState, key: string): boolean {
+  return s.mode === "annotate" && key.trim() !== "" && key.length <= MAX_ELEMENT_KEY;
+}
+
+/** Select or deselect an element the frame reported a click on. */
 function toggleSelection(s: PrototypeViewState, key: string): PrototypeViewState {
-  if (s.mode !== "annotate" || key.trim() === "" || key.length > MAX_ELEMENT_KEY) return s;
+  if (!selects(s, key)) return s;
   const selected = s.selectedKeys.includes(key);
   return { ...s, selectedKeys: selected ? s.selectedKeys.filter((k) => k !== key) : [...s.selectedKeys, key] };
 }
@@ -150,7 +167,16 @@ function requestOf(s: PrototypeViewState): PrototypeViewRequest {
   return { screen: s.screenId, role: s.roleId, state: s.stateId, flow: s.flowId ?? undefined, mode: s.mode };
 }
 
-/** The view as the frame draws it, with the request pins for the current screen. */
-export function frameViewOf(s: PrototypeViewState, pins: Record<string, number[]> = {}): FrameView {
-  return { mode: s.mode, roleId: s.roleId, stateId: s.stateId, screenId: s.screenId, selectedKeys: s.selectedKeys, pins };
+/** The view as the frame draws it, with the current screen's comment pins, the elements holding a draft and its whole-screen comments' pins. */
+export function frameViewOf(s: PrototypeViewState, pins: Record<string, number[]> = {}, drafts: string[] = [], screenPins: FrameScreenPin[] = []): FrameView {
+  return {
+    mode: s.mode,
+    roleId: s.roleId,
+    stateId: s.stateId,
+    screenId: s.screenId,
+    selectedKeys: s.selectedKeys,
+    pins,
+    ...(drafts.length > 0 ? { drafts } : {}),
+    ...(screenPins.length > 0 ? { screenPins } : {}),
+  };
 }

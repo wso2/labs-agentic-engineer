@@ -1,6 +1,8 @@
 # ADR-0001 — Prototype review is a full-screen overlay; Annotate sends typed feedback to the chat
 
-**Status:** Accepted · 2026-10-03
+**Status:** Accepted · 2026-10-03 · Superseded in part by
+[ADR-0002](ADR-0002-the-revision-lands-in-the-open-review.md): Send no
+longer closes the overlay.
 **Related:** [repo ADR-0042](../../../../docs/decisions/ADR-0042-a-prototype-is-react-on-a-fixed-kit-in-a-sandbox.md)
 (the kit, the frame, the Oxygen theme). Spec: #860.
 
@@ -44,7 +46,8 @@ listens, so feedback has to reach the same conversation as everything else.
 - The kit's behaviour (what Preview and Annotate do) is changed once, in the
   kit; the console follows by importing it.
 - The overlay hides the console, so the chat is opened before a send and the
-  overlay closes on success.
+  overlay closes on success. *(Superseded by ADR-0002: the review stays open
+  and the revision lands in it.)*
 - The frame runtime is the largest lazy chunk in the console image.
 - The chat summary and the Open prototype note survive a reload and reach
   teammates, since both come from the persisted turn. The summary names

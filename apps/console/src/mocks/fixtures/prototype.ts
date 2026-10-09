@@ -37,7 +37,11 @@ type ConversationMessage = components["schemas"]["ConversationMessage"];
 //  - A review's Send all (the same command with `prototypeFeedback`): answers
 //    each request by number, applied or declined. A few requests the sample
 //    knows how to apply (a tweak, an editFile on the source); anything else is
-//    declined, as the mock cannot write code.
+//    declined, as the mock cannot write code. "Remove …" takes the Reject
+//    button away (a comment held on it is orphaned), "… fail …" fails the
+//    turn, writing nothing (the review gets its comments back), and "…
+//    partway …" fails it after the requests before it are written, so the
+//    review shows what the turn changed and gets its comments back on it.
 //
 // The files land in the local doc from the turn's stream, as every agent
 // write does in mock mode; a finished turn's files also seed the doc after a
@@ -362,7 +366,21 @@ const TWEAKS: Tweak[] = [
     to: '      <Heading id="text.total" level="section" text={`Total ${claim.total}`} />',
     applied: "The total is now a heading, so it stands out on the claim; its id is unchanged.",
   },
+  {
+    // Takes an element away, so a comment held on it is left pointing at nothing.
+    match: /\b(remove|delete|drop)\b/i,
+    from: `
+          <Button id="btn.reject" label="Reject" emphasis="danger" onPress={() => setDialog("reject")} />`,
+    to: "",
+    applied: "Reject is gone from the pending claim; only Approve is left.",
+  },
 ];
+
+/** A request that makes the revision's turn fail, so a review can be seen getting its comments back. */
+const FAIL = /\bfail\b/i;
+
+/** A request that makes the revision's turn fail once the requests before it are applied, leaving their edits written. */
+const PARTWAY = /\bpartway\b/i;
 
 export interface PrototypeTurn {
   display: string;
@@ -370,6 +388,8 @@ export interface PrototypeTurn {
   reply: ConversationMessage[];
   /** The prototype's files as the turn leaves them, by room path; absent when it wrote nothing. */
   files?: Record<string, string>;
+  /** Why the turn failed; absent when it completed. */
+  failure?: string;
 }
 
 /**
@@ -412,7 +432,7 @@ export function scriptPrototypeTurn(req: {
   s.say(`Making the prototype of ${component} from the design: 7 screens in the app shell, the Employee, Manager and Finance roles, and the submit and approve flows.`);
   if (manifest === undefined) s.add(`${req.turnKey}-manifest`, manifestPath(component), SAMPLE_MANIFEST);
   if (source === undefined) s.add(`${req.turnKey}-source`, sourcePath(component), SAMPLE_SOURCE);
-  s.pause(400).say("The prototype is ready. Open the Prototype tab and press Review to try it full screen; switch to Annotate to point at anything you'd change.");
+  s.pause(400).say("The prototype is ready. Open the Prototype tab and press Review to try it full screen; choose Comment to point at anything you'd change.");
   return {
     display,
     ...s.end(),
@@ -436,8 +456,13 @@ function revise(req: {
   }
   const n = feedback.requests.length;
   s.say(`Revising the prototype of ${component} with your ${n === 1 ? "request" : `${n} requests`}.`);
+  const failing = feedback.requests.findIndex((r) => FAIL.test(r.text));
+  if (failing >= 0) return { display: req.display, ...s.pause(1500).fail(`The revision failed: request ${failing + 1} asked this mock to fail it.`) };
+  // Requests are worked through in order; one asking to stop partway ends the turn there.
+  const stop = feedback.requests.findIndex((r) => PARTWAY.test(r.text));
+  const worked = stop >= 0 ? feedback.requests.slice(0, stop) : feedback.requests;
   let source = req.source;
-  const answers = feedback.requests.map((request, i) => {
+  const answers = worked.map((request, i) => {
     const tweak = TWEAKS.find((t) => t.match.test(request.text));
     if (!tweak) return `${i + 1}. Declined: this mock can't make that change. (${request.screenId})`;
     if (!source.includes(tweak.from)) return `${i + 1}. Already so: ${tweak.applied}`;
@@ -445,11 +470,12 @@ function revise(req: {
     source = source.replace(tweak.from, tweak.to);
     return `${i + 1}. Applied: ${tweak.applied}`;
   });
-  s.pause(400).say(answers.join("\n"));
+  if (answers.length > 0) s.pause(400).say(answers.join("\n"));
   const changed = source !== req.source;
+  const ended = stop >= 0 ? s.pause(400).fail(`The revision stopped partway: request ${stop + 1} asked this mock to fail it.`) : s.end();
   return {
     display: req.display,
-    ...s.end(),
+    ...ended,
     ...(changed ? { files: { [manifestPath(component)]: req.manifest, [sourcePath(component)]: source } } : {}),
   };
 }
