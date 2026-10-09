@@ -53,6 +53,14 @@
     "components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/shared/mock-model.ts",
     "components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/tools-socket/fake.ts",
     "skills/**",
+    // `.agents/skills/` is the developer skill library: repo-authored skills a
+    // developer runs from their own Claude Code (code-to-spec and its
+    // sync-references script, picked up by `make test` through the
+    // .agents/skills glob) plus third-party skills tracked by skills-lock.json.
+    // Nothing imports them, for the same reason as skills/. `.claude` is a
+    // symlink to `.agents`, which knip walks as a second copy.
+    ".agents/**",
+    ".claude/**",
     // The prototype CLI's and the Oxygen theme's test harnesses (spawned bin,
     // browser-lane commands) and fixtures are reached only from *.test.ts
     // files, which --production strips, so knip would report them as unused
