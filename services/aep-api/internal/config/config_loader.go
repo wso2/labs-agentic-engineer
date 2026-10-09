@@ -149,7 +149,7 @@ func Load() (Config, error) {
 		GitHubCommitterEmail:        r.readOptionalString("GIT_COMMITTER_EMAIL", "bot@aep.dev"),
 		WebhookDeliveryURL:          r.readOptionalString("GITHUB_WEBHOOK_DELIVERY_URL", ""),
 		WebhookHMACSecret:           r.readOptionalString("GITHUB_WEBHOOK_SECRET", ""),
-		CredentialEncryptionKey:     r.readOptionalString("CREDENTIAL_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+		CredentialEncryptionKey:     r.readOptionalString("CREDENTIAL_ENCRYPTION_KEY", ""),
 		OpenBaoAddr:                 r.readOptionalString("OPENBAO_ADDR", ""),
 		OpenBaoToken:                r.readOptionalString("OPENBAO_TOKEN", ""),
 		GitHubAppID:                 r.readOptionalString("GITHUB_APP_ID", ""),

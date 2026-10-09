@@ -27,4 +27,11 @@ dataplane. Domains import only the ports here — never the vault SDK.
 - Secret values never cross domain boundaries as plaintext on the wire — API
   responses and issue bodies carry refs/names only.
 - Vault SDK imports stay inside this package (`DeliveryKV`, provider wiring).
+- **`CREDENTIAL_ENCRYPTION_KEY` has NO default and boot fails without it.** A
+  default is a key every installation shares and anyone can read in this tree.
+  `aectl platform install` generates one per installation into OpenBao at
+  `aep/credential-encryption-key` and never replaces it — replacing it makes
+  every credential sealed under it unreadable. If OpenBao has lost the key
+  (it runs in-memory), a re-run of install restores it from the ESO-synced
+  `aep-credential-encryption-key` Secret rather than generating a new one.
 - Platform-wide rules → [../../README.md](../../README.md).

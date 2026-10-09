@@ -112,6 +112,11 @@ spec:
                 secretKeyRef:
                   name: aep-task-signing-key
                   key: task-signing.pem
+            - name: CREDENTIAL_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aep-credential-encryption-key
+                  key: CREDENTIAL_ENCRYPTION_KEY
             - name: BFF_TASK_TOKEN_ISSUER
               value: {{ .Values.taskSigning.issuer | quote }}
             - name: BFF_TASK_TOKEN_AUDIENCE

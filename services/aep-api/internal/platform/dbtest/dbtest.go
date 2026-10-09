@@ -273,7 +273,8 @@ func (runAllMigrator) Migrate(ctx context.Context, sqlDB *sql.DB, _ pgtestdb.Con
 		return fmt.Errorf("auto-migrate base models: %w", err)
 	}
 	_ = migrate.RunBootstrapGrants(ctx, db) // non-fatal self-heal, as in main
-	// Zero key matches config's default CREDENTIAL_ENCRYPTION_KEY (32 zero bytes).
+	// Any 32-byte key will do — the template holds no credentials to seal. No
+	// previous key: a test that exercises a key change supplies its own.
 	if err := migrate.RunAll(ctx, db, migrationTier, make([]byte, 32)); err != nil {
 		return fmt.Errorf("run migrations: %w", err)
 	}

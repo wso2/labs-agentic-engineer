@@ -20,6 +20,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
 	"math/big"
 	"strings"
@@ -37,6 +38,14 @@ func GeneratePassword(length int) (string, error) {
 		b[i] = charset[n.Int64()]
 	}
 	return string(b), nil
+}
+
+func GenerateAESKey() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(b), nil
 }
 
 // GenerateRSAPrivateKey returns a fresh 2048-bit RSA private key in PKCS8 PEM format.

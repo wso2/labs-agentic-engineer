@@ -227,7 +227,8 @@ type Config struct {
 	WebhookHMACSecret string
 
 	// CredentialEncryptionKey is the base64-encoded 32-byte AES-256 key
-	// used to encrypt per-org credentials at rest in org_secrets.
+	// used to encrypt per-org credentials at rest in org_secrets. Required:
+	// there is no default, because a default is a key everyone has.
 	CredentialEncryptionKey string
 
 	// OpenBaoAddr / OpenBaoToken — local-only OpenBao connection for the
@@ -281,7 +282,10 @@ type Config struct {
 // table-style without touching the environment. Accumulates all failures.
 func (c Config) Validate() error {
 	var errs []string
-	if key, err := base64.StdEncoding.DecodeString(c.CredentialEncryptionKey); err != nil || len(key) != 32 {
+	if c.CredentialEncryptionKey == "" {
+		errs = append(errs, "CREDENTIAL_ENCRYPTION_KEY is required — generate one with `openssl rand -base64 32`; "+
+			"it encrypts every org's credentials at rest, so it must be unique per installation and stable across restarts")
+	} else if key, err := base64.StdEncoding.DecodeString(c.CredentialEncryptionKey); err != nil || len(key) != 32 {
 		errs = append(errs, "CREDENTIAL_ENCRYPTION_KEY must be a base64-encoded 32-byte key")
 	}
 	if c.GitProvider != "github" {

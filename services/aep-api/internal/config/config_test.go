@@ -58,6 +58,30 @@ func TestConfigValidate_CredentialEncryptionKey(t *testing.T) {
 	}
 }
 
+// The regression this file exists to hold: CREDENTIAL_ENCRYPTION_KEY used to
+// carry a built-in default of 32 zero bytes, so an installation that never set
+// it encrypted every org's credentials under a key published in this source
+// tree — and nothing said so. Load must supply NO key of its own.
+func TestLoad_NoDefaultCredentialEncryptionKey(t *testing.T) {
+	t.Setenv("CREDENTIAL_ENCRYPTION_KEY", "")
+
+	r := &configReader{}
+	if got := r.readOptionalString("CREDENTIAL_ENCRYPTION_KEY", ""); got != "" {
+		t.Fatalf("CREDENTIAL_ENCRYPTION_KEY defaulted to %q — it must have no default", got)
+	}
+
+	// And an unset key must stop the boot rather than be tolerated.
+	c := validConfig()
+	c.CredentialEncryptionKey = ""
+	err := c.Validate()
+	if err == nil {
+		t.Fatal("Validate() accepted an empty CREDENTIAL_ENCRYPTION_KEY")
+	}
+	if !strings.Contains(err.Error(), "CREDENTIAL_ENCRYPTION_KEY is required") {
+		t.Fatalf("Validate() error = %v; want it to name the missing key", err)
+	}
+}
+
 func TestConfigValidate_GitProvider(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -112,6 +136,7 @@ func setRequiredLoadEnv(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/aep")
 	t.Setenv("JWKS_URL", "https://thunder.example/oauth2/jwks")
 	t.Setenv("BFF_TASK_SIGNING_KEY", "-----BEGIN KEY-----\nx\n-----END KEY-----")
+	t.Setenv("CREDENTIAL_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
 }
 
 // TestLoad_SREHandoff pins the handoff's env wiring: a key is enabled, none

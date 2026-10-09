@@ -19,6 +19,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -286,7 +287,7 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 		sp := ui.NewSpinner("Verifying existing OpenBao secrets")
 		sp.Start()
-		if err := verifyOpenBaoSecrets(ctx); err != nil {
+		if err := verifyOpenBaoSecrets(ctx, k8sClient); err != nil {
 			sp.Fail("Secret verification failed")
 			return fmt.Errorf("reuse-secrets verification failed: %w\nRemove --reuse-secrets to run a fresh install", err)
 		}
@@ -343,7 +344,7 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		}
 
 		fmt.Println()
-		if err := provisionOpenBao(ctx, anthropicKey, adminClientID, adminClientSecret, openBaoToken); err != nil {
+		if err := provisionOpenBao(ctx, k8sClient, anthropicKey, adminClientID, adminClientSecret, openBaoToken); err != nil {
 			return fmt.Errorf("provision OpenBao: %w", err)
 		}
 	}
@@ -792,7 +793,7 @@ func shortToolVersion(name string, args ...string) string {
 // verifyOpenBaoSecrets confirms all required secret paths exist in OpenBao.
 // Used by --reuse-secrets to ensure a previous install seeded everything before
 // skipping the provisioning step.
-func verifyOpenBaoSecrets(ctx context.Context) error {
+func verifyOpenBaoSecrets(ctx context.Context, client kubernetes.Interface) error {
 	pfCmd, err := openbao.PortForward(ctx, ocOpenBaoNamespace, ocOpenBaoRelease, kubeconfig)
 	if err != nil {
 		return err
@@ -848,11 +849,71 @@ func verifyOpenBaoSecrets(ctx context.Context) error {
 	if len(missing) > 0 {
 		return fmt.Errorf("the following secrets are not in OpenBao:\n  %s", strings.Join(missing, "\n  "))
 	}
+	// Ensured rather than required: it is the one secret that can be restored
+	// from the cluster instead of failing the run.
+	return ensureCredentialEncryptionKey(ctx, client, baseURL, token)
+}
+
+const credentialEncryptionKeyPath = "aep/credential-encryption-key"
+
+const credentialEncryptionKeySecret = "aep-credential-encryption-key"
+
+//  1. OpenBao already holds it — reuse it.
+//  2. OpenBao lost it but the cluster Secret still holds it — write that value
+//     back.
+//  3. Neither — a fresh installation: generate one.
+func ensureCredentialEncryptionKey(ctx context.Context, client kubernetes.Interface, baseURL, token string) error {
+	_, status, err := openbao.Req(ctx, "GET", baseURL, token, "/v1/secret/data/"+credentialEncryptionKeyPath, nil)
+	if err != nil {
+		return fmt.Errorf("check secret %s: %w", credentialEncryptionKeyPath, err)
+	}
+	switch status {
+	case 200:
+		return nil
+	case 404:
+	default:
+		return fmt.Errorf("check secret %s: OpenBao returned %d", credentialEncryptionKeyPath, status)
+	}
+	key, err := credentialEncryptionKeyFromCluster(ctx, client, initPlatformNamespace)
+	if err != nil {
+		return err
+	}
+	if key == "" {
+		if key, err = bootstrap.GenerateAESKey(); err != nil {
+			return fmt.Errorf("generate credential encryption key: %w", err)
+		}
+	}
+	if _, err := openbao.Must(ctx, "PUT", baseURL, token, "/v1/secret/data/"+credentialEncryptionKeyPath, map[string]interface{}{
+		"data": map[string]interface{}{"value": key},
+	}); err != nil {
+		return fmt.Errorf("write %s: %w", credentialEncryptionKeyPath, err)
+	}
 	return nil
 }
 
+// credentialEncryptionKeyFromCluster returns the key credentialEncryptionKeySecret
+// holds in namespace, or "" when that Secret or its key is absent. A value that
+// is not a base64-encoded 32-byte key is an error: aep-api would refuse it.
+func credentialEncryptionKeyFromCluster(ctx context.Context, client kubernetes.Interface, namespace string) (string, error) {
+	s, err := client.CoreV1().Secrets(namespace).Get(ctx, credentialEncryptionKeySecret, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read secret %s/%s: %w", namespace, credentialEncryptionKeySecret, err)
+	}
+	key := string(s.Data["CREDENTIAL_ENCRYPTION_KEY"])
+	if key == "" {
+		return "", nil
+	}
+	if raw, err := base64.StdEncoding.DecodeString(key); err != nil || len(raw) != 32 {
+		return "", fmt.Errorf("secret %s/%s does not hold a base64-encoded 32-byte key", namespace, credentialEncryptionKeySecret)
+	}
+	return key, nil
+}
+
 // provisionOpenBao seeds all platform secrets into OC's built-in OpenBao instance.
-func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, thunderAdminClientSecret, openBaoToken string) error {
+func provisionOpenBao(ctx context.Context, client kubernetes.Interface, anthropicKey, thunderAdminClientID, thunderAdminClientSecret, openBaoToken string) error {
 	sp := ui.NewSpinner("Connecting to OpenBao")
 	sp.Start()
 
@@ -976,7 +1037,15 @@ func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, t
 		}
 	}
 
-	sp.Success(fmt.Sprintf("%d secrets provisioned", len(secrets)))
+	// Generate-once, so it is not in the loop above: see
+	// ensureCredentialEncryptionKey.
+	sp.Update("Ensuring credential encryption key")
+	if err := ensureCredentialEncryptionKey(ctx, client, baseURL, token); err != nil {
+		sp.Fail("Failed ensuring credential encryption key")
+		return err
+	}
+
+	sp.Success(fmt.Sprintf("%d secrets provisioned", len(secrets)+1))
 	return nil
 }
 
