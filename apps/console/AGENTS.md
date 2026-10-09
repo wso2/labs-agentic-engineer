@@ -59,4 +59,4 @@ an area before changing it.
   Room (`src/features/spec/collab/specRoom.ts`), not `aep-api`; the
   `AeStudioGate` holds the console, or shows the restart banner or the failed
   page, by AE Studio's state
-  ([ADR-0003](design/decisions/ADR-0003-the-console-calls-the-orgs-ae-studio-directly.md)).
+  ([ADR-0004](design/decisions/ADR-0004-the-console-calls-the-orgs-ae-studio-directly.md)).

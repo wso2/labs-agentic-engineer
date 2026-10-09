@@ -1,7 +1,8 @@
-# ADR-0003 — The console calls the org's AE Studio directly
+# ADR-0004 — The console calls the org's AE Studio directly
 
 **Status:** Accepted · 2026-10-06 (as console ADR-0034 of the classic series;
-renumbered into this series and rewritten for this console, 2026-10-07)
+renumbered into this series and rewritten for this console, 2026-10-07;
+renumbered 0003 → 0004 on the 2026-10-09 main sync, where #891 took 0003)
 **Builds on:** classic console
 [ADR-0003](https://github.com/wso2/labs-agentic-engineer/blob/classic-console/apps/console/design/decisions/ADR-0003-contract-and-codegen.md)
 (contract-first codegen: each client is generated from a committed spec) and

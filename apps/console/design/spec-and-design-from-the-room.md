@@ -15,7 +15,7 @@ few seconds after the last lets go. Its lifecycle is the classic console's
 to it: Hocuspocus token sync (`sendToken()`, in place of the classic
 stateless `{type:"token"}` push), and renew once and rejoin when the Room drops
 the bearer, where the classic console stayed offline (console
-[ADR-0003](decisions/ADR-0003-the-console-calls-the-orgs-ae-studio-directly.md)).
+[ADR-0004](decisions/ADR-0004-the-console-calls-the-orgs-ae-studio-directly.md)).
 Files are keyed by their repo paths (`specs/requirements/prd.md`).
 `useSpecDoc` returns its doc once synced; a build flushes it first, and a save
 with warnings shows *Saved with warnings* on the spec.
