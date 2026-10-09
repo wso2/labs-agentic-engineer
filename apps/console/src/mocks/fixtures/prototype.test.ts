@@ -49,9 +49,9 @@ const made = () => docWith({ [manifestPath(SAMPLE_COMPONENT)]: SAMPLE_MANIFEST, 
 describe("the mock's sample prototype", () => {
   it("passes the kit's checks on the Oxygen theme, as written and as every request it knows revises it", async () => {
     expect(await checkPrototypeFiles({ manifest: SAMPLE_MANIFEST, source: SAMPLE_SOURCE }, { theme: oxygen })).toEqual([]);
-    const feedback = { prototypeHash: "a".repeat(64), component: SAMPLE_COMPONENT, requests: [request("Approve on the right"), request("A bigger total")] };
+    const feedback = { prototypeHash: "a".repeat(64), component: SAMPLE_COMPONENT, requests: [request("Approve on the right"), request("A bigger total"), request("Remove the Reject button")] };
     const revised = scriptPrototypeTurn({ instruction: "/prototype", feedback, webApps: [SAMPLE_COMPONENT], doc: made(), turnKey: "t" })!;
-    expect(writes(revised.frames)).toHaveLength(2);
+    expect(writes(revised.frames)).toHaveLength(3);
     expect(await checkPrototypeFiles({ manifest: SAMPLE_MANIFEST, source: revised.files![sourcePath(SAMPLE_COMPONENT)]! }, { theme: oxygen })).toEqual([]);
   });
 });
@@ -95,5 +95,30 @@ describe("scriptPrototypeTurn", () => {
     expect(text(turn)).toMatch(/2\. Declined/);
     expect(turn.files?.[sourcePath(SAMPLE_COMPONENT)]).not.toBe(SAMPLE_SOURCE);
     expect(turn.files?.[sourcePath(SAMPLE_COMPONENT)]?.indexOf('id="btn.reject"')).toBeLessThan(turn.files![sourcePath(SAMPLE_COMPONENT)]!.indexOf('id="btn.approve"'));
+  });
+
+  it("removes an element a request asks to remove, so comments on it are left without it", () => {
+    const feedback = { prototypeHash: "a".repeat(64), component: SAMPLE_COMPONENT, requests: [request("Remove the Reject button")] };
+    const turn = scriptPrototypeTurn({ ...base, instruction: "/prototype expense-web", feedback, doc: made() })!;
+    expect(text(turn)).toMatch(/1\. Applied: Reject is gone/);
+    expect(turn.files?.[sourcePath(SAMPLE_COMPONENT)]).not.toContain('id="btn.reject"');
+  });
+
+  it("fails the turn a request asks to fail, writing nothing", () => {
+    const feedback = { prototypeHash: "a".repeat(64), component: SAMPLE_COMPONENT, requests: [request("Put Approve on the right"), request("Fail this revision")] };
+    const turn = scriptPrototypeTurn({ ...base, instruction: "/prototype expense-web", feedback, doc: made() })!;
+    expect(writes(turn.frames)).toEqual([]);
+    expect(turn.files).toBeUndefined();
+    expect(turn.frames.at(-1)?.part).toMatchObject({ type: "turn-failed" });
+    expect(turn.failure).toMatch(/failed/);
+  });
+
+  it("fails the turn a request asks to stop partway, keeping what the requests before it wrote", () => {
+    const feedback = { prototypeHash: "a".repeat(64), component: SAMPLE_COMPONENT, requests: [request("Remove the Reject button"), request("Stop partway")] };
+    const turn = scriptPrototypeTurn({ ...base, instruction: "/prototype expense-web", feedback, doc: made() })!;
+    expect(writes(turn.frames)).toEqual([`editFile ${sourcePath(SAMPLE_COMPONENT)}`]);
+    expect(turn.files?.[sourcePath(SAMPLE_COMPONENT)]).not.toContain('id="btn.reject"');
+    expect(turn.frames.at(-1)?.part).toMatchObject({ type: "turn-failed" });
+    expect(turn.failure).toMatch(/request 2/);
   });
 });

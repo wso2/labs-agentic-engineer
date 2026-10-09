@@ -69,22 +69,22 @@ describe("prototype preview — stats, sections and row actions", () => {
     await asManager();
     await driver.click(page, app.element("row.team-queue.req-2001.approve"));
     await driver.waitFor(page, app.row("Alex Doe"), "hidden");
-    expect(await driver.read(page, host.picker("Screen"), "value")).toBe("screen.team-queue");
+    expect(await driver.read(page, host.address(), "text")).toBe("prototype://screen.team-queue");
     await driver.click(page, app.element("row.team-queue.req-2002.reject"));
     await driver.waitFor(page, app.heading("Request from Sam Lee"));
   });
 
-  it("selects a row action in Annotate, not its row, and neither acts", async () => {
+  it("selects a row action in Comment mode, not its row, and neither acts", async () => {
     await asManager();
-    await driver.click(page, host.button("Annotate"));
+    await driver.click(page, host.button("Comment"));
     await driver.frameMode(page, "annotate");
 
     await driver.click(page, app.element("row.team-queue.req-2001.approve"));
-    await driver.waitFor(page, host.text("Selected: Approve"));
+    await driver.waitFor(page, host.dialog("Comment on Approve"));
     expect(await driver.read(page, app.element("row.team-queue.req-2001.approve"), "pressed")).toBe("true");
     expect(await driver.read(page, app.element("row.team-queue.req-2001"), "pressed")).toBe("false");
     expect(await driver.count(page, app.text("Alex Doe"))).toBe(1);
-    expect(await driver.read(page, host.picker("Screen"), "value")).toBe("screen.team-queue");
+    expect(await driver.read(page, host.address(), "text")).toBe("prototype://screen.team-queue");
 
     // A click elsewhere in the row is still the row's.
     await driver.click(page, app.text("Family trip"));

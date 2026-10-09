@@ -23,45 +23,41 @@
  * synchronous, so it runs in Node and in any browser page.
  *
  *  - the request and submission shapes, their limits and the validator;
- *  - the Annotate queue's helpers: a request on what the reviewer is looking
- *    at, and the numbered pins on a screen;
+ *  - the Annotate queue both hosts keep (`queue.ts`): a request on what the
+ *    reviewer is looking at, the numbered pins on a screen, editing and
+ *    removing queued comments, and drafts;
  *  - the revision hash a submission names.
  *
  * Lengths are counted the way JavaScript counts them, in UTF-16 code units
  * (`string.length`); the Go server counts the same way.
  */
 
-import type { PrototypeViewState } from "../host/view-state.js";
+import { MAX_FEEDBACK_ID, MAX_FEEDBACK_REQUESTS, MAX_FEEDBACK_TEXT, PROTOTYPE_HASH_PATTERN, type FeedbackRequest, type FeedbackSubmission } from "./request.js";
 import { sha256Hex } from "./sha256.js";
 
-/** The most requests one submission takes. */
-export const MAX_FEEDBACK_REQUESTS = 50;
-
-/** The longest request text, in UTF-16 code units. */
-export const MAX_FEEDBACK_TEXT = 4000;
-
-/** The longest screen, flow, role, state, element or component id, in UTF-16 code units. */
-export const MAX_FEEDBACK_ID = 200;
-
-/** A revision hash: 64 lowercase hex characters. */
-export const PROTOTYPE_HASH_PATTERN = /^[0-9a-f]{64}$/;
-
-export interface FeedbackRequest {
-  screenId: string;
-  flowId?: string;
-  roleId: string;
-  stateId: string;
-  /** The selected elements' ids, in selection order; empty for the whole screen. */
-  elementIds: string[];
-  text: string;
-}
-
-/** A batch of requests on one revision. */
-export interface FeedbackSubmission {
-  /** The revision the requests were made on (`prototypeHash`). */
-  prototypeHash: string;
-  requests: FeedbackRequest[];
-}
+export { MAX_FEEDBACK_ID, MAX_FEEDBACK_REQUESTS, MAX_FEEDBACK_TEXT, PROTOTYPE_HASH_PATTERN, type FeedbackRequest, type FeedbackSubmission } from "./request.js";
+export {
+  EMPTY_FEEDBACK_QUEUE,
+  dequeue,
+  earlierComments,
+  draftAt,
+  draftOfPin,
+  draftPinsOnScreen,
+  editRequest,
+  enqueue,
+  keepDraft,
+  keepOnScreen,
+  onRevision,
+  orphansOnScreen,
+  pinsOnScreen,
+  requestFor,
+  screenPinsOnScreen,
+  submissionOf,
+  targetLabel,
+  type FeedbackQueue,
+  type PlacedRequest,
+  type QueuedComment,
+} from "./queue.js";
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const isId = (v: unknown): v is string => typeof v === "string" && v.trim() !== "" && v.length <= MAX_FEEDBACK_ID;
@@ -99,28 +95,6 @@ export function parseFeedbackSubmission(value: unknown): { submission: FeedbackS
     parsed.push(result.request);
   }
   return { submission: { prototypeHash: value["prototypeHash"], requests: parsed } };
-}
-
-/** A request on the current screen, flow, role and state, for the selection in the order it was made (none: the whole screen). */
-export function requestFor(view: PrototypeViewState, text: string): FeedbackRequest {
-  return {
-    screenId: view.screenId,
-    ...(view.flowId !== null ? { flowId: view.flowId } : {}),
-    roleId: view.roleId,
-    stateId: view.stateId,
-    elementIds: [...view.selectedKeys],
-    text,
-  };
-}
-
-/** For each element a queued request on this screen names, the requests' 1-based queue numbers. */
-export function pinsOnScreen(queue: readonly FeedbackRequest[], screenId: string): Record<string, number[]> {
-  const pins: Record<string, number[]> = {};
-  queue.forEach((request, i) => {
-    if (request.screenId !== screenId) return;
-    for (const id of request.elementIds) pins[id] = [...(pins[id] ?? []), i + 1];
-  });
-  return pins;
 }
 
 /**

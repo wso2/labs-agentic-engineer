@@ -38,15 +38,22 @@ describe("prototypeAddress", () => {
 });
 
 describe("PrototypeWindow", () => {
-  it("shows the title and the address around its children, with the host's class", () => {
+  it("shows the title, the address and the host's tag around its children, with the host's class", () => {
     const html = renderToStaticMarkup(
-      <PrototypeWindow title="Acme" manifest={manifest} view={{ screenId: "screen.home", flowId: null, stateId: "state.default" }} className="mine">
+      <PrototypeWindow
+        title="Acme"
+        manifest={manifest}
+        view={{ screenId: "screen.home", flowId: null, stateId: "state.default" }}
+        className="mine"
+        tag={<em>Comment mode</em>}
+      >
         <p>app</p>
       </PrototypeWindow>,
     );
     expect(html).toContain('class="proto-window mine"');
     expect(html).toContain("Acme");
     expect(html).toContain("prototype://screen.home");
+    expect(html).toContain("<em>Comment mode</em>");
     expect(html).toContain("<p>app</p>");
   });
 });

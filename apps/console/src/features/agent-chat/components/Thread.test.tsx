@@ -85,7 +85,7 @@ const wrote = (id: string, component: string, state: "done" | "failed" = "done")
 });
 
 describe("a prototype review in the conversation", () => {
-  it("reads as its requests, named from the manifest, not as the /prototype line it went over the wire as", () => {
+  it("reads as its comments, named from the manifest, not as the /prototype line it went over the wire as", () => {
     prototypes = written(SAMPLE_COMPONENT);
     const prototypeFeedback = {
       prototypeHash: "a".repeat(64),
@@ -94,7 +94,7 @@ describe("a prototype review in the conversation", () => {
     };
     chat = ready([{ kind: "user", id: "h0", text: "/prototype expense-web", prototypeFeedback, state: "sent" }]);
     renderThread();
-    expect(screen.getByText(/Feedback on the Acme Expenses prototype \(1 request\)/)).toHaveTextContent(
+    expect(screen.getByText(/Feedback on the Acme Expenses prototype \(1 comment\)/)).toHaveTextContent(
       /1\. Pending approvals \(Manager, Default\) — btn\.reject: Wider/,
     );
     expect(screen.queryByText("/prototype expense-web")).toBeNull();

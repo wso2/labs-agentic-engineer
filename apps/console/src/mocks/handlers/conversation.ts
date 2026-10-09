@@ -96,13 +96,14 @@ function statusOf(turn: MockTurn): TurnStatus {
     turnId: turn.turnId,
     conversationId: turn.conversationId,
     useCase: "general",
-    status: running ? "running" : "completed",
+    status: running ? "running" : turn.failure ? "failed" : "completed",
     instruction: turn.instruction,
     authorId: AUTHOR.id,
     authorDisplayName: AUTHOR.displayName,
     createdAt: new Date(turn.startedAt).toISOString(),
     updatedAt: new Date().toISOString(),
     ...(running ? {} : { noChanges: !turn.effect?.file }),
+    ...(!running && turn.failure ? { message: turn.failure } : {}),
   };
 }
 
@@ -144,6 +145,7 @@ export function startMockTurn(projectName: string, body: TurnBody): MockTurn {
       reply: prototypeTurn.reply,
       ...(prototypeTurn.files ? { prototype: prototypeTurn.files } : {}),
       ...(body.prototypeFeedback ? { prototypeFeedback: body.prototypeFeedback } : {}),
+      ...(prototypeTurn.failure ? { failure: prototypeTurn.failure } : {}),
     });
   }
   const designTurn =

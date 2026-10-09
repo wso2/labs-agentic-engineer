@@ -20,7 +20,8 @@
  * A preview smoke run under Oxygen: `prototype preview --theme` played in
  * Chromium, through the sandboxed frame, as a reviewer clicks it. It covers
  * what a theme draws and wires — navigation, rows, forms and validation, tabs,
- * dialogs, drawers, the stepper, Annotate selecting instead of acting — and
+ * dialogs, drawers, the stepper, Comment mode selecting instead of acting and
+ * drawing the comment cursor — and
  * that the frame fetches nothing.
  */
 
@@ -58,6 +59,33 @@ async function open(fixture: string): Promise<Session> {
   await page.goto(preview.url);
   return { preview, page, app: page.frameLocator('iframe[title$="prototype app"]'), requests, errors };
 }
+
+/**
+ * The cursor the frame draws with the pointer over the middle of the element
+ * `key` names, or (no key) on empty space at the bottom-left of the screen:
+ * the cursor of whatever the frame hit-tests there.
+ */
+async function cursorAt(s: Session, key?: string): Promise<string> {
+  if (key !== undefined) {
+    return s.app.locator(`[data-proto-key="${key}"]`).evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+      return hit ? getComputedStyle(hit).cursor : "";
+    });
+  }
+  const frame = s.page.frames().find((f) => f !== s.page.mainFrame())!;
+  return frame.evaluate(() => {
+    const hit = document.elementFromPoint(4, window.innerHeight - 4);
+    return hit ? getComputedStyle(hit).cursor : "";
+  });
+}
+
+/** The comment cursor's SVG (an arrow and a bubble, hotspot at the arrow's tip, `fallback` after it); null for any other cursor. */
+function commentCursor(cursor: string, fallback: string): string | null {
+  const m = /^url\("data:image\/svg\+xml,(.+)"\) 3 2, ([a-z-]+)$/.exec(cursor);
+  return m && m[2] === fallback ? decodeURIComponent(m[1]!) : null;
+}
+const ORANGE = /fill="#ff7300"/i;
 
 /**
  * The frame is sandboxed without `allow-same-origin`, so it has no storage: any
@@ -133,12 +161,58 @@ describe("contacts under Oxygen", () => {
     await s.app.getByRole("heading", { name: "Globex contacts" }).waitFor();
   });
 
-  it("selects instead of acting in Annotate", async () => {
-    await s.page.getByRole("button", { name: "Annotate" }).click();
+  it("selects instead of acting in Comment mode, under the comment cursor", async () => {
+    expect(commentCursor(await cursorAt(s, "btn.new"), "crosshair")).toBeNull();
+    expect(commentCursor(await cursorAt(s), "default")).toBeNull();
+    await s.page.getByRole("button", { name: "Comment", exact: true }).click();
     const button = s.app.locator('[data-proto-key="btn.new"]');
+    await expect.poll(() => button.getAttribute("data-proto-annotating")).toBe("");
+    // A solid orange bubble with a "+" over what takes a comment; a hollow one over empty space.
+    expect(commentCursor(await cursorAt(s, "btn.new"), "crosshair")).toMatch(ORANGE);
+    const empty = commentCursor(await cursorAt(s), "default");
+    expect(empty).not.toBeNull();
+    expect(empty).not.toMatch(ORANGE);
+    // The same graphic in the dark scheme (dark ink outlined in white reads on both).
+    const frame = s.page.frames().find((f) => f !== s.page.mainFrame())!;
+    await s.page.evaluate(() => {
+      const view = { mode: "annotate", roleId: "editor", stateId: "state.default", screenId: "screen.contacts", selectedKeys: [], pins: {}, colorScheme: "dark" };
+      document.querySelector<HTMLIFrameElement>('iframe[title$="prototype app"]')!.contentWindow!.postMessage({ type: "proto:view", view }, "*");
+    });
+    await expect.poll(() => frame.evaluate(() => document.documentElement.getAttribute("data-color-scheme"))).toBe("dark");
+    expect(commentCursor(await cursorAt(s, "btn.new"), "crosshair")).toMatch(ORANGE);
+    expect(commentCursor(await cursorAt(s), "default")).toBe(empty);
     await button.click();
     expect(await button.getAttribute("aria-pressed")).toBe("true");
     expect(await s.app.getByRole("heading", { name: "New contact" }).count()).toBe(0);
+    await s.page.getByRole("button", { name: "Preview" }).click();
+  });
+
+  it("comments on the whole screen with a click on empty space, and draws its pin there, over the prototype", async () => {
+    await s.page.getByRole("button", { name: "Comment", exact: true }).click();
+    await expect.poll(() => s.app.locator('[data-proto-key="btn.new"]').getAttribute("data-proto-annotating")).toBe("");
+    const frame = s.page.frames().find((f) => f !== s.page.mainFrame())!;
+    // A spot near the bottom-left, where nothing takes a comment.
+    const spot = await frame.evaluate(() => ({ x: 60, y: innerHeight - 60 }));
+    expect(await frame.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest("[data-proto-annotating], .proto-pin") ?? null, spot)).toBeNull();
+    const box = (await s.page.locator('iframe[title$="prototype app"]').boundingBox())!;
+    await s.page.mouse.click(box.x + spot.x, box.y + spot.y);
+    const bubble = s.page.getByRole("dialog", { name: "Comment on Contacts (whole screen)" });
+    await bubble.waitFor();
+    await bubble.getByLabel("Comment").fill("Too much empty space");
+    await bubble.getByRole("button", { name: "Add" }).click();
+
+    const pin = s.app.getByRole("button", { name: "Comment 1" });
+    await pin.waitFor();
+    // At the spot, and the topmost thing there: drawn over the prototype, in the theme's pin look.
+    const drawn = await pin.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const centre = { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+      return { centre, top: document.elementFromPoint(centre.x, centre.y) === el, border: getComputedStyle(el).borderTopStyle };
+    });
+    expect(drawn).toEqual({ centre: spot, top: true, border: "solid" });
+    await pin.click();
+    await s.page.getByRole("dialog", { name: "Comment 1" }).waitFor();
+    await s.page.keyboard.press("Escape");
     await s.page.getByRole("button", { name: "Preview" }).click();
   });
 });
@@ -281,8 +355,8 @@ describe("the app shell under Oxygen", () => {
     await expect.poll(scheme).toBe("light");
   });
 
-  it("selects the user menu in Annotate instead of opening it", async () => {
-    await s.page.getByRole("button", { name: "Annotate" }).click();
+  it("selects the user menu in Comment mode instead of opening it", async () => {
+    await s.page.getByRole("button", { name: "Comment", exact: true }).click();
     const user = s.app.locator('[data-proto-key="shell.user"]');
     await user.click();
     expect(await user.getAttribute("aria-pressed")).toBe("true");
@@ -317,22 +391,51 @@ describe("stats, sections and row actions under Oxygen", () => {
     await s.app.getByRole("heading", { name: "New Leave Request" }).waitFor();
   });
 
-  it("acts on a row's action in Preview without pressing the row, and selects it in Annotate without acting", async () => {
+  it("acts on a row's action in Preview without pressing the row, and selects it in Comment mode without acting", async () => {
     await s.page.getByRole("combobox", { name: "Role" }).selectOption({ label: "Manager" });
     await s.app.getByRole("heading", { name: "Pending Requests" }).waitFor();
     await s.app.locator('[data-proto-key="row.team-queue.req-2001.approve"]').click();
     await s.app.getByText("Alex Doe").waitFor({ state: "hidden" });
     await s.app.getByRole("heading", { name: "Pending Requests" }).waitFor();
 
-    await s.page.getByRole("button", { name: "Annotate" }).click();
+    await s.page.getByRole("button", { name: "Comment", exact: true }).click();
     const reject = s.app.locator('[data-proto-key="row.team-queue.req-2002.reject"]');
     await expect.poll(() => reject.getAttribute("data-proto-annotating")).toBe("");
     await reject.click();
     expect(await reject.getAttribute("aria-pressed")).toBe("true");
     expect(await s.app.locator('[data-proto-key="row.team-queue.req-2002"]').getAttribute("aria-pressed")).toBe("false");
-    await s.page.getByText("Selected: Reject").waitFor();
+    await s.page.getByRole("dialog", { name: "Comment on Reject" }).waitFor();
     expect(await s.app.getByRole("heading", { name: "Request from Sam Lee" }).count()).toBe(0);
     await s.page.getByRole("button", { name: "Preview" }).click();
+  });
+
+  it("draws comment pins as buttons over a row, a draft's hollow, in both schemes, and focuses the pin the host names", async () => {
+    await s.page.getByRole("combobox", { name: "Role" }).selectOption({ label: "Manager" });
+    await s.app.getByRole("heading", { name: "Pending Requests" }).waitFor();
+    const screenId = "screen.team-queue";
+    const row = "row.team-queue.req-2002";
+    // As a host does: the view names the pins and drafts; then, as a bubble closes, the pin to focus.
+    const send = (message: object) =>
+      s.page.evaluate((message) => {
+        document.querySelector<HTMLIFrameElement>('iframe[title$="prototype app"]')!.contentWindow!.postMessage(message, "*");
+      }, message);
+    for (const colorScheme of ["light", "dark"]) {
+      await send({ type: "proto:view", view: { mode: "preview", roleId: "manager", stateId: "state.default", screenId, selectedKeys: [], pins: { [row]: [1] }, drafts: [row], colorScheme } });
+      const pin = s.app.getByRole("button", { name: "Comment 1" });
+      const draft = s.app.getByRole("button", { name: "Draft comment" });
+      await draft.waitFor();
+      const look = (l: typeof pin) => l.evaluate((el) => ({ bg: getComputedStyle(el).backgroundColor, border: getComputedStyle(el).borderTopStyle }));
+      expect(await look(pin)).toMatchObject({ border: "solid" });
+      expect(await look(draft)).toMatchObject({ border: "dashed" });
+      expect((await look(draft)).bg).not.toBe((await look(pin)).bg);
+      const [pinBox, rowBox] = [await pin.boundingBox(), await s.app.locator(`[data-proto-key="${row}"]`).boundingBox()];
+      expect(pinBox!.y).toBeLessThan(rowBox!.y + rowBox!.height);
+      expect(pinBox!.x + pinBox!.width).toBeLessThanOrEqual(rowBox!.x + rowBox!.width);
+    }
+    await send({ type: "proto:focus", key: row, requests: [] });
+    await expect.poll(() => s.app.locator(":focus").getAttribute("aria-label")).toBe("Draft comment");
+    await send({ type: "proto:view", view: { mode: "preview", roleId: "manager", stateId: "state.default", screenId, selectedKeys: [], pins: {} } });
+    await s.app.getByRole("button", { name: "Comment 1" }).waitFor({ state: "hidden" });
   });
 });
 

@@ -19,7 +19,7 @@
 /** The browser tests' typed view of the node-side commands, plus target shorthands. */
 
 import { commands } from "vitest/browser";
-import type { Action, Preview, Reading, Target } from "./protocol.js";
+import type { Action, Box, Modifier, Preview, Reading, Target } from "./protocol.js";
 
 type Call = (...args: unknown[]) => Promise<unknown>;
 const call = (name: string): Call => (commands as unknown as Record<string, Call>)[name]!;
@@ -33,13 +33,25 @@ export const driver = {
   closePage: (id: string) => call("closePage")(id) as Promise<void>,
   act: (page: string, target: Target, action: Action) => call("act")(page, target, action) as Promise<void>,
   click: (page: string, target: Target) => call("act")(page, target, { type: "click" }) as Promise<void>,
+  /** A click holding modifiers (Shift adds to the comment's elements). */
+  clickWith: (page: string, target: Target, ...modifiers: Modifier[]) => call("act")(page, target, { type: "click", modifiers }) as Promise<void>,
   fill: (page: string, target: Target, value: string) => call("act")(page, target, { type: "fill", value }) as Promise<void>,
   press: (page: string, target: Target, key: string) => call("act")(page, target, { type: "press", key }) as Promise<void>,
   select: (page: string, target: Target, label: string) => call("act")(page, target, { type: "select", label }) as Promise<void>,
   read: (page: string, target: Target, reading: Reading) => call("read")(page, target, reading) as Promise<string | number | null>,
+  box: (page: string, target: Target) => call("box")(page, target) as Promise<Box>,
+  /** A pointer click at (`x`, `y`) of the app frame's viewport (empty space, in Comment mode); resolves to that spot in the page's viewport. */
+  clickAppAt: (page: string, x: number, y: number) => call("clickAppAt")(page, x, y) as Promise<{ x: number; y: number }>,
+  /** A key on the page, to whatever has focus. */
+  pressKey: (page: string, key: string) => call("pressKey")(page, key) as Promise<void>,
+  resize: (page: string, width: number, height: number) => call("resizePage")(page, width, height) as Promise<void>,
   count: (page: string, target: Target) => call("read")(page, target, "count") as Promise<number>,
   waitFor: (page: string, target: Target, state: "visible" | "hidden" = "visible") => call("waitFor")(page, target, state) as Promise<void>,
   evalInApp: (page: string, expression: string) => call("evalInApp")(page, expression) as Promise<string>,
+  /** The cursor the app frame shows over the middle of `target`, or (null) over empty space at the bottom of the screen. */
+  cursorAt: (page: string, target: Target | null) => call("cursorAt")(page, target) as Promise<string>,
+  /** With the pointer resting on `target`, the outline colour of each app element in `keys`. */
+  outlinesOnHover: (page: string, target: Target, keys: string[]) => call("outlinesOnHover")(page, target, keys) as Promise<string[]>,
   /** Waits until the app frame draws in `mode`: a host's mode switch reaches the frame by message, after the click. */
   frameMode: (page: string, mode: "preview" | "annotate") =>
     call("evalInApp")(
@@ -73,6 +85,13 @@ export const host = {
   picker: (label: string): Target => ({ where: "host", role: "combobox", name: label }),
   button: (name: string): Target => ({ where: "host", role: "button", name }),
   region: (name: string): Target => ({ where: "host", role: "region", name }),
+  /** The floating dock at the bottom of the review, which holds every review control. */
+  dock: (): Target => ({ where: "host", role: "region", name: "Review controls" }),
+  /** The browser window's address bar: the screen the review shows (`prototype://<screen>`). */
+  address: (): Target => ({ where: "host", label: "Address" }),
+  /** A dialog by its name (a comment bubble: `Comment on <elements>`, `Comment <n>`); `partial` matches a substring. */
+  dialog: (name: string, partial = false): Target => ({ where: "host", role: "dialog", name, partial }),
+  status: (): Target => ({ where: "host", role: "status" }),
   alert: (): Target => ({ where: "host", role: "alert" }),
   field: (label: string): Target => ({ where: "host", label }),
   text: (text: string, partial = false): Target => ({ where: "host", text, partial }),

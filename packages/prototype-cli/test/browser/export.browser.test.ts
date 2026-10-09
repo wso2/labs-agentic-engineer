@@ -41,10 +41,10 @@ describe("prototype export — the file, opened", () => {
     await driver.waitFor(page, app.heading("Grace Hopper"));
   });
 
-  it("has the pickers and Reset data, but no Annotate", async () => {
+  it("has the pickers and Reset data, but no Comment mode", async () => {
     await driver.waitFor(page, host.picker("Role"));
     await driver.waitFor(page, host.button("Reset data"));
-    expect(await driver.count(page, host.button("Annotate"))).toBe(0);
+    expect(await driver.count(page, host.button("Comment"))).toBe(0);
   });
 
   it("made no network request", async () => {
