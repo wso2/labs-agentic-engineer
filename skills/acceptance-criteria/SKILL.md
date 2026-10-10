@@ -1,6 +1,6 @@
 ---
 name: acceptance-criteria
-description: Use when generating the acceptance criteria — write specs/validation/acceptance/F<n>-<slug>.feature, one Gherkin file per feature, from the requirements alone, for the features a design run designs.
+description: Use when generating the acceptance criteria — write specs/validation/acceptance/F<n>-<slug>.feature, one Gherkin file per feature, from the requirements and the prototype, for the features a design run designs.
 metadata:
   aep:
     kind: platform
@@ -18,17 +18,36 @@ scenario text IS the test.
 **Faithfulness to the requirement matters more than volume.** An invented rule
 becomes a check the product was never asked to pass.
 
-## Input — the requirement ONLY
+## Input — the requirement, and the prototype that shows it
 
 Write criteria for the features this design run designs (`/design F1 F2`
-names them; a bare `/design` means every feature it designs). For each, read
-its file under `specs/requirements/features/` — its User Stories are the spine
-— plus `specs/requirements/prd.md`, whose Actors section names the people your
-scenarios are about, and the product-wide items that apply to it.
+names them; a bare `/design` means every feature it designs). The design
+writes them last, after the prototypes. For each feature, read:
 
-**Do not read** the design bundle (`design.cell`, `domain-model.md`, `flows/`),
-`openapi.yaml`, wireframes, or any source code. The specification must be
-independent of the work it will grade.
+- its file under `specs/requirements/features/` — its User Stories are the
+  spine, and its Decisions (the `*assumed*` lines included) are requirements
+  too;
+- `specs/requirements/prd.md`, whose Actors section names the people your
+  scenarios are about, and the product-wide items that apply to it;
+- **the prototype, where the feature has screens.** A web application serves
+  the feature when its `specs/design/components/<name>/design.json` lists one
+  of the feature's stories in `stories`. Read that component's
+  `prototype.json` (its flows are the walks a reviewer did, one story each)
+  and `prototype.tsx` (its screens and its sample records).
+
+Take from the prototype what the reviewer saw: the actors' names, the sample
+records (`"Asha"`, `"$42.00"`, `"Taxi to the airport"`), the words on the
+screens, and the order of the steps in each flow. Take from the requirements
+what the product must do. A rule comes from a requirement, never from a
+screen: a message, a label or a layout that only the prototype shows is how
+the requirement is met, not a requirement. A feature with no screens (a
+nightly job, a machine-facing service) gets its scenarios from the
+requirements alone.
+
+**Do not read** the rest of the design (`design.cell`, `domain-model.md`,
+`security.json`, `flows/`, `decisions.md`, `openapi.yaml`, a dependency's
+files) or any source code. The criteria grade the build of those files, and
+must not repeat them.
 
 ## Output — Gherkin under `specs/validation/acceptance/`
 
@@ -94,14 +113,16 @@ regeneration. Read what is already in `specs/validation/acceptance/` before writ
 
 ## Authoring discipline
 
-- **Business language.** Words the PRD uses, for things the product has. Never
-  a CSS selector, a route, an HTTP verb, a table name, or a component name.
+- **Business language.** Words the PRD and the prototype's screens use, for
+  things the product has. Never a CSS selector, an element id, a route, an HTTP
+  verb, a table name, or a component name.
 - **Real data, always.** `"Bridge Cafe"`, `"12:30"`, `"3 items"` — never "a
   valid restaurant", "some time", "appropriate input". A vague step is one an
   agent will satisfy any way it likes, and the check becomes meaningless.
   Concrete data is what makes a scenario falsifiable.
 - **Name the actor.** Draw personas from the PRD's Actors section and give them
-  names — `Olivia the organizer`, `Dan the diner`. Never `I`: it hides which
+  names — `Olivia the organizer`, `Dan the diner`; where the prototype's
+  records name the people, use those names. Never `I`: it hides which
   actor is acting and falls apart the moment two of them appear.
 - **One scenario, one behaviour.** One `When`. A second `When` after a `Then` is
   a second scenario. Split any "X and Y" into two.
@@ -222,7 +243,7 @@ open question belongs in the conversation; the files stay on-shape.
 
 ## Do not
 
-- Do not read the design bundle, `openapi.yaml`, wireframes, or source code.
+- Do not read the design beyond the prototypes, or any source code.
 - Do not write step definitions, test code, or a runner — this skill produces
   `.feature` files and nothing else.
 - Do not invent scope, screens, endpoints, or features the requirement lacks.

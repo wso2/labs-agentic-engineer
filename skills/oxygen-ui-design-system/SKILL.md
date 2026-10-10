@@ -20,10 +20,11 @@ whole of it is yours — theming included. The organization's colors are settled
 in Brand colors below; nobody is interviewed about them, at design time or any
 other time.
 
-On a `/prototype` turn you are here for one thing: how an Oxygen screen is
-composed (page anatomy, listing pages, forms, status colors), so the prototype
-you write reads as one. The kit draws its components; the setup, packages and
-code below are the build's concern, not that turn's.
+When you write a prototype (in a design run or on `/prototype`) you are here
+for one thing: how an Oxygen screen is composed (page anatomy, listing pages,
+forms, status colors), so the prototype you write reads as one. The kit draws
+its components; the setup, packages and code below are the build's concern,
+not that turn's.
 
 `react-webapp` owns the app: layout, config, verify sequence, Dockerfile, nginx.
 This skill owns what goes **inside** `src/` — the UI. Where the two appear to

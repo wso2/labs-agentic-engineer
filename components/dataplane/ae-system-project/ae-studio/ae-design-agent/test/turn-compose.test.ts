@@ -135,14 +135,25 @@ test("a /prototype turn without feedback is unchanged", () => {
   assert.doesNotMatch(out, /Revise the prototype/);
 });
 
-test("/prototype inlines the skills that read the design and say how an Oxygen screen is composed", () => {
-  assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: "prototype" }), [
+test("/prototype inlines the skills that read the design and the org's design system", () => {
+  assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: "prototype" }, undefined, "astryx-design-system"), [
     "prototype",
     "cell-design",
     "security-design",
-    "openapi-conventions",
-    "oxygen-ui-design-system",
+    "astryx-design-system",
   ]);
+});
+
+test("an org that names no design system inlines none", () => {
+  assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: "prototype" }), ["prototype", "cell-design", "security-design"]);
+  assert.ok(!eagerSkillsFor({ kind: "flow", skill: "design" }).some((name) => name.endsWith("-design-system")));
+});
+
+test("the /prototype brief names the data model and the feature files, not the API or prd.md stories", () => {
+  const out = composeInstruction({ kind: "flow", skill: "prototype" });
+  assert.match(out, /specs\/design\/domain-model\.md/);
+  assert.match(out, /specs\/requirements\/features\//);
+  assert.doesNotMatch(out, /openapi\.yaml|prd\.md|flows\/\*\.md/);
 });
 
 test("the resolve command carries the user's answer after the dependency's name, verbatim", () => {
@@ -428,16 +439,19 @@ test("both PRD-writing flows carry the contract as a skill, not a reference", ()
  * this exists to remove.
  */
 test("the design flow inlines its whole lineup, in lineup order", () => {
-  assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: "design" }), [
+  assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: "design" }, undefined, "oxygen-ui-design-system"), [
     "design",
-    // The design flow interviews at design altitude (#578), so the question
-    // mechanics are inlined here exactly as they are on start and interview.
-    "grilling",
+    // A design run asks with no form, so the question mechanics are not
+    // inlined: its questions go to the requirements and the closing.
     "cell-design",
     "architecture",
     "security-design",
+    // The prototype is a design step, built on the data model and the roles,
+    // before the contracts that serve its screens; the org's design system
+    // says how its screens are composed.
+    "prototype",
+    "oxygen-ui-design-system",
     "openapi-conventions",
-    "wireframes",
     "agent-building",
     "acceptance-criteria",
   ]);
@@ -466,7 +480,7 @@ test("every eager skill name exists in the platform skill library", () => {
     { kind: "flow", skill: "actor" } as const,
   ];
   for (const turn of turns) {
-    for (const name of eagerSkillsFor(turn)) {
+    for (const name of eagerSkillsFor(turn, undefined, "oxygen-ui-design-system")) {
       assert.ok(
         fs.existsSync(path.join(SKILLS_DIR, name, "SKILL.md")),
         `eager skill ${name} has no skills/${name}/SKILL.md — it would be skipped silently`,

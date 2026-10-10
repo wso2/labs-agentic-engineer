@@ -1,6 +1,6 @@
 ---
 name: prototype
-description: "Load for the /prototype flow: generate the prototype (prototype.json + prototype.tsx) of every web-application a finished design declares, as a clickable, checked app the reviewer can use before anything is built."
+description: "Use when the design reaches a web application: write its prototype (prototype.json + prototype.tsx), a clickable, checked app on the data model and the roles that the reviewer uses before anything is built."
 metadata:
   aep:
     kind: platform
@@ -11,9 +11,11 @@ metadata:
 
 A prototype is the reviewable picture of a `web-application` before it is
 built: its screens, navigation, roles, flows and display states, filled with
-mock data, running in a sandbox inside the review page. It is **derived from
-the design**, so this flow runs after `/design` and asks nothing the design
-already answers. It writes two files per web-application and nothing else.
+mock data, running in a sandbox inside the review page. It is the web
+application's artifact in the design. The `design` flow writes it after the
+data model and the roles, and before the API contracts, which then serve its
+screens. The business reviewer uses it and comments on it, and the build
+makes what it shows.
 
 The screens are a React module written against a fixed kit of components
 (`@wso2/prototype-kit`). You compose screens from the kit; you do not build
@@ -26,25 +28,25 @@ Read these before writing anything:
 - `specs/design/design.cell`: every `component … web-application` line is one
   prototype to write. No web-application means there is nothing to do: say so
   and stop. When the turn names components, write only those.
+- `specs/design/domain-model.md`: the records. Each entity that a screen shows
+  or changes is a collection in the mock data, and its fields are the
+  entity's attributes (see **Mock data**).
 - `specs/design/security.json`: the roles. When the file exists, each
   prototype role's `id` is a role's `name` from it, **copied verbatim** (same
   case, same spelling), and its `name` is a short human label for that role.
-  Include exactly the roles that use this application. Without the file, take
-  the roles from the PRD's actors and give them short kebab-case ids.
-- The API each web-application reads: the `openapi.yaml` of every component
-  listed under `dependencies` (`kind: component`) in its `design.json`, and
-  its own when it has one. Screens show what these operations return and
-  collect what they accept.
-- `specs/requirements/prd.md`: the numbered **User Stories**, the coverage
-  oracle. Every story gets at least one screen. Set a story aside only when
-  the product gives it no view (sign-in through the platform's SSO, a backend
-  job, a machine-facing endpoint) and name it in your closing.
-- `specs/design/flows/*.md`: the key flows. Every flow a web-application's
-  users walk becomes a `flows` entry of its prototype, one role's walk through
-  its screens in order.
-- `specs/design/components/<component>/wireframes.dsl`, when it exists: the
-  earlier sketch of the screens. It is a hint for layout and screen names, not
-  a constraint; the PRD, flows and API decide what the screens hold.
+  Include exactly the roles that use this application. Each role's
+  `description` says what the role does and what it never sees: show each role
+  only the screens, controls and records that its description allows. Without
+  the file, take the roles from the PRD's actors and give them short
+  kebab-case ids.
+- The web application's `design.json`: `stories` lists the stories it serves.
+- The requirements of those stories: each feature's file,
+  `specs/requirements/features/F<n>-<slug>.md`, with its stories (`F<n>.<m>`)
+  and its Decisions, the `*assumed*` lines included; `product-wide.md` for the
+  items that apply to it; and `prd.md`'s Actors, for the people your records
+  are about. Every story the application serves gets at least one screen. Set
+  a story aside only when the product gives it no view (sign-in through the
+  platform's SSO, a machine-facing endpoint), and name it in your closing.
 - `specs/design/components/<component>/prototype.json` and `prototype.tsx` if
   they already exist: you are revising them, not starting over (see **Stable
   ids**).
@@ -64,10 +66,11 @@ Write a new file with ONE `addFile` of the whole file. Revise an existing one
 with `editFile` edits: the file is already in front of you, and an edit costs
 what it changes. Never write a partial file to finish later.
 
-Change **no other file**: not the cell, not `security.json`, not any
-`design.json`, `openapi.yaml` or requirement. If the design is wrong for the
-prototype you would write, say what is wrong in your reply and leave the design
-alone.
+This step writes only these two files. A screen can need a record, a field or
+a role that the data model or `security.json` does not have. Then change that
+file first (it comes earlier in the design), and write the screen after it.
+Do not change a requirement here: the design's gap check writes the
+requirements.
 
 Every write is checked as it lands: the manifest's shape and references, the
 source's static rules, then a render of every screen for every role that reaches
@@ -111,21 +114,22 @@ refused.
   flows' ids share one namespace and are unique together. `entryScreen` is the
   screen the prototype opens on. `name` is the application's name.
 - A screen's `roleIds` are the roles that reach it. A flow is one role's walk
-  through screens that role reaches, in order, for one story or key flow.
+  through screens that role reaches, in order, for one story. Give each story
+  that has a view a flow, named for what the actor does ("Submit a claim").
 - The app shell's screens, an account screen, a settings screen and a
   signed-out screen, go to **every** role: every user has them.
 - `states` always starts with a default state (`state.default`); add one per
   presentation a reviewer must see:
   - `state.empty` wherever a list can be empty.
-  - Wherever a screen's operations declare error responses in the API, the
-    states those responses produce. A form whose operation answers `400` or
-    `422` for invalid input shows its validation errors in
+  - Wherever the product can refuse or fail what a screen does, the states
+    that the refusal or the failure produces. A form that a requirement limits
+    (a required receipt, a cap) shows its validation errors in
     `state.validation-error`: its Fields' `error` and a ValidationSummary.
-    An operation that can fail (`5xx`, or a dependency it calls) gets
-    `state.failed`: an error Alert saying what failed and what the user can
-    do. A call that can be slow (an external dependency, a long-running
-    operation) gets `state.delayed`: an info or warning Alert saying the
-    result is on its way.
+    A screen whose data or action can fail (an outside service it needs, a
+    save) gets `state.failed`: an error Alert saying what failed and what the
+    user can do. A step that can be slow (an outside service, a long-running
+    job) gets `state.delayed`: an info or warning Alert saying the result is on
+    its way.
   A prototype with only default and empty states hides the presentations a
   reviewer most needs to judge.
 
@@ -397,10 +401,11 @@ part is composing screens the way an Oxygen application composes them:
   input with a plain label, `required` where the API requires it, errors in
   the Field's `error` and a `<ValidationSummary>` for the whole form.
 
-The design-system skill loaded beside this one is the full account of how an
-enterprise screen is composed (a listing page's header, filters and table, a
-form's layout and actions). Read it for the arrangement and build each screen
-that way from the kit. Its setup, packages and code are the build's concern,
+When the organization names a design system, its skill is loaded beside this
+one and is the full account of how an enterprise screen is composed (a listing
+page's header, filters and table, a form's layout and actions). Read it for the
+arrangement and build each screen that way from the kit; with none loaded, use
+the rules above. Its setup, packages and code are the build's concern,
 not this flow's: the kit's components are the only vocabulary here.
 
 ## The kit
@@ -850,12 +855,13 @@ A side panel.
 Records are part of the source and never generated at render time, so write
 them out in full:
 
-- **Shaped by the API.** Columns, detail fields and form fields are the
-  properties of the schemas the screen's operations return or accept, in
+- **Shaped by the data model.** Each collection in `defineApp({ data })` is
+  an entity of `domain-model.md`, and each record has that entity's
+  attributes. Columns, detail fields and form fields are those attributes, in
   words a user reads (`submittedAt` becomes "Submitted"). A value has the type
-  and format its schema declares: an enum value is one of its enum's values,
-  an amount reads as an amount. Type the records after the schema
-  (`interface Expense { … }`).
+  the model gives it: an enum value is one of its values, an amount reads as
+  an amount. A relation shows as the related record's name, not its id. Type
+  the records after the entity (`interface Expense { … }`).
 - **Realistic.** Plausible names, amounts, dates and statuses for the domain;
   never `foo`, `test`, `Lorem ipsum` or `Item 1`.
 - **Deterministic.** The same design gives the same records: fixed values, no
@@ -878,38 +884,8 @@ links name screens, flows and states, so:
   exists.** Rename labels freely; change an id only when its thing is removed
   or genuinely becomes something else.
 
-## Feedback revision
-
-A turn that arrives with a reviewer's feedback is a **revision of one
-prototype**, not a generation. Its brief names the web-application, the revision
-the reviewer looked at and a numbered list of requests. Each request gives the
-screen, flow, role and display state the reviewer was in, the ids of the
-elements they pointed at (none means the whole screen), and their words quoted
-verbatim.
-
-- **Read the two files first** (`prototype.json` and `prototype.tsx` of that
-  component) and change only them, with `editFile` edits. Write no other
-  component's prototype and no other file.
-- **Find the thing by its id.** Element ids are on the screen's components,
-  screen, flow and state ids are in the manifest. An id that no longer exists
-  means the prototype moved on since the reviewer looked: apply what still makes
-  sense and say what differs.
-- **Take the words at face value.** Do exactly what a request asks, no more.
-  Several requests can touch the same element; reconcile them, and when two
-  conflict, apply neither and ask in your reply.
-- **Apply every request you can.** Decline one only when it conflicts with the
-  design (the cell, `security.json`'s roles, the API or the stories), and say
-  which part. A request to add a capability the kit lacks is declined with that
-  reason, not worked around.
-- **Keep ids stable** (see **Stable ids**): the next round of feedback points at
-  them. Add ids for new elements; keep every key and id whose thing remains.
-- The same write checks apply. Revise until the pair passes.
-
-End with a numbered answer: for each request, `Request N: applied` and what you
-changed, or `Request N: declined` and why. Nothing more is needed per request.
-
 ## Closing
 
-End with one short paragraph per prototype: its screens, the roles and flows it
-covers, any story you set aside and why, and anything from the design you could
-not represent.
+When a prototype passes its checks, report it in one chat line: its screen
+count and flow count, then each story you set aside and anything from the
+design you could not show, with the reason.

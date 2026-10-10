@@ -29,6 +29,7 @@ import {
   buildEagerSkillsBlock,
   buildOrgDefaultsBlock,
   buildNarrationBlock,
+  orgDesignSystem,
 } from "../src/agents/main/prompt.js";
 
 const SKILL_LIST: TestSkill[] = [
@@ -173,6 +174,17 @@ test("the task planner gets the org defaults too", () => {
   assert.match(out, /# Organization defaults/);
   assert.match(out, /Use Thunder\./);
   assert.ok(out.startsWith(taskPlanInstructions), "the planner's own charter still leads");
+});
+
+test("the org's design system is the name its defaults give under UI design system", () => {
+  const org = (section: string): TestSkill => ({ ...ORG, content: `## Technology stack\n\n- React.\n\n## UI design system\n${section}` });
+  assert.equal(orgDesignSystem(testSkillSource([org("\n`astryx-design-system`\n\nThat is the name of a skill.\n")])), "astryx-design-system");
+  assert.equal(orgDesignSystem(testSkillSource([org("\noxygen-ui-design-system\n\n## Later\n\nx\n")])), "oxygen-ui-design-system");
+  // Left empty, the section names no design system, whatever prose stays below the name.
+  assert.equal(orgDesignSystem(testSkillSource([org("\nThat is the name of a skill in this library.\n")])), undefined);
+  assert.equal(orgDesignSystem(testSkillSource([org("\n## Next\n\n`not-this-one`\n")])), undefined);
+  assert.equal(orgDesignSystem(testSkillSource([{ ...ORG, content: "## Technology stack\n\n- React.\n" }])), undefined);
+  assert.equal(orgDesignSystem(SKILLS), undefined);
 });
 
 // --- Narration policy (#580) ------------------------------------------------

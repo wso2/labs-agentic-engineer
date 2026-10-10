@@ -196,6 +196,21 @@ ${content}`;
 }
 
 /**
+ * The skill the org's defaults name as its web-app design system, or undefined
+ * when the org names none. The `## UI design system` section of the
+ * `organization` skill is the single place a design system is named: its first
+ * line is the skill name, bare or in backticks. Anything else there (an empty
+ * section, prose where the name was) names no design system.
+ */
+export function orgDesignSystem(skills: SkillSource | undefined): string | undefined {
+  const body = (skills ?? EMPTY_SKILL_SOURCE).load(ORG_DEFAULTS_SKILL);
+  if (body === undefined || !("content" in body)) return undefined;
+  const section = /^## UI design system[ \t]*\r?\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(body.content)?.[1];
+  const first = section?.split(/\r?\n/).find((line) => line.trim() !== "")?.trim();
+  return first === undefined ? undefined : /^`?([a-z0-9][a-z0-9-]*)`?$/.exec(first)?.[1];
+}
+
+/**
  * The surface's narration policy, appended to the system prompt of every turn
  * whose caller named a surface (#580).
  *
