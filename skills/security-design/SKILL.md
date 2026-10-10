@@ -125,10 +125,13 @@ refused by an operation that requires `claims:read`.
 A screen is reachable for whoever holds the scope of the operation it **loads**
 — the list or detail call whose answer the screen renders on open. Nothing
 about that is written here: the SPA reads it off `openapi.yaml`. What this file
-decides is whether each role holds that scope. So before writing a role's
-`grants`, walk the flow `wireframes.dsl` gives that role, open the
-`openapi.yaml` of the component behind each screen in it, and grant the handle
-of the operation each screen loads — at the reach the screen shows. An
+decides is whether each role holds that scope. So for a role's `grants`, walk
+each flow that the web application's prototype gives that role
+(`prototype.json` `flows`), open the `openapi.yaml` of the component behind
+each screen in it, and grant the handle of the operation each screen loads — at
+the reach the screen shows. The design writes this file before the prototype
+and the contracts exist: grant then what each role's stories need, and the
+design's grants pass does this walk when the screens and the operations exist. An
 Approvals queue that lists every claim loads `GET /claims`, so the Approver
 holds `claims:read-all`; a My Claims page loads `GET /me/claims`, so the
 Employee holds `claims:read`. Then grant the actions the screen's controls call.
@@ -241,7 +244,7 @@ SPA gates each one on the operation it loads.
 | `permissions[]` | The catalog. `resource` unique in the project; `component` names a `service` in the cell; at least one action; action handles unique within their resource (`claims:read` and `reports:read` legally coexist). |
 | `groups[]` | Organisation groups this project introduces: `name`, `description`. Created if absent, never renamed or deleted. A group already in the directory is not redeclared. |
 | `roles[].name` | A PRD actor noun, unique in the project (case-insensitively), never a group name. It becomes `<project>/<name>` on the directory. |
-| `roles[].description` | What the role is for. Project-owned: the platform writes it on every build. |
+| `roles[].description` | What the role does and what it never sees or does, in plain words (see below). Project-owned: the platform writes it on every build. |
 | `roles[].stories` | Story IDs (`"F2.3"`) this role serves. At least one. |
 | `roles[].grants` | Handles from `permissions[]`. At least one. A handle no role grants is a warning ("unreachable by any role"); a handle no operation requires is a warning ("declared, used nowhere"). |
 | `roles[].assignTo` | Organisation groups the role is assigned to. Each must be declared in `groups[]` or exist in the directory (`list_groups`) — anything else is refused, so a typo cannot create a group. Required for `enrolment: admin` user roles; absent for self-service and service roles. |
@@ -250,6 +253,15 @@ SPA gates each one on the operation it loads.
 | `roles[].kind` | Optional. `user` (default) or `service`. A service role is assigned to an application principal, never to a group, and gets no test user. |
 | `testUsers[].username` | Lowercase letters, digits, `.`, `_`, `-`. |
 | `testUsers[].roles` | One or more declared `kind: user` roles, of either enrolment. The account is enrolled in every `assignTo` group of every role listed; a role with no `assignTo` is bound to the account directly. |
+
+**The descriptions are what a business reviewer checks.** The console shows
+Roles and permissions from the descriptions of the roles and the actions, above
+the grants. So write each one in plain words, with its limits. A role's
+`description` says what the role does and what it never sees or does:
+"Approves or rejects the claims of their own team, never their own. Sees no
+other team's claims." An action's `description` says what it lets a caller do,
+and to which records: "Every claim", "The caller's own claims". A limit that no
+screen can show, such as what a role never sees, is written only here.
 
 **A role that reaches rows by path gets two test users, not one.** Where a role
 grants a `/me/` operation, the thing worth proving is that one caller cannot see
@@ -324,7 +336,7 @@ apply before you invent policy — a filled org entry is the decision. Nothing
 here creates anything: the platform creates the resource server, the roles, the
 groups and the test users when the user clicks Build. `openapi-conventions` owns
 how an operation names a handle and which rows it reaches (its path),
-`wireframes` owns which screens exist and which role's flow walks them,
+`prototype` owns which screens exist and which role's flow walks them,
 `thunder-authentication` owns how the SPA gates each screen on the operation it
 loads; this skill owns the decisions all three consume, and
 `authorization-model` states the invariants they share.

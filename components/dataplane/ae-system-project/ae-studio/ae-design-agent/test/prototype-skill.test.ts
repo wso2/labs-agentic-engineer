@@ -31,6 +31,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { checkPrototypeFiles, resolveTheme } from "@wso2/prototype-kit/check";
+import { orgDesignSystem } from "../src/agents/main/prompt.js";
 import { loadSkillsFromSnapshot } from "../src/conversation/load-workspace.js";
 import { eagerSkillsFor } from "../src/prompts/turn.js";
 import { KIT_REFERENCE, kitBlock, kitBlockOf, PROTOTYPE_SKILL_PATH } from "../scripts/prototype-skill-reference.js";
@@ -38,6 +39,9 @@ import { KIT_REFERENCE, kitBlock, kitBlockOf, PROTOTYPE_SKILL_PATH } from "../sc
 /** The repo's skills/ library: the directory above the prototype skill's own. */
 const SKILLS_DIR = path.dirname(path.dirname(PROTOTYPE_SKILL_PATH));
 const SKILL = fs.readFileSync(PROTOTYPE_SKILL_PATH, "utf8");
+
+/** The design system the shipped org defaults name, which /prototype inlines. */
+const SHIPPED_DESIGN_SYSTEM = orgDesignSystem(loadSkillsFromSnapshot(path.dirname(SKILLS_DIR)));
 
 /** The skill's prose with line wrapping undone, so a phrase matches across a break. */
 const PROSE = SKILL.replace(/\s+/g, " ");
@@ -125,38 +129,35 @@ test("the skill writes the manifest first, whole new files once, and revisions a
   assert.match(PROSE, /with `editFile` edits/);
 });
 
-test("the skill derives roles verbatim from security.json and reads the stories, flows and API", () => {
+test("the skill derives roles verbatim from security.json and builds on the data model and the feature files", () => {
   assert.match(PROSE, /copied verbatim/);
   assert.match(PROSE, /specs\/design\/security\.json/);
-  assert.match(PROSE, /specs\/requirements\/prd\.md/);
-  assert.match(PROSE, /specs\/design\/flows\/\*\.md/);
-  assert.match(PROSE, /`openapi\.yaml` of every component/);
-  assert.match(PROSE, /Every story gets at least one screen/);
-  assert.match(PROSE, /Every flow a web-application's users walk becomes a `flows` entry/);
+  assert.match(PROSE, /specs\/design\/domain-model\.md/);
+  assert.match(PROSE, /specs\/requirements\/features\/F<n>-<slug>\.md/);
+  assert.match(PROSE, /Every story the application serves gets at least one screen/);
+  assert.match(PROSE, /\*\*Shaped by the data model\.\*\*/);
+  // The prototype comes before the contracts and the flows, so it reads neither,
+  // and the feature-file model replaced prd.md's story list.
+  assert.doesNotMatch(PROSE, /openapi\.yaml|specs\/design\/flows|specs\/requirements\/prd\.md|wireframes\.dsl/);
 });
 
-test("the skill asks for validation-error and failure states where the API has error responses", () => {
-  assert.match(PROSE, /error responses/i);
+test("the skill asks for validation-error and failure states where the product can refuse or fail", () => {
+  assert.match(PROSE, /can refuse or fail what a screen does/i);
   assert.match(PROSE, /state\.validation-error/);
   assert.match(PROSE, /state\.failed/);
   assert.match(PROSE, /state\.delayed/);
 });
 
-test("the skill tells the agent to revise from feedback by ids, keep ids, and answer each request", () => {
-  assert.match(PROSE, /## Feedback revision/);
-  assert.match(PROSE, /revision of one prototype/);
-  assert.match(PROSE, /change only them, with `editFile` edits/);
-  assert.match(PROSE, /Keep ids stable/);
-  assert.match(PROSE, /`Request N: applied`/);
-  assert.match(PROSE, /`Request N: declined`/);
-  // Outside the generated kit block.
-  assert.ok(SKILL.indexOf("## Feedback revision") > SKILL.indexOf("<!-- kit:end -->"));
+test("the prototype-only feedback revision is gone; Design revises the prototype in its own run", () => {
+  assert.doesNotMatch(PROSE, /## Feedback revision/);
+  assert.match(PROSE, /This step writes only these two files/);
 });
 
 test("every skill /prototype inlines is design-readable, so the flow can load it", () => {
+  assert.ok(SHIPPED_DESIGN_SYSTEM, "the shipped org defaults name a design system");
   const snapshot = fs.mkdtempSync(path.join(os.tmpdir(), "aep-prototype-skills-"));
   try {
-    for (const name of eagerSkillsFor({ kind: "flow", skill: "prototype" })) {
+    for (const name of eagerSkillsFor({ kind: "flow", skill: "prototype" }, undefined, SHIPPED_DESIGN_SYSTEM)) {
       const dir = path.join(snapshot, "skills", name);
       fs.mkdirSync(dir, { recursive: true });
       fs.copyFileSync(path.join(SKILLS_DIR, name, "SKILL.md"), path.join(dir, "SKILL.md"));
@@ -165,7 +166,7 @@ test("every skill /prototype inlines is design-readable, so the flow can load it
     for (const entry of catalog) {
       assert.ok(entry.audience.includes("design"), `${entry.name} is not for the design side, so /prototype cannot load it`);
     }
-    assert.equal(catalog.length, eagerSkillsFor({ kind: "flow", skill: "prototype" }).length);
+    assert.equal(catalog.length, eagerSkillsFor({ kind: "flow", skill: "prototype" }, undefined, SHIPPED_DESIGN_SYSTEM).length);
   } finally {
     fs.rmSync(snapshot, { recursive: true, force: true });
   }

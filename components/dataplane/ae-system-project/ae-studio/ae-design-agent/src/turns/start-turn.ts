@@ -54,6 +54,7 @@ import type {
   TurnSpec,
 } from "@aep/agent-stream";
 import type { RoomPeer } from "../collab/room-peer.js";
+import { orgDesignSystem } from "../agents/main/prompt.js";
 import type { SkillSource } from "../agents/main/skill-source.js";
 import { AttachmentRefusedError, fitAttachments, fitReferences, type UnreadableReference } from "../conversation/attachments.js";
 import {
@@ -555,7 +556,7 @@ export class TurnStarter {
     const roomScoped = l.roomProject !== undefined;
     const gates = { flow: l.flow, roomScoped };
     const toolset = toolsetFor(l.spec);
-    const eager = eagerSkillsFor(l.spec, l.input.scope);
+    const eager = eagerSkillsFor(l.spec, l.input.scope, orgDesignSystem(l.material.skillSource));
     const m = l.material;
     const author = authorOf(l.credit);
     return async (emit, signal): Promise<TurnOutcome> => {

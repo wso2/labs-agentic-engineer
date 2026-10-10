@@ -197,7 +197,16 @@ const COMMAND_FLOWS: Record<string, { skill: string; scope: (subject: string) =>
  * instructions on EVERY turn (see `buildOrgDefaultsBlock`), so listing it as a
  * per-flow eager skill would inline the same body twice.
  */
-const FLOW_SUPPORTING_SKILLS: Record<string, string[]> = {
+/**
+ * Where a flow's lineup takes the org's design-system skill. Which skill that
+ * is, the org decides (the `organization` skill's `## UI design system`
+ * section, read by `orgDesignSystem`), so the lineup holds this place and
+ * `eagerSkillsFor` fills it from the name it is given, or drops it when the
+ * org names none.
+ */
+const DESIGN_SYSTEM = Symbol("the org's design system");
+
+const FLOW_SUPPORTING_SKILLS: Record<string, (string | typeof DESIGN_SYSTEM)[]> = {
   // The interview mechanics both playbooks defer to, plus the shape of the
   // document they both write. `prd-contract` is a sibling skill rather than a
   // `start` reference so an amend turn can hold the contract without also
@@ -211,30 +220,43 @@ const FLOW_SUPPORTING_SKILLS: Record<string, string[]> = {
   // `/resolve-dependency` asks (grilling) and writes a dependency file whose
   // shape and research playbook the architecture skill owns.
   "resolve-dependency": ["grilling", "architecture"],
-  // `grilling` first: the design flow interviews too (#578 removed the
-  // "do not interview the user again" clause), and the question mechanics are
-  // no more optional here than on a start turn. Then the rest of the design
-  // lineup, in the order the `design` skill walks it.
-  // `design` names every one, so the model's first act was always to batch-load
-  // the set: one model step, and ~70KB arriving as a tool RESULT — landing AFTER
+  // The design lineup, in the order the `design` skill walks it. `design`
+  // names every one, so the model's first act was always to batch-load the
+  // set: one model step, and ~70KB arriving as a tool RESULT — landing AFTER
   // the turn prompt's cache breakpoint, where it is re-prefilled per step rather
   // than read. Inlined, the same bytes sit INSIDE the marked prompt, cached from
   // the first step and again on the next turn.
   //
-  // Three of them are conditional (a project with no `web-application` never
-  // writes a wireframes.dsl), but which components exist is decided DURING the
-  // turn — there is nothing to condition on when the prompt is composed, and a
-  // cached read costs a tenth of a re-prefill. Org-authored design skills stay
-  // lazy: this map is flow wording and cannot know a given org's catalog.
+  // `grilling` is not here: a design run asks with no form. A question only
+  // the user can answer becomes an open question in the requirements and a
+  // line in the closing, and the run goes on.
   //
-  // `acceptance-criteria` writes the Gherkin features a validation run drives
-  // (ADR-0029), authored from the PRD alone.
-  design: ["grilling", "cell-design", "architecture", "security-design", "openapi-conventions", "wireframes", "agent-building", "acceptance-criteria"],
-  // `/prototype` derives from the finished design, so it reads what that design
-  // wrote: the cell, the roles and the API. The design-system skill says how an
-  // Oxygen screen is composed from the kit's components; the kit itself is in
-  // the `prototype` skill.
-  prototype: ["cell-design", "security-design", "openapi-conventions", "oxygen-ui-design-system"],
+  // Some are conditional (a project with no `web-application` writes no
+  // prototype), but which components exist is decided DURING the turn — there
+  // is nothing to condition on when the prompt is composed, and a cached read
+  // costs a tenth of a re-prefill. Org-authored design skills stay lazy: this
+  // map is flow wording and cannot know a given org's catalog.
+  //
+  // `prototype` writes each web application's prototype inside the run, after
+  // the data model and the roles; the org's design-system skill says how its
+  // screens are composed. `acceptance-criteria` writes the Gherkin features a
+  // validation run drives (ADR-0029), last, from the requirements and the
+  // prototypes.
+  design: [
+    "cell-design",
+    "architecture",
+    "security-design",
+    "prototype",
+    DESIGN_SYSTEM,
+    "openapi-conventions",
+    "agent-building",
+    "acceptance-criteria",
+  ],
+  // `/prototype` writes the prototypes on their own, from a design that has
+  // its cell, data model and roles: it reads the cell and the roles. The
+  // org's design-system skill says how a screen is composed from the kit's
+  // components; the kit itself is in the `prototype` skill.
+  prototype: ["cell-design", "security-design", DESIGN_SYSTEM],
 };
 
 /**
@@ -251,15 +273,14 @@ const FLOW_SUPPORTING_SKILLS: Record<string, string[]> = {
  */
 const FLOW_BRIEFS: Record<string, string> = {
   prototype:
-    "Generate the prototype of each web-application the design declares. The design is the input: read " +
-    "specs/design/design.cell for the web-application components, the roles in specs/design/security.json, " +
-    "each web-application's API (the openapi.yaml of every component it depends on), the numbered user " +
-    "stories in specs/requirements/prd.md, and the key flows in specs/design/flows/*.md. Cover them: every " +
-    "design flow a web-application's users walk becomes a flow of its prototype, and every user story gets at " +
-    "least one screen, unless the product gives it no view (a platform sign-in, a backend job, a machine-facing " +
-    "endpoint); name any story you set aside in your closing. Per web-application write " +
-    "specs/design/components/<component>/prototype.json (the manifest) first and then prototype.tsx beside it " +
-    "(the screens), and change no other file. When component names follow this brief, write only those " +
+    "Generate the prototype of each web-application the design declares. Read specs/design/design.cell for the " +
+    "web-application components, the records in specs/design/domain-model.md, the roles in " +
+    "specs/design/security.json, and each web-application's design.json for the stories it serves; those " +
+    "stories (F<n>.<m>) and their decisions are in the feature files under specs/requirements/features/. Every " +
+    "story a web-application serves gets at least one screen and a flow, unless the product gives it no view " +
+    "(a platform sign-in, a machine-facing endpoint); name any story you set aside in your closing. Per " +
+    "web-application write specs/design/components/<component>/prototype.json (the manifest) first and then " +
+    "prototype.tsx beside it (the screens). When component names follow this brief, write only those " +
     "prototypes; otherwise write one for every web-application. Where a prototype already exists, revise it " +
     "with edits and keep its ids stable.",
 };
@@ -305,9 +326,10 @@ function commandFlow(token: string): { skill: string; scope: (subject: string) =
   return Object.hasOwn(COMMAND_FLOWS, token) ? COMMAND_FLOWS[token] : undefined;
 }
 
-/** The extras a flow inlines beyond its own skill. */
-function supportingSkills(skill: string): string[] {
-  return Object.hasOwn(FLOW_SUPPORTING_SKILLS, skill) ? (FLOW_SUPPORTING_SKILLS[skill] ?? []) : [];
+/** The extras a flow inlines beyond its own skill, with the org's design system in its place. */
+function supportingSkills(skill: string, designSystem: string | undefined): string[] {
+  const lineup = Object.hasOwn(FLOW_SUPPORTING_SKILLS, skill) ? (FLOW_SUPPORTING_SKILLS[skill] ?? []) : [];
+  return lineup.flatMap((name) => (name !== DESIGN_SYSTEM ? [name] : designSystem !== undefined ? [designSystem] : []));
 }
 
 // --- Composition -------------------------------------------------------------
@@ -612,10 +634,16 @@ export function imageLeftOutOfHistory(filename: string | undefined): string {
   return `[${filename ? `The image ${filename}` : "An image"} was left out here: the model on this connection does not read images.]`;
 }
 
-export function eagerSkillsFor(turn: TurnSpec, scope?: TurnScope): string[] {
+/**
+ * The skills a turn inlines: its flow's own skill, then that flow's lineup.
+ * `designSystem` is the skill the org names as its design system
+ * (`orgDesignSystem`); a flow that composes screens inlines it, and none does
+ * when it is undefined.
+ */
+export function eagerSkillsFor(turn: TurnSpec, scope?: TurnScope, designSystem?: string): string[] {
   const instructed = instructedSkill(turn, scope);
   if (instructed === undefined) return [];
-  return [instructed, ...supportingSkills(instructed)];
+  return [instructed, ...supportingSkills(instructed, designSystem)];
 }
 
 
