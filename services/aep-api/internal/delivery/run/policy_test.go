@@ -17,6 +17,7 @@
 package run
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -241,6 +242,106 @@ func TestClassifyCycleDeploys_SeparatesFailedFromPending(t *testing.T) {
 		t.Errorf("Pending = %v", got.Pending)
 	}
 }
+
+// A pending component waiting on a SIBLING's binding is named as such, and the
+// deadline leaves it out of what it files when that provider is not met: the
+// provider's state has its own work or its own failure in the same read, and an
+// issue against the consumer sends an agent after a deployment that is healthy
+// and has simply not happened.
+func TestClassifyCycleDeploys_NamesTheComponentsWaitingOnAProvider(t *testing.T) {
+	t.Parallel()
+	got := classifyCycleDeploys(3, []delivery.ComponentDeploy{
+		{Component: "api"},
+		{Component: "agent", WaitingOnProvider: true, Reason: "ConnectionsPending"},
+		{Component: "web", Ready: true},
+	})
+	if want := []string{"api", "agent"}; !reflect.DeepEqual(got.Pending, want) {
+		t.Errorf("Pending = %v, want %v — waiting on a provider is still pending", got.Pending, want)
+	}
+	if want := []string{"agent"}; !reflect.DeepEqual(got.WaitingOnProvider, want) {
+		t.Errorf("WaitingOnProvider = %v, want %v", got.WaitingOnProvider, want)
+	}
+	failed, blocked := got.failedAtExpiry(map[string][]string{"agent": {"api"}}, never)
+	if want := []string{"api"}; !reflect.DeepEqual(failed, want) {
+		t.Errorf("failed = %v, want %v — the provider that never came up is filed", failed, want)
+	}
+	if want := []string{"agent"}; !reflect.DeepEqual(blocked, want) {
+		t.Errorf("blocked = %v, want %v — its waiting consumer is excused", blocked, want)
+	}
+	if got.Green() {
+		t.Error("a component waiting on its provider is not serving; the cycle must not read as green")
+	}
+}
+
+// Nothing is filed when the only pending component is blocked behind a provider
+// outside the wait that is not serving — an unbuilt api, say.
+func TestFailedAtExpiry_NobodyIsFiledWhenTheOnlyWaiterIsBlocked(t *testing.T) {
+	t.Parallel()
+	got := classifyCycleDeploys(1, []delivery.ComponentDeploy{
+		{Component: "agent", WaitingOnProvider: true, Reason: "ConnectionsPending"},
+	})
+	failed, blocked := got.failedAtExpiry(map[string][]string{"agent": {"api"}}, never)
+	if len(failed) != 0 {
+		t.Errorf("failed = %v, want nothing", failed)
+	}
+	if want := []string{"agent"}; !reflect.DeepEqual(blocked, want) {
+		t.Errorf("blocked = %v, want %v", blocked, want)
+	}
+}
+
+// A waiting consumer whose providers are ALL met is its own problem — the
+// connection it declares cannot resolve against a provider that is serving — and
+// is filed like any other component that never came up.
+func TestFailedAtExpiry_AWaiterWhoseProvidersAreMetIsFiled(t *testing.T) {
+	t.Parallel()
+	got := classifyCycleDeploys(1, []delivery.ComponentDeploy{
+		{Component: "agent", WaitingOnProvider: true, Reason: "ConnectionsPending"},
+	})
+	failed, blocked := got.failedAtExpiry(map[string][]string{"agent": {"api"}}, always)
+	if want := []string{"agent"}; !reflect.DeepEqual(failed, want) {
+		t.Errorf("failed = %v, want %v", failed, want)
+	}
+	if len(blocked) != 0 {
+		t.Errorf("blocked = %v, want nothing", blocked)
+	}
+}
+
+// Blocking follows the chain: a → b → c with c stuck excuses a and b and files c.
+func TestFailedAtExpiry_AChainIsExcusedUpToTheStuckProvider(t *testing.T) {
+	t.Parallel()
+	got := classifyCycleDeploys(3, []delivery.ComponentDeploy{
+		{Component: "a", WaitingOnProvider: true},
+		{Component: "b", WaitingOnProvider: true},
+		{Component: "c", Reason: "Progressing"},
+	})
+	failed, blocked := got.failedAtExpiry(map[string][]string{"a": {"b"}, "b": {"c"}}, never)
+	if want := []string{"c"}; !reflect.DeepEqual(failed, want) {
+		t.Errorf("failed = %v, want %v", failed, want)
+	}
+	if want := []string{"a", "b"}; !reflect.DeepEqual(blocked, want) {
+		t.Errorf("blocked = %v, want %v", blocked, want)
+	}
+}
+
+// Two components waiting on each other excuse neither: nothing outside the pair
+// holds them, and a cycle OpenChoreo could resolve has had the whole deadline.
+func TestFailedAtExpiry_AMutualCycleExcusesNeither(t *testing.T) {
+	t.Parallel()
+	got := classifyCycleDeploys(2, []delivery.ComponentDeploy{
+		{Component: "orders", WaitingOnProvider: true},
+		{Component: "payments", WaitingOnProvider: true},
+	})
+	failed, blocked := got.failedAtExpiry(map[string][]string{"orders": {"payments"}, "payments": {"orders"}}, never)
+	if want := []string{"orders", "payments"}; !reflect.DeepEqual(failed, want) {
+		t.Errorf("failed = %v, want %v", failed, want)
+	}
+	if len(blocked) != 0 {
+		t.Errorf("blocked = %v, want nothing", blocked)
+	}
+}
+
+func never(string) bool  { return false }
+func always(string) bool { return true }
 
 // The poll's environment rides the state, so the fix work it causes can name
 // where the binding failed. Every outcome of one read shares it.

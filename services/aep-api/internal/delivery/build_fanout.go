@@ -209,8 +209,16 @@ type ComponentDeploy struct {
 	Undeploy bool `json:"undeploy,omitempty"`
 	// Failed is Ready=False — a verdict, not a wait.
 	Failed bool `json:"failed,omitempty"`
+	// WaitingOnProvider is Ready=False because a connection to a sibling is
+	// still pending (OpenChoreo's `ConnectionsPending`): the provider has no
+	// binding yet, or no resolved endpoint. A wait, like any other Ready=False,
+	// but one that is the PROVIDER's business — its own state has its own work
+	// or its own failure in the same read — so the deploy stage does not file it
+	// against this component when the deadline expires.
+	WaitingOnProvider bool `json:"waitingOnProvider,omitempty"`
 	// Reason is OpenChoreo's own condition reason, carried verbatim for the
-	// issue body a failed deployment mints. Never branched on.
+	// issue body a failed deployment mints. Never branched on: WaitingOnProvider
+	// is the one fact read off it, and it is read where the reason is folded.
 	Reason string `json:"reason,omitempty"`
 }
 

@@ -41,7 +41,7 @@ in the org's AE Studio pod ([turn-runtime](../../../../components/dataplane/ae-s
 | `SkillMirrorPort` (= `sourcecontrol.SkillsMirrorOps`) · `RepoService` | needs | the pod's mirror-skills (the project `.claude/skills` copy; the copy rule is the pod's) · the skills repo row, provisioned on first use |
 | `resourceTypeCatalog` (returns `CRTType`) | needs | `dependencies` — the PE-authored CRT markers + declared outputs, projected at the root |
 | `ArtifactService` · `ArtifactStore` · `SplitFrontmatter` | offers | `delivery` / `projects` / `dependencies` / `identity` — design reads, spec-save, status snapshots; `identity` reads `security.json` from the design bundle AT THE TAG being built, never at HEAD |
-| `HardConfigEdges` | offers | `projects` (deploy order) — which sibling addresses a component cannot start without |
+| `ConnectionEdges` | offers | `projects` (deploy order) — which siblings a component's workload connects to, and so must have a binding first |
 | `DescriptorWriter` | offers | `projects` — stamps `specs/.agentic-engineer.toml` into a repo at project create |
 | `KickoffService.Kickoff` | offers | `projects` (create) · `spec/files` (references upload) — fires the project's opening `/start` turn in the org's AE Studio pod |
 | `aestudiotools.Turns` · `aestudiotools.References` | needs | `clients/aestudiotools` — the org pod's `/internal/v1` turns (kickoff) and reference store (the references upload, a pass-through) |
@@ -229,13 +229,12 @@ in the org's AE Studio pod ([turn-runtime](../../../../components/dataplane/ae-s
   with the newest version's and reuses that version when they match — the requested name is ignored on
   that path, because cutting a second tag over an identical tree would spend a planning turn to change
   a word. `BuildVersionFacts` reads the same comparison out as the build dialog's change list.
-- **One authority for which wiring edges are HARD** (`wiring_edges.go`). A hard edge is an address the
-  platform must have before a component can serve its first useful byte — today a web app's sibling
-  *services*, whose cluster Service URLs are injected as pod env for nginx (`<DEP>_URL`). `projects`
-  orders the deploy waves around that rule. Everything else is soft (it flows consumer→provider: an
-  OIDC callback) and orders nothing. Deliberately NOT hard: service→service, which OpenChoreo resolves
-  through its own connection mechanism — ordering it would refuse two services that call each other.
-  ADR-0019.
+- **One authority for which wiring edges order the deploy** (`wiring_edges.go`). A connection edge
+  is a sibling the component's workload connects to — the same predicate `derive_wiring.go` emits the
+  connection from — and OpenChoreo keeps the consumer's binding `ConnectionsPending` until the
+  provider has one, whatever the consumer's type. `projects` orders the deploy waves around it and
+  holds a consumer whose provider has no serving release; a cycle shares one wave. Everything else is
+  soft (it flows consumer→provider: an OIDC callback) and orders nothing. ADR-0019, as amended.
 - **`CRTType` is a projection, not a re-export.** design-save reads the dependencies resource-type catalog
   through the `resourceTypeCatalog` port in spec's OWN vocabulary (`CRTType`), mapped by
   `internal/app/crtcatalog` — the spec domain names the dependencies domain nowhere.

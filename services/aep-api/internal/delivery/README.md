@@ -175,9 +175,9 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   the Workload that build posted and writing the binding that pins it, release pin plus trait env
   configs plus workload overrides in ONE object write — then waits for Ready. Components carry
   `autoDeploy: false`, so nothing else promotes a release. It promotes WAVE BY WAVE (providers before
-  the consumers whose start-up config carries their address), holds a component whose provider is not
-  serving, and finishes with one converge for the facts that flow the other way — see the invariants
-  below, ADR-0019 and ADR-0026.
+  the consumers whose workload connects to them), holds a component whose provider is not serving, and
+  finishes with one converge for the facts that flow the other way — see the invariants below,
+  ADR-0019 and ADR-0026.
 - The **run loop** (`run`): one Temporal workflow per SPECIES per milestone —
   `<kind>-<org>-<project>-<milestoneNumber>`, whose id is REUSED after a terminal run because a
   milestone sees sequential runs of one kind across its life. `dev` and `task` are the same cycle loop
@@ -491,7 +491,7 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   `c`'s newest SUCCEEDED build would cut; `actual(c)` is what its binding pins and whether that is
   Ready; the difference classifies every design component as `serving`, `behind`, `converging`,
   `held` or `unbuilt`, and only `behind` is ever written to. A component is promoted when it is
-  behind AND every hard provider is serving or promoted ahead of it in the same pass — otherwise it
+  behind AND every provider it connects to is serving or promoted ahead of it in the same pass — otherwise it
   is `held`, which is neither waited on nor filed against. This runs on a RED cycle too: a red build
   has already minted its fix issue, and its green siblings are still built. What it replaced promoted
   the cycle's path diff, which made "what is serving" a function of which files a fix touched — one
@@ -514,18 +514,28 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   the chain was kicked off from inside the build and reconciled afterwards with no link back to the
   cycle that caused it. Everything downstream depended on the weaker fact — validation asserted
   against whatever happened to be serving, and a binding stuck `Ready=False` failed nothing.
-- **Only HARD wiring edges order the deploy.** A hard edge is an address the platform stamps into a
-  component's own start-up config — a web app reads its backend's out of `window._env_` and throws at
-  module load without it, so publishing the SPA alongside its backend serves a blank page. Those edges
-  (`spec.HardConfigEdges`) put the provider in an earlier wave, and each wave must be Ready before the
-  next is promoted. The edges are read over the WHOLE design rather than over the set being deployed,
-  so a provider with no serving release is an unsatisfied edge rather than an assumed-satisfied one
-  (ADR-0026 — the reading that published a SPA against an API that had never deployed). What flows the other way is SOFT — a protected API's CORS allowlist is the
-  project's SPA origins, an OIDC resource wants the SPA's callback registered — and is written by ONE
-  converge at the end, which passes an EMPTY commit so it re-asserts wiring without re-cutting a
-  release. Grading them together is what made the graph look circular: the SPA needs the API's
-  address and the API needs the SPA's, and only one of those has to be true before anything serves. A
-  cycle among hard edges is `ErrDeployPermanent`, not a wait — nobody can go first. ADR-0019.
+- **The deploy order follows the workload CONNECTIONS.** Every sibling dependency becomes an
+  OpenChoreo connection (`spec.ConnectionEdges` is the same predicate the wiring derivation emits the
+  connection from), and OpenChoreo resolves a connection only once the provider has a binding with an
+  endpoint: until then the consumer's pods run without the provider's address and its Ready stays
+  `ConnectionsPending`, whatever the consumer's type. So the provider goes in an earlier wave, each
+  wave must be Ready before the next is promoted, and a consumer whose provider has no serving release
+  is `held`. The edges are read over the WHOLE design rather than over the set being deployed, so a
+  provider with no serving release is an unsatisfied edge rather than an assumed-satisfied one
+  (ADR-0026). What flows the other way is SOFT — a protected API's CORS allowlist is the project's SPA
+  origins, an OIDC resource wants the SPA's callback registered — and is written by ONE converge at
+  the end, which passes an EMPTY commit so it re-asserts wiring without re-cutting a release. A cycle
+  among connections shares one wave: OpenChoreo publishes a component's own endpoint URLs before it
+  checks its outbound connections, so two components that connect to each other converge once both
+  have a binding. ADR-0019, as amended.
+- **The deploy deadline files what did not come up on its own account.** At expiry a pending
+  component whose binding is waiting on a sibling's (`ComponentDeploy.WaitingOnProvider`, read off
+  OpenChoreo's `ConnectionsPending`) is not filed: its provider is in the same read with its own work
+  or its own failure, and an issue against the consumer sends an agent after a deployment that is
+  healthy and has simply not happened. When nothing else is pending the pass ends on no failure and
+  the serving gate above decides the version. For the same reason the build stage answers only once
+  EVERY build of the merge has a verdict, so the reconcile never plans around a sibling still
+  building, which would classify as `unbuilt`.
 - **The deploy stage GATES on configuration, and the two blockers behave differently** (ADR-0023).
   Before a wave is ordered or promoted, `awaitDeployable` asks the provisioning service whether every
   external dependency holds real values and every platform resource is provisioned. An unconfigured

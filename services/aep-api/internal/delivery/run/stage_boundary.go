@@ -273,6 +273,14 @@ type loop struct {
 	// deployEnvironment is where the failed bindings live, from the poll that
 	// reported them. Empty for a failure no binding was read for.
 	deployEnvironment string
+	// convergeOwed is set when a deploy pass ended on a wait that expired with
+	// every pending component blocked behind an unmet provider: the pass wrote,
+	// but its converge — the soft facts its promotes owe their providers, a CORS
+	// origin, an OIDC callback — never ran. The next pass runs it even when it
+	// promotes nothing, through the deploy gate like any write. Workflow-local,
+	// like deployFailed: a crash resume starts without it, and the pass that
+	// next writes converges anyway.
+	convergeOwed bool
 	// cycleID is the current cycle's record id. Surfaced on the loop because the
 	// verdict write lands after the agent stage has returned.
 	cycleID string
@@ -610,7 +618,7 @@ func (l *loop) onEmptyWorkingSet(ctx workflow.Context, ends bookends) (settled b
 // other components are built, and promoting them is what keeps "what is serving"
 // a function of what has been built rather than of which files a fix touched.
 // What makes that safe is the promotable rule, not this call site: the reconcile
-// writes only components whose hard providers are serving or promoted ahead of
+// writes only components whose providers are serving or promoted ahead of
 // them.
 //
 // A cycle can therefore be red AND have a deploy failure. Both mint their work —

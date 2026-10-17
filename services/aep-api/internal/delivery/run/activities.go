@@ -784,8 +784,8 @@ type PlanDeployInput struct {
 }
 
 // PlanDeployWaves plans the pass: the behind components that may be promoted,
-// levelled so every provider precedes the consumers whose start-up config
-// carries its address, plus what to wait for and what is held.
+// levelled so every provider precedes the consumers whose workload connects to
+// it, plus what to wait for and what is held.
 //
 // Unwired degrades to ONE wave of everything behind, matching PromoteWave's own
 // no-deployer behaviour: a plane without OpenChoreo still walks the stage, it
@@ -801,8 +801,8 @@ func (a *Activities) PlanDeployWaves(ctx context.Context, in PlanDeployInput) (d
 		return delivery.DeployPlan{}, deployErr(err)
 	}
 	// Logged, not merely returned. The order is the stage's whole premise — a
-	// consumer promoted before its provider is a blank page, and the symptom
-	// appears in a browser rather than anywhere near this code. So is the HELD
+	// consumer promoted before its provider runs without its address, and the
+	// symptom appears in a browser rather than anywhere near this code. So is the HELD
 	// set, which is the one thing a reader cannot infer from what was written.
 	slog.InfoContext(ctx, "run: deploy pass planned",
 		"orgID", in.OrgID, "projectID", in.ProjectID,

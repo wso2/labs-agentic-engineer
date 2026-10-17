@@ -64,6 +64,9 @@ and five states over the difference:
 | `held` | behind, a hard provider not serving | left alone, named |
 | `unbuilt` | no succeeded build at any commit | left alone |
 
+> Amended 2026-10-15: *a hard provider* reads *a provider the component's workload connects to*, and
+> `HardConfigEdges` below is now `spec.ConnectionEdges`; see the amendment under Shape.
+
 **Promotable, not green.** This is the answer to "A needs B; A is green, B is red — deploy A?"
 
 ```text
@@ -75,6 +78,9 @@ pass: a consumer waiting on a provider that is itself held has to fall out too. 
 over the **whole design** — `spec.HardConfigEdges` already returns exactly that — which is what makes
 a provider with no serving release an unsatisfied edge instead of the assumed-satisfied one that
 published the web app.
+
+> Amended 2026-10-15: the edge set is `spec.ConnectionEdges`, every sibling connection of every
+> component type, and a cycle among them shares one wave; see the amendment under Shape.
 
 `held` and `unbuilt` are not deploy failures and are never waited on. A red build has already minted
 its fix issue; a component nobody has written yet has its development issue open. Filing a deployment
@@ -110,16 +116,32 @@ replaces settled such a version succeeded and filed a validation task against so
 running. A gate that should never fire is worth having when the thing it catches is
 indistinguishable from success.
 
+> **Amended 2026-10-15** (allocation-app-1: an agent filed as a deployment failure while its api was
+> 24 seconds from being built).
+>
+> - `awaitBuilds` answers only once EVERY build of the fan-out has a verdict. Returning on the first
+>   red handed the reconcile a sibling still building, which classifies as `unbuilt` — the same as
+>   never written — so its consumers were promoted against a provider with no binding.
+> - The ordering edges are the workload connections, every component type alike
+>   ([ADR-0019](ADR-0019-deploy-order-follows-the-hard-wiring-edges.md) as amended), so such a
+>   consumer is `held`, not promoted.
+> - At the deploy deadline a pending component whose binding is waiting on a sibling's
+>   (OpenChoreo's `ConnectionsPending`, carried as `ComponentDeploy.WaitingOnProvider`) is not filed:
+>   its provider's state has its own work or its own failure in the same read — only when that
+>   provider is in fact not met; a waiter whose providers are all met is filed, since then its own
+>   connection cannot resolve. When nothing else is pending the pass ends on no failure, the converge
+>   it owes its promotes is paid by the next pass, and the serving gate above decides the version.
+
 ## Shape
 
 ```text
 agent stage → merge → awaitBuilds(this SHA, PR diff)     unchanged: the CYCLE verdict
-                        any red → build verdict red      (fix issue minted, as before)
+                        every build terminal; any red → build verdict red
                     ↓
                     ReadVersionState                     every design component, classified
                     ↓
                     reconcileVersion                     runs on EITHER build verdict
-                      plan   := behind ∩ promotable, levelled by hard edges
+                      plan   := behind ∩ promotable, levelled by connection edges
                       write  := wave by wave, each at its OWN commit
                       wait   := promoted ∪ converging, ONE deadline from the first write
                       converge soft facts over waited ∪ already-serving, no promotion

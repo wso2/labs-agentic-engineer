@@ -37,6 +37,22 @@ promote again. Three things were wrong with it, and all three were observed live
 
 ## Decision
 
+> **Amended 2026-10-15.** The graded edge set stands; its membership does not. *Hard* was defined as
+> an address the platform stamps into the consumer's start-up config, which made the only hard edge
+> web app → service. The platform stamps no sibling address any more: every sibling dependency is an
+> OpenChoreo workload connection (`dependencies.endpoints`, injected as `<DEP>_URL`), and OpenChoreo
+> resolves it only once the provider has a binding with an endpoint — until then the consumer's pods
+> run without the address and its Ready stays `ConnectionsPending`, whatever the consumer's type. On
+> 2026-10-12 an ai-agent promoted ahead of the api it connects to waited out the whole deploy
+> deadline and was filed as a deployment failure. The ordering edge is now every sibling connection
+> (`spec.ConnectionEdges`, the same predicate the wiring derivation emits the connection from), and a
+> cycle among them is promoted in ONE wave rather than refused: OpenChoreo publishes a component's
+> own endpoint URLs before it checks its outbound connections, so two components that connect to
+> each other converge once both have a binding (`TestWavesFromEdges_ACycleSharesOneWave`). The
+> `window._env_` premise in the context above is stale too: a web app reads the sibling address only
+> in its nginx drop-in, which tolerates a missing one (502 until injected). Soft edges, the waves,
+> the commitless converge and the one deadline are unchanged.
+
 **Wiring edges are graded, and only the hard ones order the deploy.**
 
 ```text
@@ -101,6 +117,9 @@ Three properties follow:
   graph cannot actually produce a cycle. The refusal is asserted on the edges directly
   (`TestWavesFromEdges_HardCycleIsPermanent`) so it holds for whatever edge kind is added next.
 
+  > Amended 2026-10-15: with every connection an edge a cycle is ordinary, and it shares one wave
+  > instead of being refused (see the amendment under Decision).
+
 The stage keeps ONE deadline across all waves and the converge. What a version is owed is a time to be
 serving; a per-wave budget would silently multiply that allowance by however many levels a design
 happens to have.
@@ -136,6 +155,10 @@ The last row is why the waves are an intermediate rather than the end state (see
 - Adding a new stamped-config shape (a worker handed a queue's address, say) means adding it to
   `spec.HardConfigEdges` — and the composer and the deploy order follow it at once, because they read
   the same list.
+
+  > Amended 2026-10-15: there is no stamped-config shape to add. Every sibling dependency is a
+  > workload connection and `spec.ConnectionEdges` already orders by all of them (see the amendment
+  > under Decision).
 
 ## Cost accepted: in-flight runs do not survive the upgrade
 

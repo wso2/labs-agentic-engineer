@@ -139,6 +139,10 @@ type harness struct {
 	// are ABOUT a state the loop's own actions cannot produce, such as a
 	// component nothing ever bound.
 	versionOverride *delivery.VersionState
+	// versionQueue answers successive version reads in order, the last repeating
+	// — for the tests whose passes have to see the world move between cycles in
+	// ways the derived model cannot produce (a converging component, say).
+	versionQueue []delivery.VersionState
 	// versionErr, when set, is what every ReadVersionState answers instead.
 	versionErr error
 }
@@ -386,6 +390,15 @@ func (h *harness) versionIs(components ...delivery.ComponentState) {
 	h.mu.Unlock()
 }
 
+// versionsAre queues the version reads, in order; the last repeats. Each
+// read — the one before a pass, the one at the serving gate — consumes one.
+func (h *harness) versionsAre(states ...delivery.VersionState) {
+	h.set["version"] = true
+	h.mu.Lock()
+	h.versionQueue = append([]delivery.VersionState(nil), states...)
+	h.mu.Unlock()
+}
+
 // versionState is what ReadVersionState answers: the override if a test pinned
 // one, otherwise the model derived from the builds it pinned and the promotes
 // the loop made.
@@ -396,6 +409,13 @@ func (h *harness) versionIs(components ...delivery.ComponentState) {
 func (h *harness) versionState() delivery.VersionState {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if len(h.versionQueue) > 0 {
+		st := h.versionQueue[0]
+		if len(h.versionQueue) > 1 {
+			h.versionQueue = h.versionQueue[1:]
+		}
+		return st
+	}
 	if h.versionOverride != nil {
 		return *h.versionOverride
 	}
@@ -450,8 +470,23 @@ func (h *harness) wavesAre(waves [][]string, err error) {
 		})
 }
 
+// wavesAreWith is wavesAre with the connection graph the plan was levelled
+// over, which the readiness wait reads at the deadline.
+func (h *harness) wavesAreWith(waves [][]string, providers map[string][]string) {
+	h.set["waves"] = true
+	h.env.OnActivity(h.acts.PlanDeployWaves, mock.Anything, mock.Anything).
+		Return(func(_ context.Context, in PlanDeployInput) (delivery.DeployPlan, error) {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			h.wavePlans = append(h.wavePlans, in)
+			plan := planFor(in.Version, waves)
+			plan.Providers = providers
+			return plan, nil
+		})
+}
+
 // wavesAreOneWave is the default: everything the version is behind by,
-// promoted together — what a project with no hard wiring edges gets.
+// promoted together — what a project whose components do not connect to each other gets.
 //
 // Derived from the STATE rather than hardcoded, so a test that changes which
 // components its builds report cannot end up planning a different set than the
@@ -556,6 +591,20 @@ func (h *harness) deploymentsAre(states ...CycleDeployState) {
 			call.Once()
 		}
 	}
+}
+
+// deploymentsAnswer pins the readiness polls to a function of which CYCLE is
+// polling (the dispatches so far) and what it waits on, for the tests where one
+// wait must answer differently from the next and a queue cannot say when.
+func (h *harness) deploymentsAnswer(fn func(cycle int, in WaitSetInput) CycleDeployState) {
+	h.set["deployments"] = true
+	h.env.OnActivity(h.acts.PollDeployments, mock.Anything, mock.Anything).
+		Return(func(_ context.Context, in WaitSetInput) (CycleDeployState, error) {
+			h.mu.Lock()
+			cycle := len(h.dispatches)
+			h.mu.Unlock()
+			return fn(cycle, in), nil
+		})
 }
 
 // gateVerdictsAre queues the deploy gate's answers, in order; the last repeats.
@@ -1091,8 +1140,8 @@ func TestDeliverVersion_DeliversWhenEveryComponentServes(t *testing.T) {
 // stranded for the rest of the version's life.
 //
 // A red build cannot be helped by holding its siblings back, and the promotable
-// rule is what makes promoting them safe: only components whose hard providers
-// are serving or promoted ahead of them are written.
+// rule is what makes promoting them safe: only components whose providers are
+// serving or promoted ahead of them are written.
 func TestRedBuild_PromotesItsGreenSiblings(t *testing.T) {
 	h := newHarness(t)
 	h.milestoneIs(
@@ -1134,11 +1183,53 @@ func TestRedBuild_PromotesItsGreenSiblings(t *testing.T) {
 		"both components are serving by the time the version is delivered")
 }
 
+// The build stage answers only once EVERY build of the merge has a verdict. It
+// used to return on the first red, and the deploy pass that followed read a
+// sibling still building as unbuilt: allocation-app-1's api finished 24 seconds
+// after the pass planned around it, its consumer was promoted against an api
+// with no binding, and at the deadline the consumer was filed as a deployment
+// failure. Waiting costs the red cycle its slowest sibling and nothing else: the
+// red build's fix issue is minted by the event plane either way.
+func TestRedBuild_WaitsForItsSiblingsBeforeDeploying(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(
+		workable(1, 1),      // dispatch
+		workable(1, 1),      // the webapp's fix issue
+		MilestoneSnapshot{}, // delivered
+	)
+	h.buildsAre(
+		// The webapp is red while the api is still building: no verdict yet.
+		CycleBuildState{Expected: 2, Settled: 1,
+			Components: []string{"onboarding-api", "onboarding-webapp"},
+			Red:        []string{"onboarding-webapp"}},
+		CycleBuildState{Expected: 2, Settled: 2,
+			Components: []string{"onboarding-api", "onboarding-webapp"},
+			Red:        []string{"onboarding-webapp"}},
+		CycleBuildState{Expected: 1, Settled: 1, Components: []string{"onboarding-webapp"}},
+	)
+	h.merges(2)
+
+	h.run(delivery.RunKindDev, 0)
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateSucceeded, "")
+	require.Equal(t, []string{delivery.CycleKindCoding, delivery.CycleKindFix}, h.dispatchKinds(),
+		"the verdict is still red once the fan-out settles: the fix cycle follows")
+	h.mu.Lock()
+	polls := len(h.seenBuilds)
+	h.mu.Unlock()
+	require.Equal(t, 3, polls,
+		"the red cycle polled until its sibling settled, then the fix cycle polled once")
+	require.Equal(t, []string{"onboarding-api"}, delivery.TargetNames(h.deploys[0].Targets),
+		"the pass planned after the api's build settled, and promoted it")
+}
+
 // TestHeldComponent_IsNeitherPromotedNorBlamed is the objection, answered: A
 // needs B, A is green, B is red.
 //
-// A is HELD. Not promoted — a SPA published against an api with no address is a
-// blank page — and not waited on and not filed against either, which is the part
+// A is HELD. Not promoted — a consumer published against a provider with no
+// binding never resolves its connection — and not waited on and not filed
+// against either, which is the part
 // that is easy to get wrong: a deploy-fix issue would send an agent to debug a
 // deployment that is perfectly healthy and simply has not happened. B's red
 // build has its own issue, and the pass that finds B serving promotes A.
@@ -1273,7 +1364,7 @@ func TestDeploy_FailedWaveRunsNoFurtherWaveOrConverge(t *testing.T) {
 // the project, which is the wedge this whole stage exists to stop producing. So
 // the permanent error converts to cycleDeployFailed and takes the ordinary
 // recovery path: file the work, settle on the deploy budget when nothing fixes it.
-func TestDeployOrderUnsatisfiable_SettlesAsADeployFailure(t *testing.T) {
+func TestDeployPlanPermanentlyFails_SettlesAsADeployFailure(t *testing.T) {
 	h := newHarness(t)
 	h.milestoneIs(
 		workable(1, 1),      // dispatch
@@ -1281,7 +1372,7 @@ func TestDeployOrderUnsatisfiable_SettlesAsADeployFailure(t *testing.T) {
 	)
 	h.buildsAre(CycleBuildState{Expected: 2, Settled: 2, Components: []string{"web-a", "web-b"}})
 	h.wavesAre(nil, temporal.NewNonRetryableApplicationError(
-		"deployment: hard dependency cycle among components web-a needs [web-b]; web-b needs [web-a]",
+		`deployment: no such component "web-a" in design`,
 		errTypePermanentDeploy, nil))
 	h.deployMintsAre(nil)
 	h.merges(1)
@@ -1290,11 +1381,11 @@ func TestDeployOrderUnsatisfiable_SettlesAsADeployFailure(t *testing.T) {
 	res := h.result(t)
 
 	h.assertSettled(t, res, delivery.RunStateFailed, delivery.RunReasonDeployBudget)
-	require.Empty(t, h.deploys, "an unsatisfiable order promotes nothing")
+	require.Empty(t, h.deploys, "a plan that failed promotes nothing")
 	require.Equal(t, 1, h.deployMintCount(), "the fix work is filed, not swallowed by a failed workflow")
 	require.ElementsMatch(t, []string{"web-a", "web-b"}, delivery.TargetNames(h.deployMints[0].Failed),
-		"a cycle is nobody's individual fault — every component in it is named")
-	require.Contains(t, h.deployMints[0].Reasons["web-a"], "hard dependency cycle",
+		"a failed plan is nobody's individual fault — every component behind is named")
+	require.Contains(t, h.deployMints[0].Reasons["web-a"], "no such component",
 		"the cause reaches the issue body rather than only the workflow history")
 }
 
@@ -1303,11 +1394,11 @@ func TestDeployOrderUnsatisfiable_SettlesAsADeployFailure(t *testing.T) {
 //
 // The reachable hole this closes: a pass is entered when anything is behind OR
 // converging, so a version whose components are all converging can hit an
-// unsatisfiable order with an empty behind set. Attributed to the behind set
+// permanent plan failure with an empty behind set. Attributed to the behind set
 // alone, the failure would name nobody, mint nothing, and settle the run on the
 // deploy budget with an empty milestone behind it — the exact wedge the stage
 // exists to stop producing.
-func TestDeployOrderPermanentlyUnsatisfiable_NamesEveryNonServingComponent(t *testing.T) {
+func TestDeployPlanPermanentlyFails_NamesEveryNonServingComponent(t *testing.T) {
 	h := newHarness(t)
 	h.milestoneIs(workable(1, 1), MilestoneSnapshot{})
 	// Nothing behind: both components are converging towards the release they
@@ -1323,7 +1414,7 @@ func TestDeployOrderPermanentlyUnsatisfiable_NamesEveryNonServingComponent(t *te
 		},
 	)
 	h.wavesAre(nil, temporal.NewNonRetryableApplicationError(
-		"deployment: hard dependency cycle among components todo-api needs [todo-webapp]; todo-webapp needs [todo-api]",
+		`deployment: no such component "todo-api" in design`,
 		errTypePermanentDeploy, nil))
 	h.deployMintsAre([]int{testRepairIssue})
 	h.merges(1)
@@ -1340,7 +1431,7 @@ func TestDeployOrderPermanentlyUnsatisfiable_NamesEveryNonServingComponent(t *te
 
 // A plan that could not be READ is a blip, not an answer, and must keep the
 // unbounded retry that is right for it — the opposite of the case above.
-func TestDeployOrderUnreadable_IsRetriedNotSettled(t *testing.T) {
+func TestDeployPlanUnreadable_IsRetriedNotSettled(t *testing.T) {
 	h := newHarness(t)
 	h.milestoneIs(workable(1, 1), MilestoneSnapshot{})
 	h.buildsAre(CycleBuildState{Expected: 1, Settled: 1, Components: []string{"order-service"}})
@@ -1519,6 +1610,169 @@ func TestDeployExpiry_FilesWhyEachComponentWasPending(t *testing.T) {
 	require.Positive(t, h.deployMintCount(), "the expiry files fix work")
 	require.Equal(t, held, h.deployMints[0].Reasons["order-service"],
 		"the hold reason from the last poll reaches the issue the expiry mints")
+}
+
+// A component whose binding is waiting on a SIBLING's that is not met is not
+// what the deadline files. Its provider's state has its own work or its own
+// failure in the same read, and an issue against the consumer sends an agent to
+// debug a deployment that is healthy and has simply not happened — which is what
+// the platform did to allocation-app-1's agent on 2026-10-12, and the very next
+// pass promoted its api. The pass ends, nothing is filed, and the boundary's
+// serving gate decides the version: here it never serves, so the run refuses to
+// deliver it rather than inventing a defect.
+func TestDeployExpiry_AComponentWaitingOnItsProviderIsNotFiled(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(
+		workable(1, 1),
+		MilestoneSnapshot{},
+	)
+	// Pinned rather than derived: the derived model calls a promoted component
+	// serving, and this one never does. The api it connects to is unbuilt, which
+	// is what makes the agent's wait the api's business.
+	h.versionIs(
+		delivery.ComponentState{Component: "skill-agent", State: delivery.ComponentStateBehind, DesiredSHA: testMergeSHA},
+		delivery.ComponentState{Component: "allocation-api", State: delivery.ComponentStateUnbuilt},
+	)
+	h.wavesAreWith([][]string{{"skill-agent"}}, map[string][]string{"skill-agent": {"allocation-api"}})
+	h.deploymentsAre(CycleDeployState{
+		Expected:          1,
+		Pending:           []string{"skill-agent"},
+		WaitingOnProvider: []string{"skill-agent"},
+		Reasons:           map[string]string{"skill-agent": "ConnectionsPending"},
+	})
+	h.deployMintsAre(nil)
+	h.merges(1)
+
+	h.run(delivery.RunKindDev, 0)
+	res := h.result(t)
+
+	require.Equal(t, 0, h.deployMintCount(),
+		"waiting on a provider is not a deployment failure; filing one sends an agent after nothing")
+	h.assertSettled(t, res, delivery.RunStateFailed, delivery.RunReasonVersionIncomplete)
+	require.Len(t, h.deploys, 1,
+		"the pass ends on the expired wait: no converge is promoted into the same wait")
+}
+
+// With the provider itself still pending, the deadline files the PROVIDER and
+// leaves its waiting consumer alone.
+func TestDeployExpiry_FilesOnlyTheComponentsNotWaitingOnAProvider(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(
+		workable(1, 1),
+		MilestoneSnapshot{},
+	)
+	h.buildsAre(CycleBuildState{Expected: 2, Settled: 2, Components: []string{"allocation-api", "skill-agent"}})
+	h.wavesAreWith(nil, map[string][]string{"skill-agent": {"allocation-api"}})
+	h.deploymentsAre(CycleDeployState{
+		Expected:          2,
+		Pending:           []string{"allocation-api", "skill-agent"},
+		WaitingOnProvider: []string{"skill-agent"},
+		Reasons:           map[string]string{"allocation-api": "Progressing", "skill-agent": "ConnectionsPending"},
+	})
+	h.deployMintsAre(nil)
+	h.merges(1)
+
+	h.run(delivery.RunKindDev, 0)
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateFailed, delivery.RunReasonDeployBudget)
+	require.Equal(t, 1, h.deployMintCount())
+	require.Equal(t, []string{"allocation-api"}, delivery.TargetNames(h.deployMints[0].Failed),
+		"the provider that never came up is filed; its waiting consumer is not")
+	require.Equal(t, "Progressing", h.deployMints[0].Reasons["allocation-api"],
+		"the provider's own hold reason reaches its issue")
+}
+
+// A waiting consumer whose provider IS met is its own problem: the connection it
+// declares cannot resolve against a provider that serves (an endpoint name the
+// provider does not expose, say), and that is filed like any component that
+// never came up. Excusing every ConnectionsPending would end such a run
+// `version-incomplete` with no issue — the silent ending ADR-0026 exists to stop.
+func TestDeployExpiry_AWaiterWhoseProviderServesIsFiled(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(
+		workable(1, 1),
+		MilestoneSnapshot{},
+	)
+	h.buildsAre(CycleBuildState{Expected: 2, Settled: 2, Components: []string{"allocation-api", "skill-agent"}})
+	h.wavesAreWith([][]string{{"allocation-api"}, {"skill-agent"}},
+		map[string][]string{"skill-agent": {"allocation-api"}})
+	h.deploymentsAre(
+		CycleDeployState{Expected: 1, Ready: 1}, // the api's wave serves
+		CycleDeployState{ // the agent never resolves its connection to it
+			Expected:          1,
+			Pending:           []string{"skill-agent"},
+			WaitingOnProvider: []string{"skill-agent"},
+			Reasons:           map[string]string{"skill-agent": "ConnectionsPending"},
+		},
+	)
+	h.deployMintsAre(nil)
+	h.merges(1)
+
+	h.run(delivery.RunKindDev, 0)
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateFailed, delivery.RunReasonDeployBudget)
+	require.Equal(t, 1, h.deployMintCount(), "a waiter whose provider serves is filed")
+	require.Equal(t, []string{"skill-agent"}, delivery.TargetNames(h.deployMints[0].Failed))
+}
+
+// A pass that ends on a blocked wait skips its converge, and the converge is
+// OWED: the next pass runs it even when it promotes nothing, so the soft facts
+// the first pass's promotes owe their providers — a CORS origin, an OIDC
+// callback — are written once the blocked component serves.
+func TestDeployExpiry_TheConvergeItSkippedIsOwedToTheNextPass(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(
+		workable(2, 2), // cycle one
+		workable(1, 1), // cycle two — the working set shrank, so it is progress
+		MilestoneSnapshot{},
+	)
+	h.buildsAre(CycleBuildState{Expected: 2, Settled: 2, Components: []string{"api", "web"}})
+	// Cycle one: api and web behind, the agent web also connects to unbuilt.
+	// Cycle two (and the serving gate after it): api serving, web converging.
+	h.versionsAre(
+		delivery.VersionState{Components: []delivery.ComponentState{
+			{Component: "api", State: delivery.ComponentStateBehind, DesiredSHA: testMergeSHA},
+			{Component: "web", State: delivery.ComponentStateBehind, DesiredSHA: testMergeSHA},
+			{Component: "agent", State: delivery.ComponentStateUnbuilt},
+		}},
+		delivery.VersionState{Components: []delivery.ComponentState{
+			{Component: "api", State: delivery.ComponentStateServing, DesiredSHA: testMergeSHA, Pinned: "release-api", Ready: true},
+			{Component: "web", State: delivery.ComponentStateConverging, DesiredSHA: testMergeSHA, Pinned: "release-web"},
+			{Component: "agent", State: delivery.ComponentStateUnbuilt},
+		}},
+	)
+	h.wavesAreWith([][]string{{"api"}, {"web"}}, map[string][]string{"web": {"api", "agent"}})
+	h.deploymentsAnswer(func(cycle int, in WaitSetInput) CycleDeployState {
+		if cycle == 1 && len(in.Components) == 1 && in.Components[0] == "web" {
+			return CycleDeployState{
+				Expected: 1, Pending: []string{"web"}, WaitingOnProvider: []string{"web"},
+				Reasons: map[string]string{"web": "ConnectionsPending"},
+			}
+		}
+		return CycleDeployState{Expected: len(in.Components), Ready: len(in.Components)}
+	})
+	h.deployMintsAre(nil)
+	h.merges(2)
+
+	h.run(delivery.RunKindDev, 0)
+	res := h.result(t)
+
+	require.Equal(t, 0, h.deployMintCount(), "web is blocked behind the unbuilt agent: nothing is filed")
+	var converges []int
+	for i, in := range h.deploys {
+		if len(in.Targets) > 0 && in.Targets[0].CommitSHA == "" {
+			converges = append(converges, i)
+		}
+	}
+	require.Len(t, h.deploys, 3, "cycle one promoted api and web and converged nothing; cycle two promoted nothing and converged")
+	require.Equal(t, []int{2}, converges, "the converge cycle one skipped is paid by cycle two")
+	require.ElementsMatch(t, []string{"web", "api"}, delivery.TargetNames(h.deploys[2].Targets),
+		"the owed converge covers what was waited on and what already served")
+	// The agent is still unbuilt at the serving gate, so the version is not
+	// delivered — but the converge happened before that verdict.
+	h.assertSettled(t, res, delivery.RunStateFailed, delivery.RunReasonVersionIncomplete)
 }
 
 // The deadline belongs to the STAGE, not to a wave.

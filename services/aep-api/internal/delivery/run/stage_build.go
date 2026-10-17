@@ -45,7 +45,8 @@ import (
 // known — and not in a timeout here, which could only report "something took too
 // long" about a run that was never going to start.
 //
-// It answers the CYCLE's verdict and nothing else. It used to hand the deploy
+// It answers the CYCLE's verdict and nothing else, and only once the WHOLE
+// fan-out has one: red if any component is red, green otherwise. It used to hand the deploy
 // stage the components its poll had seen, which is what made the deploy set the
 // cycle's path diff — and a component whose build went green in a cycle a
 // sibling failed was then promoted by nothing, ever. The deploy reads the
@@ -57,11 +58,20 @@ func (l *loop) awaitBuilds(ctx workflow.Context) (cycleResult, error) {
 		if err != nil {
 			return cycleNone, err
 		}
-		if len(state.Red) > 0 {
-			return cycleRed, nil
-		}
+		// Every build of the fan-out has a verdict before this stage has one. It
+		// used to return on the FIRST red, and the deploy pass that follows then
+		// read the version with a sibling still building — which classifies as
+		// unbuilt, the same as never written. A consumer promoted against a
+		// provider seconds from being built sat ConnectionsPending for the whole
+		// deploy deadline and was filed as a deployment failure (allocation-app-1,
+		// 2026-10-12: the api's build finished 24 seconds after the pass planned
+		// around it). Waiting costs a red cycle its slowest sibling; the red
+		// build's fix issue is minted by the event plane either way.
 		if state.Green() {
 			return cycleGreen, nil
+		}
+		if state.Settled >= state.Expected {
+			return cycleRed, nil
 		}
 
 		if cancelled, _ := l.awaitWake(ctx, buildPollInterval, nil); cancelled {

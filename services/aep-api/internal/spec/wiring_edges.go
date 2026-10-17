@@ -16,54 +16,65 @@
 
 package spec
 
-// Wiring edges, and the one distinction the deploy order turns on.
+// Wiring edges, and what the deploy order turns on.
 //
-// A component's design dependencies describe what it TALKS TO. Deployment cares
-// about something narrower: which of those facts the platform has to know before
-// the component can serve its first byte, versus which it can supply afterwards.
+// A component's design dependencies describe what it TALKS TO. For a sibling
+// component that is also what its workload CONNECTS TO: the platform derives one
+// endpoint connection per sibling dependency (derive_wiring.go,
+// siblingEndpointWiring), and OpenChoreo resolves that connection only once the
+// provider has a ReleaseBinding with a resolved endpoint. Until then the
+// consumer's own binding reports ConnectionsPending and is never Ready; its
+// pods run without the provider's address, and a web app's nginx answers `/api`
+// with 502 (the react-webapp skill's proxy drop-in).
 //
-//	HARD  the provider's address is stamped into the consumer's own start-up
-//	      configuration. A web app's nginx reverse-proxy is the case that
-//	      exists: OpenChoreo injects the sibling Service URL as pod env
-//	      `<DEP>_URL`, and `/api` 502s until that Service exists. Hard edges
-//	      ORDER the deploy, and they must form a DAG.
+//	CONNECTION  consumer → the sibling it connects to. ORDERS the deploy: the
+//	            provider is promoted first, or the consumer is held while the
+//	            provider has no serving release. A cycle among connections
+//	            shares one wave — OpenChoreo publishes a component's own
+//	            endpoint URLs before it checks its outbound connections, so two
+//	            components that connect to each other converge once both have a
+//	            binding.
 //
-//	SOFT  the fact flows the other way — a provider learning about its consumer.
-//	      An OIDC resource needs the SPA's callback URL registered. That is not
-//	      needed before the consumer serves, only before a later login. Soft
-//	      edges order NOTHING and are free to cycle.
+//	SOFT        the fact flows the other way — a provider learning about its
+//	            consumer. An OIDC resource needs the SPA's callback URL
+//	            registered. That is not needed before the consumer serves, only
+//	            before a later login. Soft edges order NOTHING; one converge
+//	            pass at the end writes them.
 //
-// Collapsing the two is what makes the wiring look circular and therefore
-// unsolvable. Separated, the hard half is a DAG the deploy can walk in waves and
-// the soft half is one converge pass afterwards.
-//
-// A hard edge is deliberately NOT "any dependency": a service reaching a sibling
-// service resolves it through OpenChoreo's own connection mechanism at render
-// time, so the platform stamps nothing and has no reason to serialise the two.
-// Ordering those would refuse a legal design — two services that call each other
-// is an ordinary shape — for no gain. The rule is precisely: the platform stamps
-// the address, therefore the platform must know it first.
+// The rule used to be narrower: only a web app's sibling SERVICES ordered the
+// deploy, on the premise that a service reaching a sibling "resolves it through
+// OpenChoreo's own connection mechanism, so the platform stamps nothing and has
+// no reason to serialise the two". The first half is true of every sibling
+// dependency, and the conclusion was wrong for all of them: the connection is
+// exactly what OpenChoreo waits on, whatever the consumer's type. An ai-agent
+// promoted ahead of the api it connects to sat ConnectionsPending for the whole
+// deploy deadline and was filed as a deployment failure (allocation-app-1,
+// 2026-10-12).
 
-// HardConfigEdges returns each component's hard providers: the sibling
-// components whose address this component cannot start without, keyed by
-// consumer name. Both sides are DESIGN names (the caller maps to k8s names if
-// it addresses OpenChoreo with them).
+// ConnectionEdges returns each component's providers: the sibling components
+// its workload connects to, keyed by consumer name, in declaration order. Both
+// sides are DESIGN names (the caller maps to k8s names if it addresses
+// OpenChoreo with them).
 //
-// It is the single authority for that rule. projects orders the deploy by
-// these edges so a SPA is not published before the sibling Service nginx
-// will proxy to. A second spelling would let the writer and the scheduler
-// disagree about which component blocks which.
+// It is the single authority for that rule. projects orders the deploy by these
+// edges so a consumer is not published before the provider its connection
+// resolves to. A second spelling would let the writer and the scheduler
+// disagree about which component blocks which — so the predicate is the one
+// derive_wiring uses for the connection itself, a sibling dependency whose
+// target is in the design, less a self-reference: the derivation would emit a
+// connection for one, and it orders nothing.
 //
 // Components named as dependencies but absent from the design are skipped: an
-// edge to a component that does not exist cannot be waited for.
-func HardConfigEdges(design *DesignFile) map[string][]string {
+// edge to a component that does not exist cannot be waited for, and the
+// derivation emits no connection for it either.
+func ConnectionEdges(design *DesignFile) map[string][]string {
 	if design == nil {
 		return nil
 	}
 	byName := componentsByName(design)
 	out := make(map[string][]string, len(design.Components))
 	for _, c := range design.Components {
-		if providers := hardProvidersOf(c, byName); len(providers) > 0 {
+		if providers := providersOf(c, byName); len(providers) > 0 {
 			out[c.Name] = providers
 		}
 	}
@@ -78,21 +89,15 @@ func componentsByName(design *DesignFile) map[string]DesignComponent {
 	return out
 }
 
-// hardProvidersOf lists one component's hard providers in declaration order.
-//
-// Today the only consumer that needs a sibling address at start-up is a web
-// app: nginx reverse-proxies `/api` to that sibling's Service URL. A peer web
-// app is not called over HTTP, so its URL is nothing to wait for. When a second
-// stamped-config shape appears (a worker handed a queue's address, say) it is
-// added here, and the deploy order follows it.
-func hardProvidersOf(c DesignComponent, byName map[string]DesignComponent) []string {
-	if c.ComponentType != ComponentTypeWebApplication {
-		return nil
-	}
+// providersOf lists one component's providers in declaration order: every
+// sibling dependency that names a component in the design, itself excepted.
+func providersOf(c DesignComponent, byName map[string]DesignComponent) []string {
 	var out []string
 	for _, dep := range c.ComponentDependsOn() {
-		sibling, ok := byName[dep]
-		if !ok || sibling.ComponentType != ComponentTypeService {
+		if dep == c.Name {
+			continue
+		}
+		if _, ok := byName[dep]; !ok {
 			continue
 		}
 		out = append(out, dep)

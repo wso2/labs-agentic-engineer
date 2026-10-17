@@ -19,7 +19,6 @@ package projects
 import (
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/platform/k8sname"
@@ -29,16 +28,17 @@ import (
 // deploymentWaves plans one reconcile pass: which components to promote, in
 // which order, which to wait on, and which to leave alone (ADR-0026).
 //
-// WAVES, because every component in wave N has each of its hard providers in
-// some earlier one. The stage waits for each wave to serve before starting the
-// next, which is what makes a hard edge (spec.HardConfigEdges) mean what it
-// says — the provider has an address by the time the consumer's config is
-// composed. Promoting the whole set at once instead publishes the consumer with
-// a config nothing could have filled, which for a web app is a blank page
-// served to anyone who visits during the repair.
+// WAVES, because every component in wave N has each of its providers in some
+// earlier one. The stage waits for each wave to serve before starting the next,
+// which is what makes a connection edge (spec.ConnectionEdges) mean what it
+// says — the provider has a binding by the time the consumer's connection is
+// resolved. Promoting the whole set at once instead publishes the consumer
+// against a provider with no binding: OpenChoreo applies its pods without the
+// provider's address and holds its Ready until the provider exists, which for
+// a web app is a `/api` that answers 502 to anyone who visits during the wait.
 //
 // PROMOTABLE is the rule that replaced "everything the cycle built". A
-// component is promoted when it is BEHIND and every hard provider is either
+// component is promoted when it is BEHIND and every provider is either
 // serving already or being promoted in this same pass:
 //
 //	promotable(c) = behind(c) ∧ ∀p ∈ providers(c): serving(p) ∨ promotable(p)
@@ -60,12 +60,12 @@ import (
 // the run loop carries and what the deployer writes; the design graph is keyed
 // by design names, so the mapping happens here rather than at either end.
 //
-// A cycle among HARD edges is permanent, not slow: two components that each need
-// the other's address before starting cannot both go first, and no amount of
-// retrying changes that. It comes back wrapped in delivery.ErrDeployPermanent so
-// the supervisor files it as a deploy failure on the first attempt rather than
-// retrying an unsatisfiable order forever. Soft edges are absent from this graph
-// by construction and may cycle freely — CORS always does.
+// A cycle among connections shares ONE wave. OpenChoreo publishes a component's
+// own endpoint URLs before it checks its outbound connections, so two components
+// that connect to each other converge once both have a binding; the wave's wait
+// sees both resolve. Refusing the cycle would turn an ordinary shape (two
+// services that call each other) into a permanent deploy failure. Soft edges are
+// absent from this graph by construction and may cycle freely — CORS always does.
 func deploymentWaves(design *spec.DesignFile, state delivery.VersionState) (delivery.DeployPlan, error) {
 	byName := make(map[string]delivery.ComponentState, len(state.Components))
 	var behind []string
@@ -80,7 +80,7 @@ func deploymentWaves(design *spec.DesignFile, state delivery.VersionState) (deli
 		return plan, nil
 	}
 
-	// consumer -> hard providers, k8s-shaped, restricted to components the
+	// consumer -> providers, k8s-shaped, restricted to components the
 	// version state knows about. Translating here is what makes the design graph
 	// and the deploy set talk about the same components: the design names them as
 	// the architect wrote them, the run loop carries what OpenChoreo is addressed
@@ -91,7 +91,7 @@ func deploymentWaves(design *spec.DesignFile, state delivery.VersionState) (deli
 	// A nil design yields no edges, which is the same answer it gave before: the
 	// design is the ordering input, not the deploy's permission.
 	providers := make(map[string][]string, len(state.Components))
-	for consumer, deps := range spec.HardConfigEdges(design) {
+	for consumer, deps := range spec.ConnectionEdges(design) {
 		c := k8sname.ToK8sName(consumer)
 		if _, known := byName[c]; !known {
 			continue
@@ -105,6 +105,10 @@ func deploymentWaves(design *spec.DesignFile, state delivery.VersionState) (deli
 		}
 	}
 
+	// The graph rides the plan: the readiness wait needs it at the deadline to
+	// tell a consumer blocked behind an unmet provider from one whose own
+	// connection cannot resolve.
+	plan.Providers = providers
 	promotable, held := promotableSet(behind, providers, byName)
 	plan.Held = held
 	if len(promotable) == 0 {
@@ -145,7 +149,7 @@ func deploymentWaves(design *spec.DesignFile, state delivery.VersionState) (deli
 }
 
 // promotableSet is the fixpoint behind the promotable rule: drop every behind
-// component whose hard providers cannot be met, then drop the ones that were
+// component whose providers cannot be met, then drop the ones that were
 // only waiting on THOSE, until nothing more falls out.
 //
 // One pass is not enough, and the case that proves it is a chain: a web app
@@ -155,8 +159,8 @@ func deploymentWaves(design *spec.DesignFile, state delivery.VersionState) (deli
 // A provider is met when it is SERVING or when it is being promoted in this
 // pass. Any other state — unbuilt, held, or converging towards a release it has
 // not reached — is a real unsatisfied edge: the stage's premise is that a
-// provider's address exists by the time the consumer's config is composed, and
-// only a serving release proves that. A converging provider therefore costs its
+// provider's binding exists by the time the consumer's connection is resolved,
+// and only a serving release proves that. A converging provider therefore costs its
 // consumer one cycle, which is the conservative direction.
 func promotableSet(behind []string, providers map[string][]string,
 	byName map[string]delivery.ComponentState) (promotable []string, held []delivery.ComponentState) {
@@ -175,8 +179,8 @@ func promotableSet(behind []string, providers map[string][]string,
 			for _, p := range providers[name] {
 				// ServesConsumers, not `State == serving`: a component somebody
 				// UNDEPLOYED on purpose owes the version nothing and so reads as
-				// serving, but it has no active release and therefore no address
-				// for this component's start-up config to carry.
+				// serving, but it has no active release and therefore no binding
+				// for this component's connection to resolve against.
 				if byName[p].ServesConsumers() {
 					continue
 				}
@@ -228,51 +232,87 @@ func waitedOn(state delivery.VersionState) []string {
 	return out
 }
 
-// wavesFromEdges is the ordering itself: Kahn's algorithm over consumer ->
-// providers, level by level.
+// wavesFromEdges is the ordering itself: topological levels over consumer ->
+// providers, with every strongly connected group collapsed into one node.
 //
-// Split from the translation above so the graph's own behaviour — including the
-// cycle refusal, which today's edge rule cannot produce and a future one might —
-// is exercised on the edges directly rather than through a contrived design.
+// A cycle is not refused. OpenChoreo publishes a component's own endpoint URLs
+// before it checks its outbound connections, so two components that connect to
+// each other converge once both have a binding: they share a wave, and the
+// wave's wait sees both resolve. Refusing it would make an ordinary shape (two
+// services that call each other) a permanent deploy failure — which the rule
+// did while it covered web apps alone and could not meet a cycle.
+//
+// Split from the translation above so the graph's own behaviour is exercised on
+// the edges directly rather than through a contrived design.
 //
 // Input order is preserved inside a wave so the plan is stable across attempts;
 // a deploy order that reshuffles between retries is needlessly hard to read in a
 // log.
 func wavesFromEdges(components []string, providers map[string][]string) ([][]string, error) {
-	remaining := make(map[string]int, len(components))
+	group := stronglyConnected(components, providers)
+
+	// Level the GROUPS: a group's providers are the groups its members' providers
+	// fall in, itself excepted. Groups are numbered in first-appearance order so
+	// the levelling below walks them in input order.
+	var groups []int
+	remaining := map[int]int{}
 	for _, name := range components {
-		remaining[name] = 0
+		if _, seen := remaining[group[name]]; !seen {
+			groups = append(groups, group[name])
+			remaining[group[name]] = 0
+		}
 	}
-	dependents := make(map[string][]string, len(components))
-	for consumer, deps := range providers {
-		for _, p := range deps {
-			dependents[p] = append(dependents[p], consumer)
-			remaining[consumer]++
+	dependents := map[int][]int{}
+	counted := map[[2]int]bool{}
+	for _, consumer := range components {
+		for _, p := range providers[consumer] {
+			pg, ok := group[p]
+			if !ok || pg == group[consumer] {
+				continue
+			}
+			edge := [2]int{group[consumer], pg}
+			if counted[edge] {
+				continue
+			}
+			counted[edge] = true
+			dependents[pg] = append(dependents[pg], group[consumer])
+			remaining[group[consumer]]++
 		}
 	}
 
 	var waves [][]string
-	placed := 0
-	for placed < len(components) {
+	placed := map[int]bool{}
+	for len(placed) < len(groups) {
+		level := map[int]bool{}
+		for _, g := range groups {
+			if !placed[g] && remaining[g] == 0 {
+				level[g] = true
+			}
+		}
+		if len(level) == 0 {
+			// Unreachable: the group graph is acyclic by construction. Loud rather
+			// than a plan missing components — a silent partial plan is the one
+			// failure this stage must never produce — and permanent, because
+			// retrying the same graph levels the same way.
+			var stuck []string
+			for _, name := range components {
+				if !placed[group[name]] {
+					stuck = append(stuck, name)
+				}
+			}
+			return nil, fmt.Errorf("%w: deploy order could not be levelled among %v",
+				delivery.ErrDeployPermanent, stuck)
+		}
 		var wave []string
 		for _, name := range components {
-			if n, ok := remaining[name]; ok && n == 0 {
+			if level[group[name]] {
 				wave = append(wave, name)
 			}
 		}
-		if len(wave) == 0 {
-			return nil, fmt.Errorf("%w: hard dependency cycle among components %s",
-				delivery.ErrDeployPermanent, describeCycle(remaining, providers))
-		}
-		for _, name := range wave {
-			delete(remaining, name)
-			placed++
-		}
-		for _, name := range wave {
-			for _, dep := range dependents[name] {
-				if _, ok := remaining[dep]; ok {
-					remaining[dep]--
-				}
+		for g := range level {
+			placed[g] = true
+			for _, dep := range dependents[g] {
+				remaining[dep]--
 			}
 		}
 		waves = append(waves, wave)
@@ -280,26 +320,56 @@ func wavesFromEdges(components []string, providers map[string][]string) ([][]str
 	return waves, nil
 }
 
-// describeCycle names the components still waiting on each other, with the edges
-// that hold them, so the error says what to change rather than merely that
-// something is wrong.
-func describeCycle(remaining map[string]int, providers map[string][]string) string {
-	stuck := make([]string, 0, len(remaining))
-	for name := range remaining {
-		stuck = append(stuck, name)
+// stronglyConnected labels each component with its strongly connected group
+// over consumer -> providers (Tarjan's algorithm). Edges to a component outside
+// the list are ignored: a provider that is not in the promoted set is not being
+// ordered by this pass.
+func stronglyConnected(components []string, providers map[string][]string) map[string]int {
+	in := make(map[string]bool, len(components))
+	for _, name := range components {
+		in[name] = true
 	}
-	sort.Strings(stuck)
-
-	parts := make([]string, 0, len(stuck))
-	for _, name := range stuck {
-		waiting := make([]string, 0, len(providers[name]))
-		for _, p := range providers[name] {
-			if _, ok := remaining[p]; ok {
-				waiting = append(waiting, p)
+	index := map[string]int{}
+	low := map[string]int{}
+	onStack := map[string]bool{}
+	var stack []string
+	group := make(map[string]int, len(components))
+	next, label := 0, 0
+	var visit func(string)
+	visit = func(v string) {
+		index[v], low[v] = next, next
+		next++
+		stack = append(stack, v)
+		onStack[v] = true
+		for _, w := range providers[v] {
+			if !in[w] {
+				continue
+			}
+			if _, seen := index[w]; !seen {
+				visit(w)
+				low[v] = min(low[v], low[w])
+			} else if onStack[w] {
+				low[v] = min(low[v], index[w])
 			}
 		}
-		sort.Strings(waiting)
-		parts = append(parts, fmt.Sprintf("%s needs [%s]", name, strings.Join(waiting, " ")))
+		if low[v] != index[v] {
+			return
+		}
+		for {
+			w := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			onStack[w] = false
+			group[w] = label
+			if w == v {
+				break
+			}
+		}
+		label++
 	}
-	return strings.Join(parts, "; ")
+	for _, name := range components {
+		if _, seen := index[name]; !seen {
+			visit(name)
+		}
+	}
+	return group
 }

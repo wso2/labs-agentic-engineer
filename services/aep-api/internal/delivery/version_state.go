@@ -60,7 +60,7 @@ const (
 	// failure within one tick of the wait. Classifying on the pin alone is what
 	// keeps this function pure.
 	ComponentStateConverging = "converging"
-	// ComponentStateHeld — behind, but a hard provider is not serving and is not
+	// ComponentStateHeld — behind, but a provider it connects to is not serving and is not
 	// being promoted in this pass. Not a failure: the provider's own state has
 	// its own work (a fix issue, or an open development issue), and this
 	// component is promoted by the first pass that finds its providers serving.
@@ -92,15 +92,15 @@ type ComponentState struct {
 	//
 	// Such a component reads as `serving` — nothing is owed, and promoting over a
 	// deliberate withdrawal would be the platform overruling the person who asked
-	// for it — but it is NOT a satisfied hard provider: it has no active release,
-	// so it has no address for a consumer's start-up config to carry. The two
+	// for it — but it is NOT a satisfied provider: it has no active release, so
+	// it has no binding for a consumer's connection to resolve against. The two
 	// facts are separate for exactly that reason, and a planner that could not
 	// tell them apart would publish a web app against a backend nobody is running.
 	Undeploy bool `json:"undeploy,omitempty"`
 	// Reason is OpenChoreo's own Ready reason, verbatim. Carried for the log and
 	// the issue body; never branched on here.
 	Reason string `json:"reason,omitempty"`
-	// WaitingOn names the hard providers holding this component back. Set only
+	// WaitingOn names the providers holding this component back. Set only
 	// on a held component, by the planner that decided it.
 	WaitingOn []string `json:"waitingOn,omitempty"`
 }
@@ -145,14 +145,25 @@ func (v VersionState) NotServing() []ComponentState {
 	return out
 }
 
-// ServesConsumers reports whether this component's address exists for a hard
-// consumer to be composed against: serving, and not deliberately withdrawn.
+// ServesConsumers reports whether this component's binding exists for a
+// consumer's connection to resolve against: serving, and not deliberately
+// withdrawn.
 //
 // Deliberately narrower than `State == serving`, which answers "does the version
 // owe this component anything". An undeployed component owes nothing and offers
 // nothing, and only the planner cares about the difference.
 func (c ComponentState) ServesConsumers() bool {
 	return c.State == ComponentStateServing && !c.Undeploy
+}
+
+// Find is one component's state by name.
+func (v VersionState) Find(name string) (ComponentState, bool) {
+	for _, c := range v.Components {
+		if c.Component == name {
+			return c, true
+		}
+	}
+	return ComponentState{}, false
 }
 
 // ServingCount is how many of the version's components are serving, out of how
@@ -221,7 +232,7 @@ func TargetNames(targets []DeployTarget) []string {
 // components to wait on, and the ones it deliberately leaves alone.
 type DeployPlan struct {
 	// Waves are the promotes, in order: every component in a wave has each of
-	// its hard providers serving already or promoted in an earlier wave.
+	// its providers serving already or promoted in an earlier wave.
 	Waves [][]DeployTarget `json:"waves,omitempty"`
 	// Waited is what the readiness poll waits for: everything promoted, plus the
 	// components already converging towards the release they pin.
@@ -235,6 +246,12 @@ type DeployPlan struct {
 	// the providers it is waiting on. Reported for the log and the run's status;
 	// nothing waits on it and nothing is filed against it.
 	Held []ComponentState `json:"held,omitempty"`
+	// Providers is the connection graph the plan was levelled over, consumer ->
+	// providers in the names the run loop addresses OpenChoreo by, restricted to
+	// components the version knows. The readiness wait reads it at the deadline
+	// to tell a consumer blocked behind an unmet provider from one whose own
+	// connection cannot resolve: only the first is excused from being filed.
+	Providers map[string][]string `json:"providers,omitempty"`
 }
 
 // Writes reports whether the plan promotes anything. A plan that writes nothing

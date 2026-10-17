@@ -133,7 +133,7 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   merging into an unmanaged (nil) one would replace the user's whole config with the platform's variable.
 - **OpenChoreo Ready is not deployed for a Thunder SPA.** A web-application with a platform-resource whose CRT carries `ConsumerURLEnvConfig` stays pending until `ThunderApplication.spec.redirectUris` CONTAINS that web app's callback and that generation is ready (`status.ready` and `observedGeneration >= generation`). A patch or CR GET error is returned for activity retry, not invented as Failed. `FilesForComponent` is a different seam — this wait does not grade the callback onto env-config.js.
 - **A consumer-URL dependency is registered from the whole PROJECT, never from one component.** `cell-design` models `user-auth` as one external that several components edge into, so two web apps legitimately share one sign-in client, one `ResourceReleaseBinding` and one `redirectUris`. The value written is therefore the SORTED set of every declaring web app's resolved callback, computed once per read and written once per dependency. Sorted because the binding client skips an unchanged value: a set joined in map order would differ between two identical reads and turn every deploy poll into a real write. A component whose external URL has not resolved contributes nothing and is the one held. **Undeploy** is dropped from the set outright — a web app being withdrawn must not keep a redirect URI — while **Failed** is deliberately kept, because its previous release is usually still serving at that URL and de-registering it would sign users out of an app that works. Neither is waited on.
-- **Every hold states its cause on `ComponentDeploy.Reason`.** A held component is PENDING, not Failed, and the deploy budget reports the still-pending set as the failure when it expires — so this is the only channel by which "what was it waiting for" reaches the fix issue that expiry mints. `classifyCycleDeploys` carries reasons for pending components as well as failed ones, and the expiry branch files them.
+- **Every hold states its cause on `ComponentDeploy.Reason`.** A held component is PENDING, not Failed, and the deploy budget reports the still-pending set as the failure when it expires — less the components blocked behind a provider that is not met, which `WaitingOnProvider` (read off OpenChoreo's `ConnectionsPending`) lets the run loop tell apart — so this is the only channel by which "what was it waiting for" reaches the fix issue that expiry mints. `classifyCycleDeploys` carries reasons for pending components as well as failed ones, and the expiry branch files the ones it does not excuse.
 - **OpenChoreo Ready is not reachable.** OC reports a binding Ready when the control plane is done —
   release rendered, workload rolled out. Every consumer reads it as a claim about the EDGE: the
   validation sweep dispatches on it, the console counts components live by it, and a person clicks the
@@ -168,18 +168,18 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   yet — writing one with no release pinned produces an object OpenChoreo cannot render. The deploy stage's
   own last pass is a converge for the same reason: it finishes wiring that only became knowable once
   everything was up, and re-promoting to do it would re-cut a release OpenChoreo then refuses.
-- **The deploy PLAN is over the version's state, ordered by the design's hard wiring edges**
-  (`wiring_graph.go` over `spec.HardConfigEdges`, ADR-0026). `deploymentWaves` takes what each
-  component should be serving against what it is, promotes only the behind ones whose hard providers
-  are serving or promoted ahead of them, and returns the rest as HELD with the providers each waits
-  on. The edges are read over the whole design: a provider with no serving release is a real
-  unsatisfied edge, not an assumed-satisfied one. The fixpoint is not one pass — a consumer waiting on
-  a provider that is itself held has to fall out too, or it ships against a config its provider could
-  not fill.
-  A provider whose address the platform stamps into a consumer's start-up config deploys first, so the
-  consumer is never published with a config nothing could fill. What flows back from consumer to provider
-  (CORS origins, an OIDC callback) orders nothing and is written by the converge. A cycle among hard edges
-  is `ErrDeployPermanent` — nobody can go first — see
+- **The deploy PLAN is over the version's state, ordered by the design's connections**
+  (`wiring_graph.go` over `spec.ConnectionEdges`, ADR-0026). `deploymentWaves` takes what each
+  component should be serving against what it is, promotes only the behind ones whose providers are
+  serving or promoted ahead of them, and returns the rest as HELD with the providers each waits on.
+  The edges are read over the whole design: a provider with no serving release is a real unsatisfied
+  edge, not an assumed-satisfied one. The fixpoint is not one pass — a consumer waiting on a provider
+  that is itself held has to fall out too, or OpenChoreo holds its binding on a connection nothing in
+  the pass can resolve.
+  A provider a consumer's workload connects to deploys first, so the consumer's connection resolves the
+  first time its binding renders. What flows back from consumer to provider (CORS origins, an OIDC
+  callback) orders nothing and is written by the converge. A cycle among connections shares one wave —
+  OpenChoreo publishes a component's endpoint URLs before it checks its outbound connections — see
   [ADR-0019](../../../../docs/decisions/ADR-0019-deploy-order-follows-the-hard-wiring-edges.md).
 - **A create needs the org's AE Studio serving before the OC project exists** ([ADR-0045](../../../../docs/decisions/ADR-0045-design-work-runs-in-the-organizations-ae-studio.md),
   `SetAEStudioReady`, served by the `aestudiotools` adapter's endpoint resolve): absent answers 409

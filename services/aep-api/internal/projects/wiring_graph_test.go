@@ -18,9 +18,7 @@ package projects
 
 import (
 	"context"
-	"errors"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo/mocks"
@@ -41,6 +39,11 @@ func wiringWebApp(name string, deps ...string) spec.DesignComponent {
 
 func wiringService(name string, deps ...string) spec.DesignComponent {
 	return spec.DesignComponent{Name: name, ComponentType: spec.ComponentTypeService,
+		Dependencies: wiringDeps(deps)}
+}
+
+func wiringAgent(name string, deps ...string) spec.DesignComponent {
+	return spec.DesignComponent{Name: name, ComponentType: spec.ComponentTypeAIAgent,
 		Dependencies: wiringDeps(deps)}
 }
 
@@ -148,7 +151,40 @@ func TestDeploymentWaves(t *testing.T) {
 		want:       [][]string{{"todo-api"}, {"todo-webapp"}},
 		wantWaited: []string{"todo-api", "todo-webapp"},
 	}, {
-		name:       "no hard edges is one wave — the ordinary case pays nothing",
+		// THE INCIDENT of 2026-10-12. The agent connects to the api the same way
+		// the web app does — one workload connection — and OpenChoreo holds its
+		// Ready until the api has a binding. Promoted together, the agent sat
+		// ConnectionsPending for the whole deadline and was filed as a failure.
+		name:       "an agent waits for the api its workload connects to",
+		design:     designWith(wiringAgent("skill-agent", "allocation-api"), wiringService("allocation-api")),
+		version:    versionOf(wiringBehind("skill-agent"), wiringBehind("allocation-api")),
+		want:       [][]string{{"allocation-api"}, {"skill-agent"}},
+		wantWaited: []string{"allocation-api", "skill-agent"},
+	}, {
+		// A service consumer is held exactly as a web app is: its connection
+		// cannot resolve against a provider with no release.
+		name:     "a service consumer is held while its provider is unbuilt",
+		design:   designWith(wiringService("orders", "payments"), wiringService("payments")),
+		version:  versionOf(wiringBehind("orders"), wiringUnbuilt("payments")),
+		wantHeld: map[string][]string{"orders": {"payments"}},
+	}, {
+		// Two services that call each other are an ordinary shape. OpenChoreo
+		// publishes each one's endpoint URLs before it checks its own outbound
+		// connections, so both resolve once both have a binding: one wave.
+		name:       "two services that connect to each other share a wave",
+		design:     designWith(wiringService("orders", "payments"), wiringService("payments", "orders")),
+		version:    versionOf(wiringBehind("orders"), wiringBehind("payments")),
+		want:       [][]string{{"orders", "payments"}},
+		wantWaited: []string{"orders", "payments"},
+	}, {
+		name: "a consumer of a cycle waits for the whole cycle",
+		design: designWith(wiringWebApp("web", "orders"), wiringService("orders", "payments"),
+			wiringService("payments", "orders")),
+		version:    versionOf(wiringBehind("web"), wiringBehind("orders"), wiringBehind("payments")),
+		want:       [][]string{{"orders", "payments"}, {"web"}},
+		wantWaited: []string{"orders", "payments", "web"},
+	}, {
+		name:       "no connections is one wave — the ordinary case pays nothing",
 		design:     designWith(wiringService("orders"), wiringService("payments")),
 		version:    versionOf(wiringBehind("orders"), wiringBehind("payments")),
 		want:       [][]string{{"orders", "payments"}},
@@ -190,7 +226,8 @@ func TestDeploymentWaves(t *testing.T) {
 	}, {
 		// THE OBJECTION, and the answer: A needs B, A is green, B is red. A is
 		// HELD — not promoted, not waited on, not a deploy failure — because a
-		// SPA published against an api with no address is a blank page.
+		// consumer published against a provider with no binding runs without its
+		// address and never resolves its connection.
 		name:     "a green consumer is held when its provider is unbuilt",
 		design:   designWith(wiringWebApp("web", "api"), wiringService("api")),
 		version:  versionOf(wiringBehind("web"), wiringUnbuilt("api")),
@@ -206,12 +243,12 @@ func TestDeploymentWaves(t *testing.T) {
 		wantHeld:   map[string][]string{"web": {"api"}},
 		wantWaited: []string{"api"},
 	}, {
-		// A provider somebody UNDEPLOYED is not a satisfied hard edge. It reads
+		// A provider somebody UNDEPLOYED is not a satisfied edge. It reads
 		// as serving — nothing is owed and nothing may promote over the decision
-		// — but it has no active release, so it has no address for the web app's
-		// start-up config to carry. Promoting the consumer anyway is the blank
-		// page, reached through the one state that says "serving" and means
-		// "nothing is running".
+		// — but it has no active release, so there is no binding for the web
+		// app's connection to resolve against. Promoting the consumer anyway is
+		// the unresolvable connection, reached through the one state that says
+		// "serving" and means "nothing is running".
 		name:     "an undeployed provider does not satisfy its consumer",
 		design:   designWith(wiringWebApp("web", "api"), wiringService("api")),
 		version:  versionOf(wiringWithdrawn("api"), wiringBehind("web")),
@@ -248,11 +285,8 @@ func TestDeploymentWaves(t *testing.T) {
 // proves it: a consumer waiting on a provider that is ITSELF held has to fall
 // out too, or it ships against a config its provider could not fill.
 //
-// Asserted on the edges rather than through a design, for the same reason the
-// cycle refusal below is: today's edge rule gives hard providers only to a web
-// app, and only for its sibling SERVICES, so a three-deep chain cannot be
-// expressed as a design at all. The fixpoint is the graph's own invariant and
-// has to hold for whatever edge kind is added next.
+// Asserted on the edges rather than through a design: the fixpoint is the
+// graph's own invariant and has to hold for whatever edge rule feeds it.
 func TestPromotableSet_AHeldProviderHoldsItsOwnConsumer(t *testing.T) {
 	t.Parallel()
 	behind := []string{"web", "api"}
@@ -345,40 +379,79 @@ func TestPlanDeploymentWaves_NoDesignIsOneWave(t *testing.T) {
 }
 
 // webAppDependingOn renders a web-application design.json that declares a
-// sibling-component dependency — the shape the hard edge is read off.
+// sibling-component dependency — the shape the connection edge is read off.
 func webAppDependingOn(name, dep string) string {
 	return "{\n  \"name\": \"" + name + "\",\n  \"type\": \"web-application\",\n  \"description\": \"SPA.\",\n" +
 		"  \"dependencies\": [{\"kind\": \"component\", \"name\": \"" + dep + "\"}]\n}\n"
 }
 
-// Two components that each need the other's address before starting cannot both
-// go first. Retrying an unsatisfiable order forever is the failure mode this
-// closes: the refusal comes back permanent, so the supervisor files it on the
-// first attempt with the edges named instead of waiting out a deadline.
-//
-// Asserted on the edges rather than through a design, because today's edge rule
-// (a web app's sibling services) cannot produce a cycle — a component has one
-// type. The refusal is the graph's own invariant and has to hold for whatever
-// edge kind is added next.
-func TestWavesFromEdges_HardCycleIsPermanent(t *testing.T) {
+// A cycle among connections is promoted in ONE wave, not refused. OpenChoreo
+// publishes a component's own endpoint URLs before it checks its outbound
+// connections, so two components that connect to each other converge once both
+// have a binding. The component that was free to go shares the wave: nothing
+// it depends on is missing.
+func TestWavesFromEdges_ACycleSharesOneWave(t *testing.T) {
 	t.Parallel()
-	_, err := wavesFromEdges([]string{"a", "b", "loner"}, map[string][]string{
+	got, err := wavesFromEdges([]string{"a", "b", "loner"}, map[string][]string{
 		"a": {"b"},
 		"b": {"a"},
 	})
-	if err == nil {
-		t.Fatal("a hard dependency cycle was accepted; it can never be satisfied")
+	if err != nil {
+		t.Fatalf("wavesFromEdges: %v", err)
 	}
-	if !errors.Is(err, delivery.ErrDeployPermanent) {
-		t.Errorf("cycle error is not permanent, so it would be retried forever: %v", err)
+	want := [][]string{{"a", "b", "loner"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("waves = %v, want %v — a cycle shares one wave and holds nobody else back", got, want)
 	}
-	for _, want := range []string{"a needs [b]", "b needs [a]"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the error does not name the edge %q that holds the cycle: %v", want, err)
-		}
+}
+
+// A consumer OF a cycle follows the whole cycle, and a provider the cycle needs
+// still precedes it: the levelling is over strongly connected groups, not over
+// the raw edges.
+func TestWavesFromEdges_AConsumerOfACycleFollowsIt(t *testing.T) {
+	t.Parallel()
+	got, err := wavesFromEdges([]string{"web", "orders", "payments", "db-proxy"}, map[string][]string{
+		"web":      {"orders"},
+		"orders":   {"payments", "db-proxy"},
+		"payments": {"orders"},
+	})
+	if err != nil {
+		t.Fatalf("wavesFromEdges: %v", err)
 	}
-	// The component that was free to go is not blamed for the pair that was not.
-	if strings.Contains(err.Error(), "loner") {
-		t.Errorf("a component with no unmet edge is named in the cycle: %v", err)
+	want := [][]string{{"db-proxy"}, {"orders", "payments"}, {"web"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("waves = %v, want %v", got, want)
+	}
+}
+
+// An edge to a component outside the promoted set orders nothing here: that
+// provider is serving already or its consumer would have been held.
+func TestWavesFromEdges_IgnoresProvidersOutsideTheSet(t *testing.T) {
+	t.Parallel()
+	got, err := wavesFromEdges([]string{"web"}, map[string][]string{"web": {"api"}})
+	if err != nil {
+		t.Fatalf("wavesFromEdges: %v", err)
+	}
+	want := [][]string{{"web"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("waves = %v, want %v", got, want)
+	}
+}
+
+// The connection graph the plan was levelled over rides the plan, in the names
+// the run loop addresses OpenChoreo by. The readiness wait needs it at the
+// deadline to tell a consumer blocked behind an unmet provider from one whose
+// own connection cannot resolve.
+func TestDeploymentWaves_CarriesTheProvidersForTheDeadline(t *testing.T) {
+	t.Parallel()
+	plan, err := deploymentWaves(
+		designWith(wiringAgent("skill-agent", "allocation-api"), wiringService("allocation-api")),
+		versionOf(wiringBehind("skill-agent"), wiringUnbuilt("allocation-api")))
+	if err != nil {
+		t.Fatalf("deploymentWaves: %v", err)
+	}
+	want := map[string][]string{"skill-agent": {"allocation-api"}}
+	if !reflect.DeepEqual(plan.Providers, want) {
+		t.Errorf("Providers = %v, want %v — carried even when the consumer is held", plan.Providers, want)
 	}
 }
