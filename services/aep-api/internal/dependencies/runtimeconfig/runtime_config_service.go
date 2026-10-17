@@ -163,10 +163,12 @@ func (s *RuntimeConfigService) FilesForComponent(ctx context.Context, orgID, pro
 	if match == nil {
 		return nil, true, nil
 	}
-	// Resolved once, and only for a component that reads a platform-resource
-	// binding: an auth-free, resource-free component never costs a pipeline read.
+	// Resolved once, and only for a component whose output depends on WHERE it
+	// is deployed — a platform-resource binding's outputs and a sibling
+	// endpoint's URL both belong to one environment. A component with neither
+	// never costs a pipeline read.
 	var env string
-	if len(platformResourceDepsOf(match)) > 0 {
+	if len(platformResourceDepsOf(match)) > 0 || len(componentEndpointDeps(match)) > 0 {
 		if env, err = s.writeTarget(ctx, orgID, projectID); err != nil {
 			if match.ComponentType != spec.ComponentTypeWebApplication {
 				// The callback registration is best-effort (see below).
@@ -231,7 +233,72 @@ func (s *RuntimeConfigService) buildEnvValues(ctx context.Context, orgID, projec
 		}
 	}
 
+	// And every sibling component this web app calls. OpenChoreo already injects
+	// the endpoint's address into the CONTAINER, which is enough for a backend and
+	// useless here: a web app is static files, and the consumer is a browser
+	// outside the cluster that never reads the container's environment. So the
+	// address has to cross into the one file the browser does read, and it has to
+	// be the browser-reachable URL rather than the in-cluster one the container
+	// was given.
+	if deps := componentEndpointDeps(webapp); len(deps) > 0 {
+		if ok := s.layerComponentEndpoints(ctx, orgID, projectID, env, webapp, deps, out); !ok {
+			ready = false
+		}
+	}
+
 	return out, ready
+}
+
+// componentEndpointDeps selects the web app's sibling-component dependencies
+// that bound the endpoint's address to a name.
+//
+// A dependency with no `envBindings.address` is not an omission to repair: the
+// component depends on the sibling without the SPA needing to call it, and
+// inventing a key for it would put a URL in `window._env_` that nothing reads.
+func componentEndpointDeps(c *spec.DesignComponent) []spec.Dependency {
+	if c == nil || c.ComponentType != spec.ComponentTypeWebApplication {
+		return nil
+	}
+	var out []spec.Dependency
+	for i := range c.Dependencies {
+		d := c.Dependencies[i]
+		if d.Kind != spec.DependencyKindComponent || d.Wiring == nil || d.Wiring.Endpoint == nil {
+			continue
+		}
+		if d.Wiring.Endpoint.EnvBindings[spec.EndpointAddressOutput] == "" {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
+// layerComponentEndpoints puts each bound sibling's public base URL under the
+// name the DESIGN chose for it — the same name the component's workload.yaml
+// carries, so the SPA and OpenChoreo cannot disagree about what the key is
+// called.
+//
+// An address OC has not resolved yet DEFERS the whole file, exactly as an
+// unresolved platform-resource output does. The SPA's typed env shim throws at
+// module load on a missing key, so a window._env_ that is missing the one URL
+// the app fetches everything from is a blank page — strictly worse than the
+// previous file, or than no file and a retry on the next converge pass.
+func (s *RuntimeConfigService) layerComponentEndpoints(ctx context.Context, orgID, projectID, env string, webapp *spec.DesignComponent, deps []spec.Dependency, out map[string]interface{}) bool {
+	ready := true
+	for i := range deps {
+		dep := deps[i]
+		key := dep.Wiring.Endpoint.EnvBindings[spec.EndpointAddressOutput]
+		url := strings.TrimRight(s.componentExternalURL(ctx, orgID, projectID, env, dep.Name), "/")
+		if url == "" {
+			slog.InfoContext(ctx, "runtime_config: sibling endpoint has no external URL in this environment yet; deferring env-config.js",
+				"orgID", orgID, "projectID", projectID, "env", env, "component", webapp.Name,
+				"dependency", dep.Name, "key", key)
+			ready = false
+			continue
+		}
+		out[key] = url
+	}
+	return ready
 }
 
 // platformResourceDeps returns every `kind: platform-resource` dependency a
@@ -323,7 +390,7 @@ func (s *RuntimeConfigService) layerPlatformResources(ctx context.Context, orgID
 		if o, ok := origins[componentName]; ok {
 			return o
 		}
-		o := strings.TrimRight(s.componentExternalURL(ctx, orgID, projectID, componentName), "/")
+		o := strings.TrimRight(s.componentExternalURL(ctx, orgID, projectID, env, componentName), "/")
 		origins[componentName] = o
 		return o
 	}
@@ -473,9 +540,16 @@ func (s *RuntimeConfigService) catalogMarkers(ctx context.Context) (map[string]d
 	return s.catalog.MarkersByName(ctx)
 }
 
-// componentExternalURL returns the first external URL OC has resolved
-// for the named component, or "" when none is materialised yet.
-func (s *RuntimeConfigService) componentExternalURL(ctx context.Context, orgID, projectID, componentName string) string {
+// componentExternalURL returns the external URL OC has resolved for the named
+// component IN env, or "" when none is materialised there yet.
+//
+// Scoped to the environment because ListDeployments is not: it filters release
+// bindings by COMPONENT alone, so a project deployed to development, staging and
+// production answers with all three. Taking the first non-empty URL would hand a
+// browser whichever environment OpenChoreo happened to list first — a development
+// SPA pointed at production is a worse outcome than no URL at all, and "no URL"
+// is already a state every caller handles.
+func (s *RuntimeConfigService) componentExternalURL(ctx context.Context, orgID, projectID, env, componentName string) string {
 	if s.componentClient == nil {
 		return ""
 	}
@@ -485,7 +559,7 @@ func (s *RuntimeConfigService) componentExternalURL(ctx context.Context, orgID, 
 		return ""
 	}
 	for _, d := range list.Items {
-		if d.EndpointURL != "" {
+		if d.EndpointURL != "" && d.Environment == env {
 			return d.EndpointURL
 		}
 	}
@@ -572,7 +646,7 @@ func (s *RuntimeConfigService) registerSignInCallbacks(ctx context.Context, orgI
 		if o, ok := origins[componentName]; ok {
 			return o
 		}
-		o := strings.TrimRight(s.componentExternalURL(ctx, orgID, projectID, componentName), "/")
+		o := strings.TrimRight(s.componentExternalURL(ctx, orgID, projectID, env, componentName), "/")
 		origins[componentName] = o
 		return o
 	}
