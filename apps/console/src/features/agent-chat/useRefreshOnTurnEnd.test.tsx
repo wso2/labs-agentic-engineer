@@ -22,14 +22,16 @@ import type { ReactNode } from "react";
 import { cleanup, renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { buildPreflightQuery } from "../builds/api/preflight";
 import { designKey } from "../design/api/designModel";
 import { issueDetailKey, issuesListKey } from "../issues/api/issues";
 import { specKey } from "../spec/api/specModel";
 import { issueChat } from "./chatRef";
 
 // When a turn ends, the shell reads again what the agent may have changed:
-// the spec and the design. A `/prototype` turn is one of them: its prototype
-// lands in the design card's Prototype tab.
+// the spec, the design, and the build preflight the build gate reads. A
+// `/prototype` turn is one of them: its prototype lands in the design card's
+// Prototype tab.
 
 // The stores, in the order they are made: the main store and the Issues
 // store when the module loads, an issue's store when first asked for.
@@ -59,7 +61,7 @@ const { markIssueClosed } = await import("./closedIssues");
 afterEach(cleanup);
 
 describe("useRefreshOnTurnEnd", () => {
-  it("reads the design and the spec again when a turn, a /prototype one included, ends", () => {
+  it("reads the design, the spec and the build preflight again when a turn, a /prototype one included, ends", () => {
     const queryClient = new QueryClient();
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
@@ -67,6 +69,7 @@ describe("useRefreshOnTurnEnd", () => {
     ended(0)!("acme-expenses", "completed");
     expect(invalidate).toHaveBeenCalledWith({ queryKey: designKey("acme-expenses") });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: specKey("acme-expenses") });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: buildPreflightQuery("acme-expenses").queryKey });
     unmount();
     expect(ended(0)).toBeNull();
     expect(ended(1)).toBeNull();
@@ -81,6 +84,7 @@ describe("useRefreshOnTurnEnd", () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: issuesListKey("acme-expenses") });
     expect(invalidate).not.toHaveBeenCalledWith({ queryKey: specKey("acme-expenses") });
     expect(invalidate).not.toHaveBeenCalledWith({ queryKey: designKey("acme-expenses") });
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: buildPreflightQuery("acme-expenses").queryKey });
   });
 
   it("reads the issue list and that issue's own detail again when an issue's turn ends", () => {
@@ -93,6 +97,7 @@ describe("useRefreshOnTurnEnd", () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: issuesListKey("acme-expenses") });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: issueDetailKey("acme-expenses", 7) });
     expect(invalidate).not.toHaveBeenCalledWith({ queryKey: specKey("acme-expenses") });
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: buildPreflightQuery("acme-expenses").queryKey });
   });
 
   it("reads them again when an issue's thread turns out removed: the issue was closed", () => {

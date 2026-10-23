@@ -57,6 +57,20 @@ describe("readSpecStateUntilRecorded", () => {
     expect(spec.reads()).toBe(4);
   });
 
+  it("keeps reading when only revisions move, until the basis the build gate reads changes", async () => {
+    const revisionsOnly: SpecState = {
+      designedFrom: { F2: "old basis" },
+      artifactRevisions: { "specs/design/domain-model.md": 2 },
+      documents: [],
+    };
+    const basis: SpecState = { ...revisionsOnly, designedFrom: { F2: "new basis" } };
+    // At the end, then a read where the record's revisions have landed and its basis has not, then the basis.
+    const spec = await shown([before, revisionsOnly, basis]);
+    await readSpecStateUntilRecorded(spec.queryClient, "lunch", DELAYS, new AbortController().signal);
+    expect(spec.queryClient.getQueryData(specKey("lunch"))).toEqual(basis);
+    expect(spec.reads()).toBe(3);
+  });
+
   it("stops at the first read when the record had already landed", async () => {
     const spec = await shown([before, after]);
     await readSpecStateUntilRecorded(spec.queryClient, "lunch", DELAYS, new AbortController().signal);

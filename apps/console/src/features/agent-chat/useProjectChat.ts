@@ -22,6 +22,7 @@ import { useRouter } from "@tanstack/react-router";
 import type { AreaId } from "@aep/agent-stream";
 import { parseInterviewCommand, START_COMMAND } from "@aep/contracts/commands";
 import { isDesignAgentReady, subscribeDesignAgentReady } from "../../api/aeStudio";
+import { buildPreflightQuery } from "../builds/api/preflight";
 import { designKey } from "../design/api/designModel";
 import { applyAgentWrite } from "../spec/collab/specDoc";
 import { flushSpecRoom } from "../spec/collab/specRoom";
@@ -232,9 +233,10 @@ export function canSend(chat: ProjectChat): boolean {
  * When a turn ends, read again what the agent may have changed. The spec
  * state holds what the turn's record decides (each designed feature's basis,
  * each design file's revision), which lands after the turn's end, so after a
- * completed turn it is read until that changes (turnRecord.ts); the design
- * model, what a design turn wrote and replied (the overview's track is worked
- * out from both); the Issues agent files issues, so its turn ends on the
+ * completed turn it is read until the basis changes (turnRecord.ts); the
+ * build preflight, what the gate reads of the design's dependencies; the
+ * design model, what a design turn wrote and replied (the overview's track is
+ * worked out from both); the Issues agent files issues, so its turn ends on the
  * issue list; an issue's agent comments on, edits and closes its issue, so its
  * turn ends on the list and that issue's detail, as does finding the issue's
  * thread removed (the issue was closed). Mounted once, in the shell, so a turn
@@ -247,6 +249,7 @@ export function useRefreshOnTurnEnd(): void {
     const reads = new Map<string, AbortController>();
     const stopMain = chatStore.onTurnEnd((projectName, outcome) => {
       void queryClient.invalidateQueries({ queryKey: designKey(projectName) });
+      void queryClient.invalidateQueries({ queryKey: buildPreflightQuery(projectName).queryKey });
       reads.get(projectName)?.abort();
       const controller = new AbortController();
       reads.set(projectName, controller);
