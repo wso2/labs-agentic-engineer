@@ -323,7 +323,7 @@ func (s *RuntimeConfigService) layerPlatformResources(ctx context.Context, orgID
 		if o, ok := origins[componentName]; ok {
 			return o
 		}
-		o := strings.TrimRight(s.componentExternalURL(ctx, orgID, projectID, componentName), "/")
+		o := strings.TrimRight(s.componentExternalURL(ctx, orgID, projectID, env, componentName), "/")
 		origins[componentName] = o
 		return o
 	}
@@ -473,9 +473,20 @@ func (s *RuntimeConfigService) catalogMarkers(ctx context.Context) (map[string]d
 	return s.catalog.MarkersByName(ctx)
 }
 
-// componentExternalURL returns the first external URL OC has resolved
-// for the named component, or "" when none is materialised yet.
-func (s *RuntimeConfigService) componentExternalURL(ctx context.Context, orgID, projectID, componentName string) string {
+// componentExternalURL returns the external URL OC has resolved for the named
+// component IN env, or "" when none is materialised there yet.
+//
+// Scoped to the environment because ListDeployments is not: it filters release
+// bindings by COMPONENT alone, so a project deployed to development, staging and
+// production answers with all three. Taking the first non-empty URL returned the
+// one OpenChoreo happened to list first, which is not a promise — a consumer URL
+// registered for the wrong environment points a sign-in callback, or a redirect,
+// at an app the caller is not using.
+//
+// "" is the answer when nothing is deployed in env, and both callers already
+// treat it that way: the registration is skipped and retried by the converge
+// pass. A wrong URL has no such recovery.
+func (s *RuntimeConfigService) componentExternalURL(ctx context.Context, orgID, projectID, env, componentName string) string {
 	if s.componentClient == nil {
 		return ""
 	}
@@ -485,7 +496,7 @@ func (s *RuntimeConfigService) componentExternalURL(ctx context.Context, orgID, 
 		return ""
 	}
 	for _, d := range list.Items {
-		if d.EndpointURL != "" {
+		if d.EndpointURL != "" && d.Environment == env {
 			return d.EndpointURL
 		}
 	}
@@ -572,7 +583,7 @@ func (s *RuntimeConfigService) registerSignInCallbacks(ctx context.Context, orgI
 		if o, ok := origins[componentName]; ok {
 			return o
 		}
-		o := strings.TrimRight(s.componentExternalURL(ctx, orgID, projectID, componentName), "/")
+		o := strings.TrimRight(s.componentExternalURL(ctx, orgID, projectID, env, componentName), "/")
 		origins[componentName] = o
 		return o
 	}
