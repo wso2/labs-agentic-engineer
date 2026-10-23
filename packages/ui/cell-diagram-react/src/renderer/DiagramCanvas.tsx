@@ -25,6 +25,7 @@ import {
   ReactFlowProvider,
   useInternalNode,
   useReactFlow,
+  useStoreApi,
   useViewport,
   applyNodeChanges,
   type Edge,
@@ -272,17 +273,27 @@ export interface DiagramCanvasInsets {
 }
 
 const DEFAULT_INSETS: DiagramCanvasInsets = { left: 0, right: 0 };
-const FIT_VIEW_VERTICAL_PADDING: `${number}px` = "112px";
 const FIT_VIEW_LEFT_PADDING = 112;
 
 /**
- * The vertical breathing room a COMPACT canvas gets instead of the 112px above.
+ * Vertical fit padding, per side, for a canvas that shows the floating chrome.
  *
- * That 112px is not decoration: it keeps the graph clear of the floating
- * chrome — the zoom controls and the canvas notification — in the full-screen
- * workspace. A preview hides both, so there is nothing left to clear, and on a
- * short embed the reservation is ruinous: 112 top and bottom is 224px of a
- * 340px panel, leaving a third of the box for the diagram it exists to show.
+ * 112px clears the zoom controls and the canvas notification on a full
+ * workspace — about 12% of a 900px pane. The same constant on a short pane is
+ * pathological: 112 top and bottom on a 414px spec view leaves 190px for a
+ * diagram nearly a thousand pixels tall, and fit-to-view clamps to minZoom.
+ * Scale with the pane height instead, so a short pane degrades: at most 112px,
+ * at least 16px, and never more than a fifth of the pane.
+ */
+const FIT_VIEW_VERTICAL_PADDING_MAX = 112;
+const FIT_VIEW_VERTICAL_PADDING_MIN = 16;
+const FIT_VIEW_VERTICAL_PADDING_RATIO = 0.12;
+const FIT_VIEW_VERTICAL_PADDING_SHARE = 0.2;
+
+/**
+ * A compact embed hides the chrome, so it keeps a fixed sliver of breathing
+ * room rather than the scaled clearance above. 112 top and bottom is 224px of
+ * a 340px panel, leaving a third of the box for the diagram it exists to show.
  */
 const FIT_VIEW_COMPACT_PADDING: `${number}px` = "16px";
 const MOTION_SETTLE_MS = 420;
@@ -294,9 +305,25 @@ interface FitPadding {
   right: `${number}px`;
 }
 
-function buildFitPadding(insets: DiagramCanvasInsets, compact = false): FitPadding {
+function verticalFitPadding(paneHeight: number, compact: boolean): `${number}px` {
+  if (compact) {
+    return FIT_VIEW_COMPACT_PADDING;
+  }
+  // Unknown until the pane is measured. The post-paint fit reads the real height.
+  if (!(paneHeight > 0)) {
+    return `${FIT_VIEW_VERTICAL_PADDING_MAX}px`;
+  }
+
+  const proportional = paneHeight * FIT_VIEW_VERTICAL_PADDING_RATIO;
+  const clamped = Math.min(FIT_VIEW_VERTICAL_PADDING_MAX, Math.max(FIT_VIEW_VERTICAL_PADDING_MIN, proportional));
+  // The pixel minimum must not eat a tiny pane.
+  const capped = Math.min(clamped, paneHeight * FIT_VIEW_VERTICAL_PADDING_SHARE);
+  return `${Math.round(capped)}px`;
+}
+
+export function buildFitPadding(insets: DiagramCanvasInsets, compact = false, paneHeight = 0): FitPadding {
   const leftPadding = insets.left > 0 ? insets.left + FIT_VIEW_LEFT_PADDING : 0;
-  const vertical = compact ? FIT_VIEW_COMPACT_PADDING : FIT_VIEW_VERTICAL_PADDING;
+  const vertical = verticalFitPadding(paneHeight, compact);
 
   return {
     top: vertical,
@@ -318,20 +345,24 @@ function FitViewController({
   compact?: boolean;
 }) {
   const { fitView } = useReactFlow();
+  const store = useStoreApi();
   const { left, right } = insets;
 
   useEffect(() => {
-    const fitOptions = {
-      padding: buildFitPadding({ left, right }, compact),
+    // Read the pane at call time. The resize handler may measure between this
+    // effect and the post-paint fit; subscribing would also refit on every
+    // resize and throw away a zoom the user had chosen.
+    const fitOptions = () => ({
+      padding: buildFitPadding({ left, right }, compact, store.getState().height),
       duration: 200
-    };
-    fitView(fitOptions);
-    const postPaintFit = window.requestAnimationFrame(() => fitView(fitOptions));
+    });
+    fitView(fitOptions());
+    const postPaintFit = window.requestAnimationFrame(() => fitView(fitOptions()));
 
     // model is only used to re-trigger the fit when the diagram data itself changes
     // (switching documents), not on every re-render (e.g. focus-click highlighting).
     return () => window.cancelAnimationFrame(postPaintFit);
-  }, [left, right, fitView, model, fitKey, compact]);
+  }, [left, right, fitView, model, fitKey, compact, store]);
 
   return null;
 }
@@ -340,9 +371,10 @@ function FitViewController({
 // component is a transient viewing aid here — the layout resets whenever the
 // DSL changes, so a manual reset control isn't worth the chrome), and the
 // remaining controls carry `title` tooltips.
-function ZoomControls({ insets }: { insets: DiagramCanvasInsets }) {
+function ZoomControls({ insets, compact }: { insets: DiagramCanvasInsets; compact?: boolean }) {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
   const { zoom } = useViewport();
+  const store = useStoreApi();
 
   return (
     <div className="zoom-controls">
@@ -370,7 +402,9 @@ function ZoomControls({ insets }: { insets: DiagramCanvasInsets }) {
         className="zoom-controls__button zoom-controls__button--fit"
         aria-label="Fit diagram to view"
         title="Fit diagram to view"
-        onClick={() => fitView({ padding: buildFitPadding(insets), duration: 200 })}
+        onClick={() =>
+          fitView({ padding: buildFitPadding(insets, compact, store.getState().height), duration: 200 })
+        }
       >
         <FitScreenIcon size={16} />
       </button>
@@ -621,7 +655,7 @@ export function DiagramCanvas({
           compact={compact}
         />
         <Background color={theme === "dark" ? "#334155" : "#cbd5e1"} gap={22} />
-        <ZoomControls insets={insets} />
+        <ZoomControls insets={insets} compact={compact} />
         {/* TODO: re-enable when the PNG/SVG image export feature is complete.
         <ExportControls filename={model.title?.trim() || "cell-diagram"} /> */}
         <div

@@ -33,7 +33,7 @@ vi.mock("@xyflow/react", async () => {
   };
 });
 
-import { DiagramCanvas } from "./DiagramCanvas";
+import { buildFitPadding, DiagramCanvas } from "./DiagramCanvas";
 
 function buildModel(source: string) {
   const compiled = compileProject(source);
@@ -41,6 +41,25 @@ function buildModel(source: string) {
     throw new Error("expected a valid model");
   }
   return compiled.model;
+}
+
+/** jsdom reports no layout, so give the canvas the pane size React Flow will measure. */
+function withPaneSize(width: number, height: number, run: () => void) {
+  const proto = HTMLElement.prototype;
+  const prevWidth = Object.getOwnPropertyDescriptor(proto, "offsetWidth");
+  const prevHeight = Object.getOwnPropertyDescriptor(proto, "offsetHeight");
+  Object.defineProperty(proto, "offsetWidth", { configurable: true, get: () => width });
+  Object.defineProperty(proto, "offsetHeight", { configurable: true, get: () => height });
+  try {
+    run();
+  } finally {
+    if (prevWidth) {
+      Object.defineProperty(proto, "offsetWidth", prevWidth);
+    }
+    if (prevHeight) {
+      Object.defineProperty(proto, "offsetHeight", prevHeight);
+    }
+  }
 }
 
 describe("DiagramCanvas insets", () => {
@@ -54,9 +73,11 @@ describe("DiagramCanvas insets", () => {
     vi.restoreAllMocks();
   });
 
-  it("defaults to zero padding when no insets are supplied", () => {
+  it("defaults to zero horizontal padding and keeps the full clearance on a tall pane", () => {
     const model = buildModel("component API service\nnorth -> API");
-    render(<DiagramCanvas model={model} />);
+    withPaneSize(1600, 1200, () => {
+      render(<DiagramCanvas model={model} />);
+    });
 
     expect(fitViewSpy).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -135,6 +156,92 @@ describe("DiagramCanvas insets", () => {
     postPaintFit?.(0);
 
     expect(fitViewSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("scales vertical fit padding with a short pane, including the fit button", () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+
+    const model = buildModel("component API service\nnorth -> API");
+    // Issue #555: a 936×414 spec-view pane. 112px top and bottom leaves 190px
+    // of usable height and fit-to-view clamps to minZoom.
+    withPaneSize(936, 414, () => {
+      render(<DiagramCanvas model={model} />);
+      for (const frame of frames) {
+        frame(0);
+      }
+      fireEvent.click(screen.getByRole("button", { name: "Fit diagram to view" }));
+    });
+
+    expect(fitViewSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        padding: expect.objectContaining({ top: "50px", bottom: "50px", left: "0px", right: "0px" })
+      })
+    );
+  });
+});
+
+/**
+ * The zoom React Flow applies for a padding box. Mirrors `getViewportForBounds`:
+ * pixel padding is floored, then the scale is the tighter axis, clamped to minZoom.
+ */
+function appliedFitZoom(
+  pane: { width: number; height: number },
+  bounds: { width: number; height: number },
+  padding: { top: string; bottom: string; left: string; right: string },
+  minZoom = 0.25,
+  maxZoom = 1.35
+) {
+  const parse = (value: string, axis: number) => {
+    if (value.endsWith("%")) {
+      return Math.floor(axis * parseFloat(value) * 0.01);
+    }
+    return Math.floor(parseFloat(value));
+  };
+  const zoom = Math.min(
+    (pane.width - parse(padding.left, pane.width) - parse(padding.right, pane.width)) / bounds.width,
+    (pane.height - parse(padding.top, pane.height) - parse(padding.bottom, pane.height)) / bounds.height
+  );
+  return Math.min(maxZoom, Math.max(minZoom, zoom));
+}
+
+describe("buildFitPadding", () => {
+  const insets = { left: 0, right: 0 };
+  // Measured on the spec view for internal-expense-approval (issue #555).
+  const pane = { width: 936, height: 414 };
+  const bounds = { width: 1037, height: 984 };
+
+  it("keeps the 112px clearance on a full workspace and before the pane is measured", () => {
+    expect(buildFitPadding(insets).top).toBe("112px");
+    expect(buildFitPadding(insets, false, 0).bottom).toBe("112px");
+    expect(buildFitPadding(insets, false, 2000)).toEqual(
+      expect.objectContaining({ top: "112px", bottom: "112px" })
+    );
+  });
+
+  it("shrinks on a short pane so the reported diagram fits above minZoom", () => {
+    const padding = buildFitPadding(insets, false, pane.height);
+
+    expect(padding).toEqual({ top: "50px", bottom: "50px", left: "0px", right: "0px" });
+    expect(appliedFitZoom(pane, bounds, { top: "112px", bottom: "112px", left: "0px", right: "0px" })).toBe(0.25);
+    expect(appliedFitZoom(pane, bounds, padding)).toBeGreaterThan(0.3);
+  });
+
+  it("clamps the low end, then refuses to spend more than a fifth of a tiny pane", () => {
+    expect(buildFitPadding(insets, false, 200).top).toBe("24px");
+    expect(buildFitPadding(insets, false, 80).top).toBe("16px");
+    expect(buildFitPadding(insets, false, 40).top).toBe("8px");
+  });
+
+  it("leaves a compact embed on its fixed sliver, and still adds the editor inset", () => {
+    expect(buildFitPadding(insets, true, pane.height).top).toBe("16px");
+    expect(buildFitPadding({ left: 260, right: 220 }, false, pane.height)).toEqual(
+      expect.objectContaining({ top: "50px", bottom: "50px", left: "372px", right: "220px" })
+    );
   });
 });
 
