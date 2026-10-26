@@ -331,7 +331,7 @@ cat > run.json <<'JSON'
 JSON
 
 ROOT="$(git rev-parse --show-toplevel)"
-node "$AEP_SKILLS_DIR/validation-task/scripts/assemble-report.mjs" "$ROOT" run.json
+node "$AEP_SKILLS_DIR/validation-task/scripts/assemble-report.mjs" "$ROOT" run.json <the issue's scope arguments>
 node "$AEP_SKILLS_DIR/validation-task/scripts/check-report.mjs" "$ROOT" <the issue's scope arguments>
 ```
 
@@ -339,12 +339,12 @@ node "$AEP_SKILLS_DIR/validation-task/scripts/check-report.mjs" "$ROOT" <the iss
 of the others, and say so plainly if one managed neither — every assertion it
 makes is then suspect. `commit` and the timestamp are stamped for you.
 
-A version validates what it built. When the issue says "run the report checker
-with `--features F1,F2 --held-back F2.4`", pass exactly those arguments, and
-drive only the feature files the issue lists: a file under **Not run** is a
-feature designed but not built yet, and a rule tagged only with a held-back
-story waits on a feature nobody built. Reporting either is a breach, because it
-reports on code this version did not build.
+A version validates what it built. When the issue names scope arguments
+(`--features F1,F2 --held-back F2.4`), pass exactly those to the assembler and to
+the checker, and drive only the feature files the issue lists: a file under
+**Not run** is a feature designed but not built yet, and a rule tagged only with
+a held-back story waits on a feature nobody built. Reporting either is a breach,
+because it reports on code this version did not build.
 
 The assembler refuses to build a report that does not cover the feature files. A
 scenario you could not drive is `blocked` — captured like any other, never

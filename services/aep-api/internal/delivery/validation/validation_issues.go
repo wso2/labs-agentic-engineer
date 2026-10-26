@@ -360,7 +360,7 @@ func renderScope(files, skipped []AcceptanceCriteriaFile, sum acceptanceSummary,
 		if len(scope.HeldBack) > 0 {
 			args += " --held-back " + strings.Join(scope.HeldBack, ",")
 		}
-		w("", fmt.Sprintf("Check it against this version's scope: run the report checker with `%s`.", args))
+		w("", fmt.Sprintf("Assemble and check it against this version's scope: pass `%s` to the report assembler and to the report checker.", args))
 	}
 
 	return strings.TrimRight(b.String(), "\n")

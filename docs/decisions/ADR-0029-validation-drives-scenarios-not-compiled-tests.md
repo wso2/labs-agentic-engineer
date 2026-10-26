@@ -107,12 +107,13 @@ This is the single most important property of the approach and the one most easi
 checked by a script the run invokes — deliberately not yet by the platform, which is an open question
 this decision does not close.
 
-### A failure carries what the system was doing
+### A scenario that did not pass carries what the system was doing
 
 The trace is not the only evidence worth having, and a compiled suite is structurally unable to
-produce the rest of it. A failing scenario records an `evidence` block captured **at the moment it
-failed, while the page is still open**: the requests around the deciding step, any console errors, and
-the page as the run saw it.
+produce the rest of it. Every scenario that did not pass records an `evidence` block captured **while
+its page is still open**: the requests around the deciding step and any console errors, and for a
+failure the page as the run saw it. A pass records none. Nothing reads evidence on a pass, and a run
+that was allowed to capture it attached the same stale page to eleven of them.
 
 `network` is the half that earns its place. A request that left and came back `201` with the list
 unchanged is a rendering defect; no request at all is a wiring defect. They are fixed in different
@@ -149,12 +150,25 @@ the report, the checker or the console can tell them apart. That is a stated rul
 enforced one; the mechanism is open work.
 
 What the live run uniquely has is *observational* — `POST /items → 201` and the list still showing one
-item — and that is what is kept.
+item — and that is what is kept. Two fields carry the rest of it on every scenario that did not pass.
+`reproduced` says whether the outcome held when the scenario was driven again (`yes`, `no`,
+`unattempted`): a failure that passes on a second pass is a race rather than a logic defect, and
+nothing else in the report separates them. `note` is one sentence of what the run saw that no other
+field holds, an observation and never a cause. Both stay out of the report digest, so narrative cannot
+make two attempts with the same verdicts look different.
 
 The gate is hard (`exit 2`) with one escape: an explicit `notCaptured` naming the reason. The escape
-is not softness. The check runs after the page is gone, so an agent that did not capture can satisfy a
-gate with no escape only by re-driving the scenario or by inventing a plausible request — and a report
-that says something nothing checked is worse than one that states a gap.
+is not softness. The check runs when each scenario is written down (`capture-scenario.mjs`), while its
+page is still open, so a missing capture usually costs one command. Some cannot be had at all, though
+— a page that navigated away, a request the browser never exposed — and against a gate with no escape
+the agent's only way through is inventing a plausible request. A report that says something nothing
+checked is worse than one that states a gap.
+
+The report is then **assembled from those captures** (`assemble-report.mjs`) rather than written at
+the end, and the same rules run again over the whole (`check-report.mjs`). An agent writing one
+document after twenty scenarios is summarising from a context that has compacted since it saw most of
+them; the assembler reads what was written while each was fresh, and turns "no scenario was dropped"
+from a claim into a count against the feature files.
 
 ### Isolation is functional, not a reset
 

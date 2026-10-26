@@ -85,7 +85,8 @@ type reportEvidence struct {
 	Network []networkRequest `json:"network"`
 	Console []string         `json:"console"`
 	// SnapshotFile is where the assembler wrote the page tree, relative to the
-	// repo root. The report NAMES it rather than carrying it; see SnapshotDirPath.
+	// repo root (under tests/acceptance/snapshots/). The report NAMES it rather
+	// than carrying it.
 	SnapshotFile string `json:"snapshotFile"`
 	// Snapshot carried the tree inline before the assembler split it out. Still
 	// read so a report merged under the older schema renders rather than losing

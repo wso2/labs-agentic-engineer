@@ -198,7 +198,8 @@ export function scanFeature(text) {
  *
  * `inScope` is the version's built scope — a scenario outside it is not this
  * version's to answer for, and both the checker and the assembler have to agree
- * on that or one of them refuses a report the other was happy with.
+ * on that or one of them refuses a report the other was happy with. Both build it
+ * with {@link scopeFrom} from the same arguments.
  */
 export function readFeatureScenarios(featureDir, inScope = () => true) {
   const expected = new Map();
@@ -210,6 +211,28 @@ export function readFeatureScenarios(featureDir, inScope = () => true) {
     }
   }
   return expected;
+}
+
+/**
+ * The version's built scope, from the arguments the validation issue names:
+ * `--features F1,F2` keeps only the feature files whose `Feature:` line leads with
+ * one of those IDs, and `--held-back F2.4` drops a rule whose every `@story-` tag
+ * is held back. With neither, every scenario is in scope.
+ */
+export function scopeFrom(argv) {
+  const features = listArg(argv, "--features");
+  const heldBack = new Set(listArg(argv, "--held-back") ?? []);
+  return (feature, scenario) => {
+    if (features && !features.includes(/^(F\d+)\b/.exec(feature)?.[1] ?? feature)) return false;
+    return scenario.stories.length === 0 || scenario.stories.some((id) => !heldBack.has(id));
+  };
+}
+
+/** `--name a,b` from argv, or null when absent. */
+function listArg(argv, name) {
+  const i = argv.indexOf(name);
+  if (i < 0) return null;
+  return (argv[i + 1] ?? "").split(",").map((x) => x.trim()).filter(Boolean);
 }
 
 /**
@@ -236,7 +259,11 @@ export function checkScenario(s, expected, { stage = "report" } = {}) {
   const settled = thens.filter((st) => st.command && typeof st.exit === "number");
 
   // Where the scenario is written, so a reader and a repair issue can reach it.
-  const where = expected?.get(scenarioKey(s.feature, s.rule, s.scenario));
+  // An entry the feature files do not declare is a mistyped name, or a scenario
+  // this version does not owe; at capture time the page is still open to fix it.
+  const key = scenarioKey(s.feature, s.rule, s.scenario);
+  const where = expected?.get(key);
+  if (expected && !where) errors.push(`no such scenario in the feature files (${key})`);
   if (where) {
     const [file, line] = where.split(":");
     if (!s.featureFile) errors.push("no featureFile — a repair issue cannot point at the scenario");

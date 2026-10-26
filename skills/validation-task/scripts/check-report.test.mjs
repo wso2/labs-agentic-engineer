@@ -40,7 +40,6 @@ const FEATURE = `Feature: Lists
       And it shows today's date
 `;
 
-/** Runs the checker over one report and returns { code, out }. */
 /** What a non-passed outcome owes beyond its steps, so a case can drop one. */
 const NON_PASSED = {
   reproduced: "yes",
@@ -48,6 +47,7 @@ const NON_PASSED = {
   evidence: { network: [], console: [], snapshotFile: "tests/acceptance/snapshots/dup.txt" },
 };
 
+/** Runs the checker over one report and returns { code, out }. */
 function check(steps, outcome = "passed", overrides = {}) {
   const dir = mkdtempSync(join(tmpdir(), "acc-check-"));
   try {

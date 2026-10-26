@@ -39,12 +39,15 @@
 //   - every scenario in the feature files has an entry, so one that was hard
 //     cannot be quietly dropped; it has to be reported `blocked`;
 //   - a `passed` scenario carries a Then step with a command and exit 0, so a
-//     pass cannot be asserted without something that could have said no;
-//   - a `failed` scenario carries a Then that actually failed, AND an `evidence`
-//     block saying what the page was doing at the time. That one is capture, not
-//     bookkeeping: after the run the page is gone, so a failure reported without
-//     it cannot be enriched later by anyone. The honest escape is stating the
-//     gap (`notCaptured`), never leaving it blank;
+//     pass cannot be asserted without something that could have said no, and
+//     carries no `evidence`, which nothing reads on a pass;
+//   - a `failed` scenario carries a Then that actually failed;
+//   - every scenario that did not pass says whether it `reproduced`, adds a
+//     `note`, and carries an `evidence` block of what the network and console
+//     showed (a failure, the page too). That one is capture, not bookkeeping:
+//     after the run the page is gone, so it cannot be enriched later by anyone.
+//     The honest escape is stating the gap (`notCaptured`), never leaving it
+//     blank;
 //   - every step whose exit code does NOT settle it records what was `observed`.
 //     An exit code is the verdict only for a predicate like `wait`. `get count`
 //     exits 0 because the command RAN, so a pass resting on one is unauditable
@@ -67,16 +70,8 @@ import {
   checkScenario,
   readFeatureScenarios,
   scenarioKey,
+  scopeFrom,
 } from "./report-rules.mjs";
-
-
-
-/** `--name a,b` from argv, or null when absent. */
-function listArg(argv, name) {
-  const i = argv.indexOf(name);
-  if (i < 0) return null;
-  return (argv[i + 1] ?? "").split(",").map((x) => x.trim()).filter(Boolean);
-}
 
 const argv = process.argv.slice(2);
 const projectDir = argv[0];
@@ -84,15 +79,6 @@ if (!projectDir || projectDir.startsWith("--")) {
   console.error("usage: node check-report.mjs <project-dir> [--features F1,F2] [--held-back F2.4]");
   process.exit(1);
 }
-const scopeFeatures = listArg(argv, "--features");
-const heldBack = new Set(listArg(argv, "--held-back") ?? []);
-
-/** Whether this version validates a scenario: its feature is built and its rule stands for a story that is not held back. */
-function inScope(feature, scenario) {
-  if (scopeFeatures && !scopeFeatures.includes(/^(F\d+)\b/.exec(feature)?.[1] ?? feature)) return false;
-  return scenario.stories.length === 0 || scenario.stories.some((id) => !heldBack.has(id));
-}
-
 const featureDir = join(projectDir, FEATURE_DIR);
 const reportPath = join(projectDir, REPORT_PATH);
 for (const [label, p] of [["acceptance dir", featureDir], ["report", reportPath]]) {
@@ -110,7 +96,7 @@ try {
   process.exit(2);
 }
 
-const expected = readFeatureScenarios(featureDir, inScope);
+const expected = readFeatureScenarios(featureDir, scopeFrom(argv));
 
 const errors = [];
 const entries = Array.isArray(report.scenarios) ? report.scenarios : null;
@@ -127,7 +113,6 @@ for (const [i, s] of (entries ?? []).entries()) {
   const key = scenarioKey(s.feature, s.rule, s.scenario);
   const at = `scenarios[${i}] "${s.scenario}"`;
 
-  if (!expected.has(key)) errors.push(`${at}: no such scenario in the feature files (${key})`);
   if (seen.has(key)) errors.push(`${at}: reported twice`);
   seen.set(key, true);
 

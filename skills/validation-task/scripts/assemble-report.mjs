@@ -18,11 +18,16 @@
 
 // Builds `tests/acceptance/report.json` from the captures a run left behind.
 //
-//   node "$AEP_SKILLS_DIR/validation-task/scripts/assemble-report.mjs" <project-dir> <run.json>
+//   node "$AEP_SKILLS_DIR/validation-task/scripts/assemble-report.mjs" <project-dir> <run.json> \
+//     [--features F1,F2] [--held-back F2.4]
 //
 // `run.json` carries the two things no single scenario can answer:
 //
 //   { "isolation": "<how scenarios were kept independent>", "baseUrl": "https://…" }
+//
+// The scope arguments are the ones the validation issue names, the same ones the
+// checker is given: a version owes captures only for what it built, and the two
+// scripts disagreeing about that is a report one builds and the other refuses.
 //
 // Exit 0 = assembled · 1 = usage/IO · 2 = the captures do not cover the run.
 //
@@ -44,11 +49,13 @@ import {
   readFeatureScenarios,
   scenarioFileName,
   scenarioKey,
+  scopeFrom,
 } from "./report-rules.mjs";
 
-const [projectDir, runPath] = process.argv.slice(2);
-if (!projectDir || !runPath) {
-  console.error("usage: node assemble-report.mjs <project-dir> <run.json>");
+const argv = process.argv.slice(2);
+const [projectDir, runPath] = argv;
+if (!projectDir || !runPath || projectDir.startsWith("--") || runPath.startsWith("--")) {
+  console.error("usage: node assemble-report.mjs <project-dir> <run.json> [--features F1,F2] [--held-back F2.4]");
   process.exit(1);
 }
 
@@ -69,6 +76,7 @@ const dir = capturesDir();
 if (!existsSync(dir)) fail(`no captures at ${dir} — nothing was recorded during this run`);
 
 const captures = new Map();
+const files = new Map(); // scenario key -> the capture file, so a refusal can name it
 for (const file of readdirSync(dir).filter((f) => f.endsWith(".json")).sort()) {
   let entry;
   try {
@@ -79,19 +87,26 @@ for (const file of readdirSync(dir).filter((f) => f.endsWith(".json")).sort()) {
   const key = scenarioKey(entry.feature, entry.rule, entry.scenario);
   if (captures.has(key)) fail(`two captures claim the same scenario: ${key}`);
   captures.set(key, entry);
+  files.set(key, join(dir, file));
 }
 
 // Feature-file order, so the report reads in the order the specification does
 // rather than in whatever order the run happened to drive them.
-const expected = readFeatureScenarios(join(projectDir, FEATURE_DIR));
+const featureDir = join(projectDir, FEATURE_DIR);
+const declared = readFeatureScenarios(featureDir);
+const expected = readFeatureScenarios(featureDir, scopeFrom(argv));
 const missing = [...expected.keys()].filter((k) => !captures.has(k));
 const unknown = [...captures.keys()].filter((k) => !expected.has(k));
 if (missing.length || unknown.length) {
   console.error("the captures do not cover the feature files:");
   for (const k of missing) console.error(`  x no capture for "${k}" (${expected.get(k)})`);
-  for (const k of unknown) console.error(`  x captured "${k}", which no feature file declares`);
+  for (const k of unknown) {
+    const why = declared.has(k) ? "which is outside this version's scope" : "which no feature file declares";
+    console.error(`  x captured "${k}", ${why} — remove ${files.get(k)}`);
+  }
   console.error("\nEvery scenario needs an entry, including the ones you could not drive — those are");
-  console.error("`blocked`. Capture what is missing, then assemble again.");
+  console.error("`blocked`. Capture what is missing, then assemble again. When the issue names scope");
+  console.error("arguments (--features, --held-back), pass them here exactly as you pass them to the checker.");
   process.exit(2);
 }
 
