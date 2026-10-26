@@ -31,6 +31,11 @@ import (
 // must hold, the report says what did.
 const ReportFilePath = "tests/acceptance/report.json"
 
+// SnapshotDirPath is where the assembler writes each failure's page tree. The
+// report names those files rather than carrying them, so they are committed
+// with it.
+const SnapshotDirPath = "tests/acceptance/snapshots"
+
 // reportDoc is the slice of the runner's report a VERDICT is derived from. The
 // console reads the whole document; the run only needs to know whether anything
 // the agent could decide came out negative.
@@ -85,8 +90,7 @@ type reportEvidence struct {
 	Network []networkRequest `json:"network"`
 	Console []string         `json:"console"`
 	// SnapshotFile is where the assembler wrote the page tree, relative to the
-	// repo root (under tests/acceptance/snapshots/). The report NAMES it rather
-	// than carrying it.
+	// repo root; see SnapshotDirPath. The report NAMES it rather than carrying it.
 	SnapshotFile string `json:"snapshotFile"`
 	// Snapshot carried the tree inline before the assembler split it out. Still
 	// read so a report merged under the older schema renders rather than losing

@@ -368,7 +368,8 @@ The milestone is the `$MILESTONE` you read before the first scenario:
 git checkout -b "aep/m${MILESTONE}-validation"
 ```
 
-Then commit the report and open ONE pull request:
+Then commit `tests/acceptance/`: the report, the snapshot files that it names,
+and the snapshots that the assembler removed. Open ONE pull request:
 
 ```bash
 # always the lease: this branch name repeats every cycle, so a re-validation
