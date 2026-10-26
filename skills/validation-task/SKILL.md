@@ -167,12 +167,11 @@ agent-browser get url
 
 ## When a scenario does not pass — capture it, then write it down
 
-The moment a scenario stops going as written — a `Then` that lost, a `When` you
-could not carry out, a `Then` nothing in the app can settle — is the only moment
-its evidence exists. The page is open and the requests are still in the buffer;
-once you drive the next scenario none of it can be recovered, by you or by anyone
-reading the report later. A capture you are only holding in mind is not captured —
-write it down before you move on.
+A scenario can stop in three ways: a `Then` fails, you cannot do a `When`, or
+nothing in the app can settle a `Then`. At that moment, the page is open and the
+requests are in the buffer. When you drive the next scenario, this evidence is
+lost, and nobody can get it back. A capture that you only keep in your context is
+not captured. Write it down before you continue.
 
 Record what the SYSTEM was doing — not just where the scenario stopped:
 
@@ -267,17 +266,15 @@ rules the end-of-run check applies — so a problem surfaces while the page can
 still answer it. If it exits 2, it prints what is missing: fix the entry and send
 it again. Never write something you did not read.
 
-**Do not collect entries and feed them in at the end.** Writing them to a file as
-you go, or generating them in one pass once the run is over, puts you back where
-a single end-of-run report left you: every entry reconstructed from memory, and a
-rejection arriving when no page is left to re-read. A scenario is not finished
-when its `Then` is settled — it is finished when its entry is captured. The cost
-of one call is a few hundred tokens; the cost of the batch is the whole reason
-this step exists.
+**Do not collect entries and send them at the end.** Do not write them to a file
+as you go, and do not generate them in one pass after the run. If you do, you
+write each entry from memory, and a rejected entry has no open page to read
+again. A scenario is finished when you capture its entry, not when you settle its
+`Then`. One call costs a few hundred tokens.
 
-The run records when each capture landed, and the assembler reports the window
-they fell in. A run whose fourteen captures all arrive in the same second did not
-capture as it went.
+The capture script records the time of each capture, and the assembler reports
+the first and the last. If all captures have almost the same time, the run did
+not capture each scenario when it finished.
 
 ## Outcomes — one per scenario
 
