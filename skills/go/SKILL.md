@@ -141,13 +141,9 @@ handler := gen.HandlerWithOptions(gen.NewStrictHandler(srv, nil), gen.ChiServerO
 `r.Use` is correct here and there is no ordering trap: the verifier needs
 nothing from the generated wrapper. The platform sets
 `GATEWAY_ASSERTION_CERTIFICATE`, `GATEWAY_ASSERTION_ISSUER` and
-`GATEWAY_ASSERTION_HEADER` on the container. A **partially set** trio is fatal:
-a service that starts on half of them cannot tell a real caller from a forged
-one, and that is a broken deployment rather than an unconfigured one. All three
-**absent** is the separate, temporary case an environment gateway provisioned
-before the backend-JWT keypair existed still lands in — the verifier starts
-without verifying anything, says so on every boot, and is tracked for removal in
-issue #789. Do not write code that depends on it.
+`GATEWAY_ASSERTION_HEADER` on the container. **Any missing variable is fatal**,
+including all three absent: a service that starts without the full trio cannot
+tell a real caller from a forged one, and that is a broken deployment.
 
 **Read identity from the verified caller, never from a header.**
 
