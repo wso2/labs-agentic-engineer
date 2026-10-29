@@ -107,12 +107,13 @@ This is the single most important property of the approach and the one most easi
 checked by a script the run invokes — deliberately not yet by the platform, which is an open question
 this decision does not close.
 
-### A failure carries what the system was doing
+### A scenario that did not pass carries what the system was doing
 
 The trace is not the only evidence worth having, and a compiled suite is structurally unable to
-produce the rest of it. A failing scenario records an `evidence` block captured **at the moment it
-failed, while the page is still open**: the requests around the deciding step, any console errors, and
-the page as the run saw it.
+produce the rest of it. Every scenario that did not pass records an `evidence` block captured **while
+its page is still open**: the requests around the deciding step and any console errors, and for a
+failure the page as the run saw it. A pass records none. Nothing reads evidence on a pass, and a run
+that was allowed to capture it attached the same stale page to eleven of them.
 
 `network` is the half that earns its place. A request that left and came back `201` with the list
 unchanged is a rendering defect; no request at all is a wiring defect. They are fixed in different
@@ -120,23 +121,54 @@ files, and nothing else in the report separates them — the step trace reads id
 EMPTY request list is therefore an answer, not a blank, and the checker distinguishes an empty array
 from an absent key.
 
-The repair issue renders the whole trace and the network and console lines. The **snapshot stays in
-the report** rather than the body: it is the one unbounded item, and after the pull request merges
-`tests/acceptance/report.json` is a file the coding agent already has checked out, so putting it in
-the body buys reachability nothing.
+The repair issue renders the whole trace and the network and console lines. The **snapshot goes to a
+file of its own** under `tests/acceptance/snapshots/`, which the report and the issue body both name
+rather than carry. It is the one unbounded item, and the reachability argument that first kept it
+inside the report was answering the wrong question: the body did point at a file the coding agent has
+checked out, but that file is the WHOLE report, so retrieving one scenario's page costs it every other
+scenario's trace. A file per failure costs what it weighs, and the body says when it is worth opening
+— the network and console lines usually settle rendering versus wiring, and the tree is for when they
+do not.
 
 Two things the run deliberately does **not** record. No screenshot — for an agent reader a textual
 accessibility snapshot is strictly more informative, and a binary needs somewhere to live. And **no
-root-cause hypothesis**: the validation agent never reads the source, so a causal claim from it is a
-guess about internals it has not seen, produced by the one party whose whole credibility rests on
-reporting only what a command settled. The repair agent, which is about to open the file, derives a
-better one in a single read. What the live run uniquely has is *observational* — `POST /items → 201`
-and the list still showing one item — and that is what is kept.
+root-cause hypothesis**, for two reasons that are worth separating.
+
+The first is about who is better placed. The repair agent holds the repo and, because a coding cycle
+is scoped to a milestone and fetches every working-set body up front to plan its fan-out
+(`skills/aep/SKILL.md`), it holds the WHOLE set of failures at once. It can see that three scenarios
+share a console signature, it can open the file, and it can check its own answer. The validation agent
+can do none of those, and it would be buying the same localisation cold — with no prior context in a
+repo it has not read — to hand over a claim the reader has to verify anyway.
+
+The second is about what reading the source would cost the verdict. This ADR originally asserted the
+agent "never reads the source"; that was never true of the pod, which gets a full clone and
+unrestricted read tools. It is now *asked* not to (`skills/validation-task/SKILL.md`), because an
+oracle derived from the implementation stops being an oracle: shown buggy code, models assert the
+buggy behaviour as correct, and the resulting pass is indistinguishable from a real one — nothing in
+the report, the checker or the console can tell them apart. That is a stated rule rather than an
+enforced one; the mechanism is open work.
+
+What the live run uniquely has is *observational* — `POST /items → 201` and the list still showing one
+item — and that is what is kept. Two fields carry the rest of it on every scenario that did not pass.
+`reproduced` says whether the outcome held when the scenario was driven again (`yes`, `no`,
+`unattempted`): a failure that passes on a second pass is a race rather than a logic defect, and
+nothing else in the report separates them. `note` is one sentence of what the run saw that no other
+field holds, an observation and never a cause. Both stay out of the report digest, so narrative cannot
+make two attempts with the same verdicts look different.
 
 The gate is hard (`exit 2`) with one escape: an explicit `notCaptured` naming the reason. The escape
-is not softness. The check runs after the page is gone, so an agent that did not capture can satisfy a
-gate with no escape only by re-driving the scenario or by inventing a plausible request — and a report
-that says something nothing checked is worse than one that states a gap.
+is not softness. The check runs when each scenario is written down (`capture-scenario.mjs`), while its
+page is still open, so a missing capture usually costs one command. Some cannot be had at all, though
+— a page that navigated away, a request the browser never exposed — and against a gate with no escape
+the agent's only way through is inventing a plausible request. A report that says something nothing
+checked is worse than one that states a gap.
+
+The report is then **assembled from those captures** (`assemble-report.mjs`) rather than written at
+the end, and the same rules run again over the whole (`check-report.mjs`). An agent writing one
+document after twenty scenarios is summarising from a context that has compacted since it saw most of
+them; the assembler reads what was written while each was fresh, and turns "no scenario was dropped"
+from a claim into a count against the feature files.
 
 ### Isolation is functional, not a reset
 

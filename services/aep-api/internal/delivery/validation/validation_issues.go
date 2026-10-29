@@ -353,14 +353,14 @@ func renderScope(files, skipped []AcceptanceCriteriaFile, sum acceptanceSummary,
 		"Per-component design docs: `specs/design/components/<name>/design.json` (OpenAPI contract, when present, alongside as `openapi.yaml`); system design: `specs/design/design.cell` (architecture), `specs/design/domain-model.md` (entities), `specs/design/flows/` (key flows).",
 		"",
 		"## Report",
-		fmt.Sprintf("Commit `%s` — one entry per scenario in the feature files above, including the ones you could not drive.", ReportFilePath),
+		fmt.Sprintf("Commit `%s` — one entry per scenario in the feature files above, including the ones you could not drive. Commit `%s/` with it: the report names those page snapshots rather than carrying them.", ReportFilePath, SnapshotDirPath),
 	)
 	if scope != nil {
 		args := "--features " + strings.Join(scope.Features, ",")
 		if len(scope.HeldBack) > 0 {
 			args += " --held-back " + strings.Join(scope.HeldBack, ",")
 		}
-		w("", fmt.Sprintf("Check it against this version's scope: run the report checker with `%s`.", args))
+		w("", fmt.Sprintf("Assemble and check it against this version's scope: pass `%s` to the report assembler and to the report checker.", args))
 	}
 
 	return strings.TrimRight(b.String(), "\n")

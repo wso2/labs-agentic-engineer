@@ -165,24 +165,24 @@ agent-browser get url
 - **Assert exactly what the step claims.** An extra assertion turns an unrelated
   change into a false failure; a missing one makes the scenario vacuous.
 
-## When a scenario fails — capture before you move on
+## When a scenario does not pass — capture it, then write it down
 
-A failing `Then` is the only moment the evidence exists. The page is open and the
-requests are still in the buffer; once you move to the next scenario none of it
-can be recovered, by you or by anyone reading the report later.
+A scenario can stop in three ways: a `Then` fails, you cannot do a `When`, or
+nothing in the app can settle a `Then`. At that moment, the page is open and the
+requests are in the buffer. When you drive the next scenario, this evidence is
+lost, and nobody can get it back. A capture that you only keep in your context is
+not captured. Write it down before you continue.
 
-So before moving on, record what the SYSTEM was doing — not just which assertion
-lost:
+Record what the SYSTEM was doing — not just where the scenario stopped:
 
 ```bash
 agent-browser network requests   # did the request leave, and what came back
 agent-browser errors             # anything the page threw
 agent-browser console            # and what it logged on the way
-agent-browser snapshot -i        # the page as it stands
+agent-browser snapshot -i        # the page as it stands — on a FAILURE only
 ```
 
-Write them onto the scenario as `evidence` (shape below); `errors` and `console`
-share the one `console` field.
+`errors` and `console` share the one `console` field.
 
 **`network` is the one that earns its place.** A request that left and came back
 `201` with the list unchanged is a rendering defect; no request at all is a
@@ -196,6 +196,85 @@ happen, say so rather than write something plausible:
 ```json
 "evidence": { "notCaptured": "the page navigated away before it could be read" }
 ```
+
+**`snapshot -i` on a failure only, and no capture at all on a pass.** The checker
+refuses both.
+
+### Then write the entry, before you drive anything else
+
+An entry is one scenario, and this is the whole shape:
+
+```json
+{
+  "feature": "Adding items to the list",
+  "featureFile": "specs/validation/acceptance/shopping-list.feature",
+  "line": 24,
+  "rule": "An item that duplicates one already on the list is rejected",
+  "scenario": "Trying to add an exact duplicate",
+  "tags": ["@negative"],
+  "outcome": "failed",
+  "reproduced": "yes",
+  "note": "the duplicate survived a page refresh",
+  "steps": [
+    { "text": "Dan tries to add another item named \"Milk\"", "keyword": "When",
+      "command": "agent-browser find role button click --name \"Add\"" },
+    { "text": "the list still has exactly one item", "keyword": "Then",
+      "command": "agent-browser get count \"[data-testid=item]\"",
+      "exit": 0, "observed": "2 — the list holds \"Milk\" and \" milk \"" }
+  ],
+  "evidence": {
+    "network": [{ "method": "POST", "url": "/api/items", "status": 201 }],
+    "console": ["TypeError: items.map is not a function"],
+    "snapshot": "- listitem \"Milk\"\n- listitem \" milk \""
+  }
+}
+```
+
+`featureFile` and `line` are where the scenario is written, so a reader — and a
+repair issue — can go straight to it.
+
+**`observed` is required wherever the exit code does not settle the step.**
+
+| Case | Why |
+|---|---|
+| a nonzero exit | the exit says the assertion lost; `observed` says what was there instead, and that is what the repair issue quotes |
+| no command at all | a `blocked` step has to record its reason — `the "Edit" button was [disabled]` — or nobody can tell an app that correctly refuses from one that is broken |
+| a value-returning command (`get count`, `get value`, `get url`, `get text`) | exit 0 only means the command RAN. You read the printed value and judged; `observed` is that value, and without it the verdict is unauditable — which is the example above |
+
+It is optional on a passing `wait`, where the command text and `exit: 0` already
+say what held.
+
+Two fields nothing else holds, required on every non-passed outcome:
+
+| Field | What it says |
+|---|---|
+| `reproduced` | `yes` / `no` / `unattempted` — did this outcome hold when you drove the scenario again. `no` matters most: a failure that passes on a second pass is a race, not a logic defect. `unattempted` is honest when the `When` destroys something or the `Given` is too expensive to rebuild |
+| `note` | One sentence on what you saw that no other field holds — *"a refresh made it correct"*, *"only failed once the list held three items"*. Write `nothing further` when there is none. **Observation only**, never a cause: you have not read the implementation |
+
+Hand it over on stdin — one call per scenario, pass or not, the moment it
+finishes, **before you touch the browser again**:
+
+```bash
+node "$AEP_SKILLS_DIR/validation-task/scripts/capture-scenario.mjs" \
+  "$(git rev-parse --show-toplevel)" <<'JSON'
+{ "feature": "Adding items to the list", "outcome": "failed", … }
+JSON
+```
+
+It names the file it writes, so you never choose one, and it applies the same
+rules the end-of-run check applies — so a problem surfaces while the page can
+still answer it. If it exits 2, it prints what is missing: fix the entry and send
+it again. Never write something you did not read.
+
+**Do not collect entries and send them at the end.** Do not write them to a file
+as you go, and do not generate them in one pass after the run. If you do, you
+write each entry from memory, and a rejected entry has no open page to read
+again. A scenario is finished when you capture its entry, not when you settle its
+`Then`. One call costs a few hundred tokens.
+
+The capture script records the time of each capture, and the assembler reports
+the first and the last. If all captures have almost the same time, the run did
+not capture each scenario when it finished.
 
 ## Outcomes — one per scenario
 
@@ -229,83 +308,50 @@ passes through one — "a new user signs up, then…" — is carried out by sign
 with a published test login (**Signing in**) instead, and the rest of the
 scenario is judged as written.
 
-## The report
+## The report — assembled, not written
 
-Write `tests/acceptance/report.json`. One entry per scenario in the feature
-files — every one, including those you could not run. Stamp `commit` with
-`git rev-parse HEAD` so the report says which code it judged.
+You never author `tests/acceptance/report.json`. You capture one entry per
+scenario as you go (above), and a script builds the report from them at the end —
+so "every scenario has an entry" is a count against the feature files rather than
+something you assert once they are all behind you.
 
-```json
-{
-  "schemaVersion": 2,
-  "generatedAt": "<ISO>",
-  "commit": "<git rev-parse HEAD>",
-  "baseUrl": "https://<the deployed host from the validation context>",
-  "isolation": "each scenario creates its own list and asserts only on that list",
-  "scenarios": [
-    {
-      "feature": "Adding items to the list",
-      "featureFile": "specs/validation/acceptance/shopping-list.feature",
-      "line": 24,
-      "rule": "An item that duplicates one already on the list is rejected",
-      "scenario": "Trying to add an exact duplicate",
-      "tags": ["@negative"],
-      "outcome": "failed",
-      "steps": [
-        { "text": "Dan tries to add another item named \"Milk\"", "keyword": "When",
-          "command": "agent-browser find role button click --name \"Add\"" },
-        { "text": "the list still has exactly one item", "keyword": "Then",
-          "command": "agent-browser get count \"[data-testid=item]\"",
-          "exit": 0, "observed": "2 — the list holds \"Milk\" and \" milk \"" }
-      ],
-      "evidence": {
-        "network": [{ "method": "POST", "url": "/api/items", "status": 201 }],
-        "console": ["TypeError: items.map is not a function"],
-        "snapshot": "- listitem \"Milk\"\n- listitem \" milk \""
-      }
-    }
-  ]
-}
-```
+### At the end of the run
 
-`featureFile` and `line` are where the scenario is written, so a reader — and a
-repair issue — can go straight to it.
-
-**`observed` is required wherever the exit code does not settle the step.**
-
-| Case | Why |
-|---|---|
-| a nonzero exit | the exit says the assertion lost; `observed` says what was there instead, and that is what the repair issue quotes |
-| no command at all | a `blocked` step has to record its reason — `the "Edit" button was [disabled]` — or nobody can tell an app that correctly refuses from one that is broken |
-| a value-returning command (`get count`, `get value`, `get url`, `get text`) | exit 0 only means the command RAN. You read the printed value and judged; `observed` is that value, and without it the verdict is unauditable — which is the example above |
-
-It is optional on a passing `wait`, where the command text and `exit: 0` already
-say what held.
-
-Then check it:
+Write the one thing no single scenario can answer, then assemble and check:
 
 ```bash
-node "$AEP_SKILLS_DIR/validation-task/scripts/check-report.mjs" "$(git rev-parse --show-toplevel)" <the issue's scope arguments>
+cat > run.json <<'JSON'
+{
+  "isolation": "each scenario creates its own list and asserts only on that list",
+  "baseUrl": "https://<the deployed host from the validation context>"
+}
+JSON
+
+ROOT="$(git rev-parse --show-toplevel)"
+node "$AEP_SKILLS_DIR/validation-task/scripts/assemble-report.mjs" "$ROOT" run.json <the issue's scope arguments>
+node "$AEP_SKILLS_DIR/validation-task/scripts/check-report.mjs" "$ROOT" <the issue's scope arguments>
 ```
 
-A version validates what it built. When the issue says "run the report checker
-with `--features F1,F2 --held-back F2.4`", pass exactly those arguments, and
-drive only the feature files the issue lists: a file under **Not run** is a
-feature designed but not built yet, and a rule tagged only with a held-back
-story waits on a feature nobody built. Reporting either is a breach, because it
-reports on code this version did not build.
+`isolation` is a paragraph, not a tag: say how each scenario was kept independent
+of the others, and say so plainly if one managed neither — every assertion it
+makes is then suspect. `commit` and the timestamp are stamped for you.
 
-It exits 2 on a contract breach and prints every one. A scenario in the feature
-files with no entry fails it, so one you could not manage must be reported
-`blocked` — never dropped. So does a `passed` whose `Then` carries no command
-that could have said no, a step missing the `observed` its exit code does not
-supply, and a `failed` scenario with no `evidence`. Fix the REPORT and run it
-again; never the feature files.
+A version validates what it built. When the issue names scope arguments
+(`--features F1,F2 --held-back F2.4`), pass exactly those to the assembler and to
+the checker, and drive only the feature files the issue lists: a file under
+**Not run** is a feature designed but not built yet, and a rule tagged only with
+a held-back story waits on a feature nobody built. Reporting either is a breach,
+because it reports on code this version did not build.
 
-The `evidence` rule is the one you cannot satisfy from your desk: if it fires,
-the honest fixes are to re-drive that scenario and capture, or to state why you
-could not. Writing a request you did not read would make the report say something
-nothing checked.
+The assembler refuses to build a report that does not cover the feature files. A
+scenario you could not drive is `blocked` — captured like any other, never
+dropped. The checker then re-applies every per-scenario rule over the assembled
+whole, so what passed at capture time passes here too; if it does not, the two
+have drifted and that is a bug in the scripts, not something to work around.
+
+Each failure's page tree is split out to `tests/acceptance/snapshots/`, which the
+report names rather than carries. You write it inline as `snapshot`; the assembler
+moves it.
 
 ## Landing it — the branch name is a contract
 
@@ -322,7 +368,8 @@ The milestone is the `$MILESTONE` you read before the first scenario:
 git checkout -b "aep/m${MILESTONE}-validation"
 ```
 
-Then commit the report and open ONE pull request:
+Then commit `tests/acceptance/`: the report, the snapshot files that it names,
+and the snapshots that the assembler removed. Open ONE pull request:
 
 ```bash
 # always the lease: this branch name repeats every cycle, so a re-validation
@@ -354,6 +401,11 @@ gh issue comment <N> --body "<passed>/<total> scenarios passed — <PR URL>"
 - Do not edit, add to, or delete anything under `specs/`. The feature files are
   the specification; a mismatch with what the app does is the finding.
 - Do not fix the app. This run reports; repairing is someone else's step.
+- **Do not read the application's source.** The scenarios say what must hold and
+  the deployed app says what does; the implementation is neither, and an oracle
+  taken from it only ever agrees with itself. Your skills and `specs/` are yours
+  to read. Saying where a defect LIVES is not your step either — whoever repairs
+  it holds the repo and every failure at once, and can check its own answer.
 - Do not report `passed` for a `Then` you did not settle with a command.
 - Do not author a file outside the project, or read anything unrelated to this
   run — no other repositories, no browsing `~`. Your skills and their files are

@@ -291,6 +291,7 @@ func TestEnsureValidationIssue_CreatesFormattedIssue(t *testing.T) {
 		"## Report",
 		"specs/validation/acceptance/greeting.feature", // the file is NAMED
 		"tests/acceptance/report.json",                 // where the answer goes
+		"tests/acceptance/snapshots/",                  // committed with it: the report only names them
 		"There is no test code to author",              // the load-bearing difference
 	} {
 		if !strings.Contains(got.Body, want) {

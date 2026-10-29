@@ -335,6 +335,22 @@ func TestReportDigest(t *testing.T) {
 		}
 	})
 
+	// The digest is what stops a run that is not converging: two attempts reaching
+	// the same answer settle it rather than spending another. `note` is written by
+	// an LLM and will vary between attempts that concluded identically, so folding
+	// it into the projection would make every digest unique and turn that stop into
+	// dead code — silently, with the run burning its whole allowance on a system
+	// nothing is moving. `reproduced` is steadier but belongs out for the same
+	// reason: it describes the failure, not the answer.
+	t.Run("the note and the second pass are not part of the answer", func(t *testing.T) {
+		const steps = `"steps":[{"keyword":"Then","text":"t","exit":1,"observed":"one"}]`
+		a := `{"scenarios":[{"scenario":"A","outcome":"failed","reproduced":"yes","note":"only after three adds",` + steps + `}]}`
+		b := `{"scenarios":[{"scenario":"A","outcome":"failed","reproduced":"unattempted","note":"nothing further",` + steps + `}]}`
+		if validation.ParseReport([]byte(a)).Digest() != validation.ParseReport([]byte(b)).Digest() {
+			t.Error("two attempts that concluded the same thing digested differently, so the identical-answer stop would never fire")
+		}
+	})
+
 	t.Run("a changed outcome is a different answer", func(t *testing.T) {
 		a := `{"scenarios":[{"scenario":"A","outcome":"failed"}]}`
 		b := `{"scenarios":[{"scenario":"A","outcome":"passed"}]}`
