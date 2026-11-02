@@ -296,6 +296,7 @@ var (
 	assignedSecret  = regexp.MustCompile(`(?i)\b(password|passwd|secret|api[_-]?key|access[_-]?key|private[_-]?key|token|client[_-]?secret)\b\s*[:=]\s*["']?([A-Za-z0-9_\-+/=.]{16,})`)
 	credentialInURL = regexp.MustCompile(`://[^/\s:@]+:[^/\s@]+@`)
 	bareToken       = regexp.MustCompile(`[A-Za-z0-9+/_\-]{32,}`)
+	lowerWord       = regexp.MustCompile(`^[a-z]+$`)
 )
 
 // credentialIn answers the rule a text trips, or "" when it trips none.
@@ -318,8 +319,14 @@ func credentialIn(text []byte) string {
 }
 
 // looksLikeToken: three character classes and over 4 bits of entropy per
-// byte, which a word, a path or a commit sha (two classes) never reaches.
+// byte, which a word, a hex sha or a plain path (two classes) never reaches.
+// A name made of words still can: a feature link such as
+// features/F12-visas-and-travel-documents carries one upper-case letter and
+// two digits in its ID, so that shape is set aside first.
 func looksLikeToken(tok []byte) bool {
+	if isSlugOrPath(tok) {
+		return false
+	}
 	var upper, lower, digit bool
 	counts := map[byte]int{}
 	for _, c := range tok {
@@ -343,4 +350,23 @@ func looksLikeToken(tok []byte) bool {
 		entropy -= p * math.Log2(p)
 	}
 	return entropy > 4.0
+}
+
+// isSlugOrPath: three or more segments between the separators a token may
+// also carry (slash, hyphen, underscore), all but at most one of them a
+// lower-case word. A kebab slug or a path always reads so; a random token
+// with that many separators almost never spells a word in every segment but
+// one.
+func isSlugOrPath(tok []byte) bool {
+	segments := bytes.FieldsFunc(tok, func(r rune) bool { return r == '/' || r == '-' || r == '_' })
+	if len(segments) < 3 {
+		return false
+	}
+	other := 0
+	for _, s := range segments {
+		if !lowerWord.Match(s) {
+			other++
+		}
+	}
+	return other <= 1
 }
