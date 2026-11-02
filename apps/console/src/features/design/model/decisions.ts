@@ -48,17 +48,32 @@ export function keptText(line: LineBlock): string {
 }
 
 /**
- * The `*assumed*` tags closing decisions in the file's markdown, with the
- * space before each: AFTER_TAG's rule over the markdown, where the room
- * escapes a bracket. It must remove at least what Keep removes, or a Keep
- * would untick the file.
+ * The `*assumed*` tag closing a decision's markdown line, with the space
+ * before it: AFTER_TAG's rule over the markdown, where the room escapes a
+ * bracket.
  */
-const MARKDOWN_TAG = /[ \t]*(?:\*assumed\*|_assumed_)(?=[ \t.,;:]*(?:\\?\([^()\n]*\\?\))?[ \t.,;:]*$)/gm;
+const MARKDOWN_TAG = /[ \t]*(?:\*assumed\*|_assumed_)(?=[ \t.,;:]*(?:\\?\([^()\n]*\\?\))?[ \t.,;:]*$)/;
+
+/** A list entry's line: a decision is one. */
+const LIST_LINE = /^\s*(?:[-*+]|\d+[.)])\s/;
+const FENCE = /^\s*(?:```|~~~)/;
 
 /**
- * The file's markdown as its Checked hash reads it: without the tags. Keep
- * changes no words, so a checked file stays checked (ADR-0006).
+ * The file's markdown as its Checked hash reads it: without the tags that
+ * close decisions, which are list entries outside a code block, as
+ * decisionTag reads them. Keep changes no words, so a checked file stays
+ * checked (ADR-0006); any other change, a tag elsewhere included, unticks it.
  */
 export function withoutAssumedTags(markdown: string): string {
-  return markdown.replace(MARKDOWN_TAG, "");
+  let fenced = false;
+  return markdown
+    .split("\n")
+    .map((line) => {
+      if (FENCE.test(line)) {
+        fenced = !fenced;
+        return line;
+      }
+      return !fenced && LIST_LINE.test(line) ? line.replace(MARKDOWN_TAG, "") : line;
+    })
+    .join("\n");
 }

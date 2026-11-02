@@ -81,6 +81,14 @@ describe("keepDecision", () => {
     expect(keepDecision(doc, "[data-model] Amounts are floats. assumed (F1)")).toBe(false);
   });
 
+  it("hashes a tag that closes no decision as the file's words", () => {
+    const markdown = "# Technical decisions\n\nA note. *assumed*\n\n```\n- a sample *assumed*\n```\n";
+    expect(withoutAssumedTags(markdown)).toBe(markdown);
+    expect(withoutAssumedTags("- [data-model] Amounts in cents. *assumed* (F1)\n  - Nested. *assumed*\n")).toBe(
+      "- [data-model] Amounts in cents. (F1)\n  - Nested.\n",
+    );
+  });
+
   it("leaves the file's Checked hash as it was", () => {
     const doc = docWith(DECISIONS);
     const before = withoutAssumedTags(readDocFile(doc, DECISIONS_PATH)!);

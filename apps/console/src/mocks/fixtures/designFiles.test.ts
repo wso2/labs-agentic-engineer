@@ -76,6 +76,11 @@ describe("reviseDecision", () => {
     });
   });
 
+  it("keeps the features once when the comment's words name them", () => {
+    const comment = "> [data-model] Amounts are stored in cents, never as decimals. (F1, F2)\n\nStore amounts as decimals. (F1)";
+    expect(reviseDecision(markdown, comment)?.to).toBe("- \\[data-model\\] Store amounts as decimals. (F1)");
+  });
+
   it("leaves a comment that quotes no decision, or asks for nothing, to the agent's reply", () => {
     expect(reviseDecision(markdown, "Why cents?")).toBeNull();
     expect(reviseDecision(markdown, "> [data-model] Amounts are floats. (F1)\n\nUse decimals.")).toBeNull();

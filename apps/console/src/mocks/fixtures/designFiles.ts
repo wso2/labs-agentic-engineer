@@ -235,6 +235,7 @@ export function reviseDecision(markdown: string, comment: string): { from: strin
   const from = markdown.split("\n").find((l) => /^\s*[-*]\s/.test(l) && decisionWords(l) === quoted);
   if (!from) return null;
   const lead = /^\s*[-*]\s+(?:\\?\[[^\]]*?\\?\]\s+)?/.exec(from)![0];
-  const features = /\s*\([^()]*\)\s*$/.exec(from)?.[0].trimEnd() ?? "";
+  // The features the decision serves, unless the comment's words name them.
+  const features = /\([^()]*\)$/.test(words) ? "" : (/\s*\([^()]*\)\s*$/.exec(from)?.[0].trimEnd() ?? "");
   return { from, to: `${lead}${words}${features}`, words };
 }
