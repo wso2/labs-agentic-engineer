@@ -16,19 +16,17 @@
  * under the License.
  */
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Box, Typography } from "@wso2/oxygen-ui";
 import type { LineBlock, Span } from "../../../spec/model/ids";
-import { pillSx, soft } from "../../../spec/components/Tag";
+import { assumedActionsSx, assumedLineSx, assumedTagSx, BY_YOU_MS, byYouLineSx, byYouSx, pillSx } from "../../../spec/components/assumedLook";
 import { decisionTag, keptText } from "../../model/decisions";
 
 // The technical decisions, read-only as written, with Keep and Change… on a
-// decision still tagged assumed (ADR-0006). Keep drops the tag in the room;
-// the line then shows "by you" for a few seconds, as in the spec editor.
-// Change… opens the file's 💬 box on the decision, quoted read-only above it.
-
-/** How long a kept line shows "by you". */
-const BY_YOU_MS = 4000;
+// decision still tagged assumed (ADR-0006), drawn as the spec editor draws an
+// assumed line. Keep drops the tag in the room; each kept line then shows "by
+// you" for a few seconds. Change… opens the file's 💬 box on the decision,
+// quoted read-only above it.
 
 type Group = { kind: "list"; lines: LineBlock[] } | { kind: "block"; line: LineBlock };
 
@@ -42,8 +40,8 @@ function groups(lines: readonly LineBlock[]): Group[] {
   return out;
 }
 
-/** The line's words, its italic runs in italics and its tag as a quiet "assumed". */
-function words(line: LineBlock, tag: Span | null): ReactNode[] {
+/** A line's text drawn: its italic runs in italics, and its tag as a quiet "assumed". */
+function lineContent(line: LineBlock, tag: Span | null): ReactNode[] {
   const out: ReactNode[] = [];
   let at = 0;
   for (const e of line.emphasis) {
@@ -52,7 +50,7 @@ function words(line: LineBlock, tag: Span | null): ReactNode[] {
     const text = line.text.slice(e.start, e.end);
     out.push(
       tag && e.start === tag.start ? (
-        <Box key={e.start} component="span" sx={{ fontSize: "0.75rem", color: "warning.main" }}>
+        <Box key={e.start} component="span" sx={assumedTagSx}>
           {text}
         </Box>
       ) : (
@@ -65,64 +63,84 @@ function words(line: LineBlock, tag: Span | null): ReactNode[] {
   return out;
 }
 
+/** The lines the user kept here, by their text once kept, each for BY_YOU_MS. */
+function useByYou(): { kept: ReadonlySet<string>; mark: (text: string) => void } {
+  const [kept, setKept] = useState<ReadonlySet<string>>(new Set());
+  const timers = useRef(new Set<number>());
+  useEffect(() => {
+    const live = timers.current;
+    return () => live.forEach((t) => window.clearTimeout(t));
+  }, []);
+  const mark = (text: string) => {
+    setKept((k) => new Set(k).add(text));
+    const timer = window.setTimeout(() => {
+      timers.current.delete(timer);
+      setKept((k) => {
+        const next = new Set(k);
+        next.delete(text);
+        return next;
+      });
+    }, BY_YOU_MS);
+    timers.current.add(timer);
+  };
+  return { kept, mark };
+}
+
 export function DecisionsView({
   lines,
   ready,
   onKeep,
-  onChange,
+  onChangeDecision,
 }: {
   lines: readonly LineBlock[];
   /** Whether the room is there to write to. */
   ready: boolean;
   /** Keep a decision by its line's text; false when nothing was written. */
   onKeep: (text: string) => boolean;
-  /** Open the file's 💬 box on this decision, as it reads without its tag. */
-  onChange: (decision: string) => void;
+  /** Change… was pressed: open the file's 💬 box on this decision, as it reads without its tag. */
+  onChangeDecision: (decision: string) => void;
 }) {
-  const [byYou, setByYou] = useState<string | null>(null);
-  useEffect(() => {
-    if (byYou === null) return;
-    const timer = window.setTimeout(() => setByYou(null), BY_YOU_MS);
-    return () => window.clearTimeout(timer);
-  }, [byYou]);
+  const byYou = useByYou();
 
   const entry = (line: LineBlock, i: number) => {
     const tag = decisionTag(line);
-    const kept = byYou !== null && tag === null && line.text === byYou;
+    const kept = tag === null && byYou.kept.has(line.text);
     return (
       <Typography
         key={i}
         component="li"
         variant="body2"
-        sx={{
-          ml: (line.depth ?? 1) > 1 ? 2.5 : 0,
-          borderRadius: 1.5,
-          ...(tag ? { bgcolor: soft("warning", 0.14) } : {}),
-          ...(kept ? { textDecoration: "underline dotted var(--oxygen-palette-success-main)", textUnderlineOffset: "4px" } : {}),
-        }}
+        sx={{ ml: (line.depth ?? 1) > 1 ? 2.5 : 0, borderRadius: 1.5, ...(tag ? assumedLineSx : {}), ...(kept ? byYouLineSx : {}) }}
       >
-        {words(line, tag)}
+        {lineContent(line, tag)}
         {tag && (
-          <Box component="span" sx={{ display: "inline-flex", flexWrap: "wrap", gap: 0.5, ml: 0.75, verticalAlign: "baseline" }}>
+          <Box component="span" sx={assumedActionsSx}>
             <Box
               component="button"
               type="button"
               disabled={!ready}
               aria-label={`Keep: ${keptText(line)}`}
               onClick={() => {
-                if (onKeep(line.text)) setByYou(keptText(line));
+                if (onKeep(line.text)) byYou.mark(keptText(line));
               }}
               sx={pillSx("warning")}
             >
               Keep
             </Box>
-            <Box component="button" type="button" disabled={!ready} aria-label={`Change: ${keptText(line)}`} onClick={() => onChange(keptText(line).trim())} sx={pillSx("warning")}>
+            <Box
+              component="button"
+              type="button"
+              disabled={!ready}
+              aria-label={`Change: ${keptText(line)}`}
+              onClick={() => onChangeDecision(keptText(line).trim())}
+              sx={pillSx("warning")}
+            >
               Change…
             </Box>
           </Box>
         )}
         {kept && (
-          <Box component="span" sx={{ fontSize: "0.6875rem", color: "success.main", whiteSpace: "nowrap", ml: 1, display: "inline-block" }}>
+          <Box component="span" sx={byYouSx}>
             by you
           </Box>
         )}
@@ -147,7 +165,7 @@ export function DecisionsView({
           </Typography>
         ) : (
           <Typography key={i} variant="body2">
-            {words(line, null)}
+            {lineContent(line, null)}
           </Typography>
         );
       })}

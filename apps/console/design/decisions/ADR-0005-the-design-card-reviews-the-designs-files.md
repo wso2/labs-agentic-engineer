@@ -1,6 +1,8 @@
 # ADR-0005 — The Design card reviews the design's files like a pull request
 
-**Status:** Accepted · 2026-10-11
+**Status:** Accepted · 2026-10-11 · Amended 2026-11-02 by
+[ADR-0006](ADR-0006-an-assumed-technical-decision-is-kept-in-place-or-changed-by-a-comment.md)
+(the technical decisions' Checked hash leaves out their `*assumed*` tags)
 **Supersedes:** parts of [ADR-0001](ADR-0001-prototype-review-is-a-full-screen-overlay.md)
 (the Prototype tab and route, Make prototype, Send all with
 `prototypeFeedback`, the tab's reviewed dot) and of

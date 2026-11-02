@@ -503,10 +503,18 @@ describe("the technical decisions", () => {
     expect(screen.queryByText("Changed since you checked it")).toBeNull();
   });
 
+  it("marks each kept line 'by you' on its own, when two are kept in a row", async () => {
+    seed({ ...FILES, [DECISIONS]: `${FILES[DECISIONS]}- [contract] Pending approvals are listed oldest first. *assumed* (F2)\n` });
+    renderCard("?art=decisions");
+    fireEvent.click(await screen.findByRole("button", { name: "Keep: [data-model] Amounts are kept in cents. (F1)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Keep: [contract] Pending approvals are listed oldest first. (F2)" }));
+    await waitFor(() => expect(screen.getAllByText("by you")).toHaveLength(2));
+  });
+
   it("opens the file's 💬 on the decision, quoted read-only, and adds the quote and the change as a Pending draft", async () => {
     renderCard("?art=decisions");
     fireEvent.click(await screen.findByRole("button", { name: "Change: [data-model] Amounts are kept in cents. (F1)" }));
-    expect(screen.getByRole("blockquote", { name: "The decision this comment changes" })).toHaveTextContent("[data-model] Amounts are kept in cents. (F1)");
+    expect(screen.getByRole("blockquote", { name: "Quoted line" })).toHaveTextContent("[data-model] Amounts are kept in cents. (F1)");
     expect(screen.getByText("Write what you want instead under the quote.")).toBeInTheDocument();
     const box = screen.getByLabelText("Your comment on Technical decisions");
     expect(box).toHaveValue("");
@@ -528,7 +536,7 @@ describe("the technical decisions", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
     const box = screen.getByLabelText(/^Edit your comment/);
     expect(box).toHaveValue("Keep them as decimals.");
-    expect(screen.getByRole("blockquote", { name: "The decision this comment changes" })).toHaveTextContent("[data-model] Amounts are kept in cents. (F1)");
+    expect(screen.getByRole("blockquote", { name: "Quoted line" })).toHaveTextContent("[data-model] Amounts are kept in cents. (F1)");
     fireEvent.change(box, { target: { value: "Keep them as decimals, two places." } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(review().artifacts.find((a) => a.path === DECISIONS)?.comments?.[0]?.text).toBe(

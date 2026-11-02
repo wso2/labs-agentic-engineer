@@ -19,6 +19,7 @@
 import { DESIGN_REVIEW_PATH } from "@aep/agent-stream";
 import type { DesignDependency } from "../../features/design/api/designModel";
 import { DECISIONS_PATH } from "../../features/design/model/designFiles";
+import { splitQuote } from "../../features/design/model/review";
 import { manifestPath, sourcePath } from "../../features/prototype/model/prototypes";
 import type { ArtifactDraft } from "./design";
 import { SAMPLE_COMPONENT, SAMPLE_MANIFEST, SAMPLE_SOURCE } from "./prototype";
@@ -226,10 +227,10 @@ function decisionWords(line: string): string {
  * no decision in the file, or says nothing under the quote.
  */
 export function reviseDecision(markdown: string, comment: string): { from: string; to: string; words: string } | null {
-  const [first, ...rest] = comment.split("\n");
-  if (!first?.startsWith(">")) return null;
-  const quoted = first.slice(1).replace(/\s+/g, " ").trim();
-  const words = rest.join(" ").replace(/\s+/g, " ").trim();
+  const split = splitQuote(comment);
+  if (split.quote === null) return null;
+  const quoted = split.quote.replace(/\s+/g, " ").trim();
+  const words = split.words.replace(/\s+/g, " ").trim();
   if (!words) return null;
   const from = markdown.split("\n").find((l) => /^\s*[-*]\s/.test(l) && decisionWords(l) === quoted);
   if (!from) return null;

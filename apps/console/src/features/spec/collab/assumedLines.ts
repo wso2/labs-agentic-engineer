@@ -19,6 +19,7 @@
 import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey, TextSelection, type EditorState, type Transaction } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
+import { BY_YOU_MS } from "../components/assumedLook";
 import { caretBeforeTag, deleteLine, lineAt, removeAssumedTag } from "./specEdits";
 import type { AssumedAction } from "./specLinesPlugin";
 
@@ -32,8 +33,6 @@ import type { AssumedAction } from "./specLinesPlugin";
 // settled) mapped through every transaction; one whose line is replaced
 // under it (a remote rewrite of the file) is dropped.
 
-/** How long a settled line shows "by you". */
-const BY_YOU_MS = 4000;
 
 interface Editing {
   /** The start of the line's textblock. */

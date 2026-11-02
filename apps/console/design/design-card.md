@@ -201,7 +201,8 @@ its own run.
 lines of the file (`decisionsRoom.ts`, `readDecisionLines`: the fragment, as
 the spec's lines are read). A decision still tagged `*assumed*` (the tag
 before its features, `model/decisions.ts`) is highlighted and offers two
-pills
+pills, drawn with the spec editor's look for an assumed line
+(`spec/components/assumedLook.ts`)
 ([ADR-0006](decisions/ADR-0006-an-assumed-technical-decision-is-kept-in-place-or-changed-by-a-comment.md)):
 
 - **Keep** drops the tag in the room (`keepDecision`: a minimal edit of the
@@ -210,8 +211,10 @@ pills
 - **Change…** opens the file's 💬 on the decision: the decision quoted
   above the text box, read-only, so the comment always names which decision
   it is about (`ArtifactFrame`'s `quote`). The comment is the quote, then
-  what the user typed; it is a draft like any other, and the agent writes
-  the changed decision without the tag.
+  what the user typed (`quotedComment`, `model/review.ts`); it is a draft
+  like any other, and the agent writes the changed decision without the tag.
+  Any comment that opens with a quote shows it set apart in its thread, and
+  Edit changes only the words under it (`splitQuote`).
 
 A confirmed decision offers nothing: it is changed with an ordinary comment.
 An assumed decision does not hold Build.

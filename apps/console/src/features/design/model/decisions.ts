@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { tagWithSpace, type LineBlock, type Span } from "../../spec/model/ids";
+import { closingTag, tagWithSpace, type LineBlock, type Span } from "../../spec/model/ids";
 
 // The technical decisions (specs/design/decisions.md) as the design skill
 // writes them: one list entry per decision, "[data-model] Amounts are stored
@@ -31,11 +31,7 @@ const AFTER_TAG = /^[\s.,;:]*(\([^()]*\))?[\s.,;:]*$/;
 
 /** The `*assumed*` tag closing a decision, as a span of its text; null when the decision is confirmed. */
 export function decisionTag(line: LineBlock): Span | null {
-  if (line.kind !== "listItem") return null;
-  const tag = line.emphasis
-    .filter((e) => line.text.slice(e.start, e.end).trim() === "assumed" && AFTER_TAG.test(line.text.slice(e.end)))
-    .at(-1);
-  return tag ? { start: tag.start, end: tag.end } : null;
+  return line.kind === "listItem" ? closingTag(line.text, line.emphasis, "assumed", AFTER_TAG) : null;
 }
 
 /** How many decisions are still assumed. */
@@ -51,7 +47,12 @@ export function keptText(line: LineBlock): string {
   return line.text.slice(0, span.start) + line.text.slice(span.end);
 }
 
-/** The `*assumed*` tags closing decisions in the file's markdown, with the space before each. */
+/**
+ * The `*assumed*` tags closing decisions in the file's markdown, with the
+ * space before each: AFTER_TAG's rule over the markdown, where the room
+ * escapes a bracket. It must remove at least what Keep removes, or a Keep
+ * would untick the file.
+ */
 const MARKDOWN_TAG = /[ \t]*(?:\*assumed\*|_assumed_)(?=[ \t.,;:]*(?:\\?\([^()\n]*\\?\))?[ \t.,;:]*$)/gm;
 
 /**

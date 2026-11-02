@@ -55,7 +55,7 @@ function Body({
   primary,
   featureName,
   onReview,
-  onQuote,
+  onCommentOnLine,
 }: {
   projectName: string;
   card: DesignCard;
@@ -64,7 +64,7 @@ function Body({
   featureName: (id: string) => string;
   onReview: (component: string) => void;
   /** Open the file's 💬 on a comment about this line of it. */
-  onQuote: (line: string) => void;
+  onCommentOnLine: (line: string) => void;
 }) {
   const { body } = item;
   switch (body.kind) {
@@ -73,7 +73,7 @@ function Body({
     case "document":
       return <DocumentView markdown={body.markdown} />;
     case "decisions":
-      return <DecisionsView lines={card.decisions} ready={card.review.ready} onKeep={card.keepDecision} onChange={onQuote} />;
+      return <DecisionsView lines={card.decisions} ready={card.review.ready} onKeep={card.keepDecision} onChangeDecision={onCommentOnLine} />;
     case "roles":
       return (
         <>
@@ -155,7 +155,7 @@ export function ItemPane(props: {
       quote={quote?.path === item.path ? quote.line : null}
       onQuoteDone={() => setQuote(null)}
     >
-      <Body {...props} onQuote={(line) => setQuote({ path: item.path, line })} />
+      <Body {...props} onCommentOnLine={(line) => setQuote({ path: item.path, line })} />
     </ArtifactFrame>
   );
 }

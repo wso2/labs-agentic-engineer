@@ -22,7 +22,7 @@ import { readDocFile } from "@aep/collab-doc";
 import { DESIGN_REVIEW_PATH, type ReviewComment } from "@aep/agent-stream";
 import type { MockSpecModel } from "./spec";
 import { DECISIONS_PATH } from "../../features/design/model/designFiles";
-import { readReview, reviewText } from "../../features/design/model/review";
+import { readReview, reviewText, splitQuote } from "../../features/design/model/review";
 import { manifestPath, sourcePath } from "../../features/prototype/model/prototypes";
 import { projectSpecDoc } from "../../features/spec/collab/specDoc";
 import { readSpecLines } from "../../features/spec/collab/useSpecLines";
@@ -140,13 +140,6 @@ function nextRevision(comments: readonly ReviewComment[]): number {
 /** A comment the mock treats as ambiguous: its own words, not a line it quotes, offer two readings. */
 const TWO_READINGS = /\bor\b/i;
 
-function ownWords(comment: ReviewComment): string {
-  return comment.text
-    .split("\n")
-    .filter((l) => !l.startsWith(">"))
-    .join("\n");
-}
-
 function questionFor(comment: ReviewComment): string {
   return `“${comment.text}” can be read two ways. Which one should the design follow?`;
 }
@@ -175,7 +168,7 @@ function scriptAddressComments(projectName: string, text: string, model: MockSpe
   const replies = new Map<string, string>();
   const questions = new Map<string, string>();
   for (const { path, comment } of sent) {
-    if (comment.answer === undefined && TWO_READINGS.test(ownWords(comment))) {
+    if (comment.answer === undefined && TWO_READINGS.test(splitQuote(comment.text).words)) {
       questions.set(comment.id, questionFor(comment));
       continue;
     }

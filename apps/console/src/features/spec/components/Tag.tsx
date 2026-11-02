@@ -25,26 +25,6 @@ export function soft(tone: ChipTone | "info", alpha = 0.12): string {
   return `rgba(var(--oxygen-palette-${tone}-mainChannel) / ${alpha})`;
 }
 
-/** A pill button inside a document's text (an assumed line's Keep), in one palette colour. */
-export function pillSx(tone: "warning") {
-  return {
-    fontFamily: "inherit",
-    fontStyle: "normal",
-    fontWeight: 600,
-    fontSize: "0.6875rem",
-    lineHeight: 1.6,
-    px: 1,
-    borderRadius: 999,
-    border: 1,
-    borderColor: `${tone}.main`,
-    color: `${tone}.main`,
-    bgcolor: "background.paper",
-    cursor: "pointer",
-    "&:hover": { bgcolor: soft(tone) },
-    "&:focus-visible": { outline: 2, outlineColor: `${tone}.main`, outlineOffset: 1 },
-  } as const;
-}
-
 /** A small state tag: a feature's stage or one of its chips. Muted when it has no tone. */
 export function Tag({ tone, children }: { tone: ChipTone | null; children: ReactNode }) {
   return (

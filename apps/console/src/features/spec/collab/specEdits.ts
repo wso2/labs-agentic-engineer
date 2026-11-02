@@ -35,17 +35,16 @@ import { readFragment } from "./readFragment";
 /** Marks the user's edits made outside an editor. */
 const USER_ORIGIN = "console:user";
 
-function tagRange(line: DocLine): { from: number; to: number } | null {
-  const tag = parseLine(line.text, line.emphasis).assumed;
-  if (!tag) return null;
+/** A tag's range in the document, with the whitespace before it, which goes with it. */
+function tagRange(line: DocLine, tag: Span): { from: number; to: number } {
   const span = tagWithSpace(line.text, tag);
   return { from: line.posAt(span.start), to: line.posAt(span.end) };
 }
 
 /** Drop a tag from a line, and the whitespace before it. */
 export function removeTag(tr: Transform, line: DocLine, tag: Span): void {
-  const span = tagWithSpace(line.text, tag);
-  tr.delete(line.posAt(span.start), line.posAt(span.end));
+  const { from, to } = tagRange(line, tag);
+  tr.delete(from, to);
 }
 
 /** Settle an assumed line: drop its `*assumed*` tag, keep its words. False when it has none. */
@@ -58,7 +57,8 @@ export function removeAssumedTag(tr: Transform, line: DocLine): boolean {
 
 /** Where the caret goes to edit an assumed line: after its words, before the tag. */
 export function caretBeforeTag(line: DocLine): number {
-  return tagRange(line)?.from ?? line.posAt(line.text.length);
+  const tag = parseLine(line.text, line.emphasis).assumed;
+  return tag ? tagRange(line, tag).from : line.posAt(line.text.length);
 }
 
 /** Delete a line: its list item (the whole list, when it is the only item), or its block. */

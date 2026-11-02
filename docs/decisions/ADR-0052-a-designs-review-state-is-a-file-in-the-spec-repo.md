@@ -1,6 +1,7 @@
 # ADR-0052 — A design's review state is a file in the spec repo
 
-**Status:** Accepted · 2026-10-11
+**Status:** Accepted · 2026-10-11 · Amended 2026-11-02 (point 2: the
+technical decisions' hash)
 **Related:** [ADR-0051](ADR-0051-design-is-a-review-loop-and-build-reads-the-prototype.md)
 (the review loop),
 [ADR-0040](ADR-0040-a-design-goes-out-of-date-per-feature.md) (the
@@ -33,7 +34,8 @@ history.
    the values of a map.
 2. **Checked is a content hash.** It is the lowercase hex SHA-256 of the
    file's UTF-8 text as stored. For a prototype it is the kit's
-   `prototypeHash` of the two files. A changed artifact unticks itself, and
+   `prototypeHash` of the two files. For `specs/design/decisions.md` it is
+   taken without the `*assumed*` tags (amended below). A changed artifact unticks itself, and
    nothing else clears the tick.
 3. **A comment** has an id, an author (the platform user's id and name), its
    text and `createdAt`. Its status moves `draft` → `sent` → `addressed`, and
@@ -104,3 +106,12 @@ reviewer would then read "checked" on a revision they never saw.
 **Revision numbers in the file.** The agent would have to count, and a
 console write could disagree with it. The ledger already knows which run
 changed which file.
+
+## Amended 2026-11-02 — the technical decisions are hashed without their tags
+
+The console now lets a user keep an assumed technical decision, which drops
+its `*assumed*` tag and changes no words
+([console ADR-0006](../../apps/console/design/decisions/ADR-0006-an-assumed-technical-decision-is-kept-in-place-or-changed-by-a-comment.md)).
+So the Checked hash of `specs/design/decisions.md` is taken of its text with
+each closing `*assumed*` tag, and the space before it, removed. A Keep then
+leaves the file checked. Every other artifact is hashed as stored.

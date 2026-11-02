@@ -21,6 +21,7 @@ import { Box, Button, Link, TextField, Typography } from "@wso2/oxygen-ui";
 import type { ReviewComment } from "@aep/agent-stream";
 import { stamp } from "../../../lib/stamp";
 import { soft } from "../../spec/components/Tag";
+import { quotedComment, splitQuote } from "../model/review";
 
 // One artifact's comment threads, as GitHub's pull request review keeps them
 // (D13): a draft is Pending, with Edit and Delete, until Address comments
@@ -50,33 +51,13 @@ function Badge({ tone, children }: { tone: "warning" | "info"; children: string 
   );
 }
 
-/** A comment that quotes a line: the quote as markdown, then what the user wrote. */
-function quotedComment(quote: string, text: string): string {
-  return `${quote
-    .split("\n")
-    .map((l) => `> ${l}`)
-    .join("\n")}\n\n${text}`;
-}
-
-/** A comment's quoted line and what was written under it; the quote is null when it quotes nothing. */
-function splitQuote(text: string): { quote: string | null; words: string } {
-  const m = /^((?:> .*\n)+)\n([\s\S]*)$/.exec(text);
-  if (!m) return { quote: null, words: text };
-  const quote = m[1]!
-    .trimEnd()
-    .split("\n")
-    .map((l) => l.slice(2))
-    .join("\n");
-  return { quote, words: m[2]! };
-}
-
 /** The line a comment is about, read-only. */
 function Quote({ children }: { children: string }) {
   return (
     <Typography
       component="blockquote"
       variant="body2"
-      aria-label="The decision this comment changes"
+      aria-label="Quoted line"
       sx={{ m: 0, pl: 1.25, borderLeft: 3, borderColor: "divider", color: "text.secondary", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
     >
       {children}
@@ -84,11 +65,16 @@ function Quote({ children }: { children: string }) {
   );
 }
 
+/** A comment's text with the quote it opens with, if any, put back in front of what was typed. */
+function withQuote(quote: string | null, typed: string): string {
+  return quote === null ? typed.trim() : quotedComment(quote, typed.trim());
+}
+
 /** A draft's text, to edit: what was typed; a quote stays as it was, above the box. */
 function Editor({ initial, label, onSave, onCancel }: { initial: string; label: string; onSave: (text: string) => void; onCancel: () => void }) {
   const { quote, words } = splitQuote(initial);
   const [text, setText] = useState(words);
-  const save = () => onSave(quote === null ? text.trim() : quotedComment(quote, text.trim()));
+  const save = () => onSave(withQuote(quote, text));
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
       {quote !== null && <Quote>{quote}</Quote>}
@@ -251,7 +237,7 @@ export function CommentComposer({
   const [text, setText] = useState("");
   const add = () => {
     if (!text.trim() || disabled) return;
-    onAdd(quote === null ? text.trim() : quotedComment(quote, text.trim()));
+    onAdd(withQuote(quote, text));
     setText("");
   };
   return (
