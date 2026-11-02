@@ -67,18 +67,18 @@ describe("reviseDecision", () => {
 - \\[contract\\] Pending approvals are listed oldest first. *assumed* (F2)
 `;
 
-  it("rewrites the quoted decision in the comment's words, without the tag", () => {
+  it("rewrites the quoted decision in the comment's words, still assumed, for the user to keep", () => {
     const comment = "> [data-model] Amounts are stored in cents, never as decimals. (F1, F2)\n\nStore amounts as decimals with two places.";
     expect(reviseDecision(markdown, comment)).toEqual({
       from: "- \\[data-model\\] Amounts are stored in cents, never as decimals. *assumed* (F1, F2)",
-      to: "- \\[data-model\\] Store amounts as decimals with two places. (F1, F2)",
+      to: "- \\[data-model\\] Store amounts as decimals with two places. *assumed* (F1, F2)",
       words: "Store amounts as decimals with two places.",
     });
   });
 
   it("keeps the features once when the comment's words name them", () => {
     const comment = "> [data-model] Amounts are stored in cents, never as decimals. (F1, F2)\n\nStore amounts as decimals. (F1)";
-    expect(reviseDecision(markdown, comment)?.to).toBe("- \\[data-model\\] Store amounts as decimals. (F1)");
+    expect(reviseDecision(markdown, comment)?.to).toBe("- \\[data-model\\] Store amounts as decimals. *assumed* (F1)");
   });
 
   it("leaves a comment that quotes no decision, or asks for nothing, to the agent's reply", () => {

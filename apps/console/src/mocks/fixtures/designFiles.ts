@@ -222,9 +222,11 @@ function decisionWords(line: string): string {
 /**
  * How the mock agent applies a Change… comment on a technical decision: the
  * comment quotes the decision on its first line, and the words under the
- * quote become the decision, without `*assumed*` (its author decided it). The
- * line keeps its artifact tag and its features. Null when the comment quotes
- * no decision in the file, or says nothing under the quote.
+ * quote become the decision, still `*assumed*`, as the design agent leaves
+ * it: the new words are the agent's reading of the comment, and the user
+ * keeps them (ADR-0006). The line keeps its artifact tag and its features.
+ * Null when the comment quotes no decision in the file, or says nothing
+ * under the quote.
  */
 export function reviseDecision(markdown: string, comment: string): { from: string; to: string; words: string } | null {
   const split = splitQuote(comment);
@@ -235,7 +237,9 @@ export function reviseDecision(markdown: string, comment: string): { from: strin
   const from = markdown.split("\n").find((l) => /^\s*[-*]\s/.test(l) && decisionWords(l) === quoted);
   if (!from) return null;
   const lead = /^\s*[-*]\s+(?:\\?\[[^\]]*?\\?\]\s+)?/.exec(from)![0];
-  // The features the decision serves, unless the comment's words name them.
-  const features = /\([^()]*\)$/.test(words) ? "" : (/\s*\([^()]*\)\s*$/.exec(from)?.[0].trimEnd() ?? "");
-  return { from, to: `${lead}${words}${features}`, words };
+  // The features the decision serves, unless the comment's words name them; the tag goes before them.
+  const own = /\s*(\([^()]*\))$/.exec(words);
+  const decision = own ? words.slice(0, own.index) : words;
+  const features = own ? ` ${own[1]}` : (/\s*\([^()]*\)\s*$/.exec(from)?.[0].trimEnd() ?? "");
+  return { from, to: `${lead}${decision} *assumed*${features}`, words };
 }

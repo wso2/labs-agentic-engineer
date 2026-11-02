@@ -50,7 +50,8 @@ type ConversationMessage = components["schemas"]["ConversationMessage"];
 //    specs/design/review.json, marking each addressed with a one-line reply,
 //    and revises the prototype where a comment on it asks for a change the
 //    sample knows (fixtures/prototype.ts), and rewrites a technical decision a
-//    Change… comment quotes in the comment's words (fixtures/designFiles.ts).
+//    Change… comment quotes in the comment's words, still assumed for the
+//    user to keep (fixtures/designFiles.ts).
 //    A comment that offers two readings
 //    ("… or …") and has no answer yet is not guessed: the mock writes its
 //    question on it and leaves it sent; once answered, it is addressed with

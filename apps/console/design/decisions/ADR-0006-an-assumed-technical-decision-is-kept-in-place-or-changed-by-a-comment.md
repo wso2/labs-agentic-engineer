@@ -20,8 +20,10 @@ offered no way to settle any of its lines.
 1. **An assumed technical decision offers Keep and Change…, nothing else.**
    Keep drops the tag in place, through the Room. Change… opens the file's 💬
    box with the line quoted above it, read-only, also when the draft is
-   edited; the comment goes to the agent with Address comments, and the
-   agent writes the changed decision without the tag.
+   edited; the comment goes to the agent with Address comments. The agent
+   rewrites the decision in its own words, and the line can come back still
+   assumed: those words are the agent's reading of the comment, so the user
+   rereads them and keeps them like any other assumed decision.
 2. **The Design page stays a review surface.** `decisions.md` gets its own
    read-only viewer; no design file is typed into on the Design page.
 3. **Dropping an `*assumed*` tag is never a change.** It already moves no

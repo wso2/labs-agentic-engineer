@@ -212,7 +212,8 @@ pills, drawn with the spec editor's look for an assumed line
   above the text box, read-only, so the comment always names which decision
   it is about (`ArtifactFrame`'s `quote`). The comment is the quote, then
   what the user typed (`quotedComment`, `model/review.ts`); it is a draft
-  like any other, and the agent writes the changed decision without the tag.
+  like any other. The agent rewrites the decision in its own words, which
+  can come back still assumed: the user rereads them and keeps them.
   Any comment that opens with a quote shows it set apart in its thread, and
   Edit changes only the words under it (`splitQuote`).
 
@@ -237,7 +238,7 @@ addressed comment), each through the agent's write gates. Its
 `/address-comments` turn answers every sent comment with a reply, revises
 the sample prototype where a comment asks for a change it knows, and rewrites
 a technical decision that a Change… comment quotes in the comment's words,
-without the tag (`reviseDecision`). A comment
+still assumed for the user to keep (`reviseDecision`). A comment
 that offers two readings ("… or …") and has no answer gets a question
 instead, and is addressed once answered. Each run closes with what is next
 on the card.
