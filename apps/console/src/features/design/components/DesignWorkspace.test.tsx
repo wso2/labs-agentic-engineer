@@ -38,6 +38,7 @@ import { sha256Text } from "../../../lib/sha256";
 import type { ProjectChat } from "../../agent-chat/chatStore";
 import type { BuildHold } from "../../builds/model/picker";
 import type { DesignModel } from "../api/designModel";
+import { withoutAssumedTags } from "../model/decisions";
 import { readReview } from "../model/review";
 import { readSpecLines } from "../../spec/collab/useSpecLines";
 
@@ -249,7 +250,8 @@ describe("Checked and comments on a file's title line", () => {
     const box = await screen.findByRole("checkbox", { name: "Checked: Technical decisions" });
     fireEvent.click(box);
     await waitFor(() => expect(box).toBeChecked());
-    expect(review().artifacts).toEqual([{ path: DECISIONS, checkedHash: sha256Text(readDocFile(doc, DECISIONS)!) }]);
+    // The technical decisions' hash leaves out their assumed tags (ADR-0006).
+    expect(review().artifacts).toEqual([{ path: DECISIONS, checkedHash: sha256Text(withoutAssumedTags(readDocFile(doc, DECISIONS)!)) }]);
 
     act(() => setDocFile(doc, DECISIONS, `${FILES[DECISIONS]}- [contract] Oldest first. (F2)\n`, "agent"));
     await waitFor(() => expect(box).not.toBeChecked());
@@ -478,5 +480,66 @@ describe("the Comments item", () => {
     fireEvent.click(within(group).getByRole("button", { name: "Reopen" }));
     await waitFor(() => expect(review().artifacts[0]?.comments?.[0]?.status).toBe("reopened"));
     expect(screen.getByRole("navigation", { name: "Design" })).toHaveTextContent("Comments1 pending");
+  });
+});
+
+describe("the technical decisions", () => {
+  const KEPT = "- \\[data-model\\] Amounts are kept in cents. (F1)";
+
+  it("counts the assumed decisions on the Overview's row", async () => {
+    renderCard();
+    const technical = await screen.findByRole("region", { name: "For technical review" });
+    expect(within(technical).getByLabelText("1 assumed decision")).toHaveTextContent("1 assumed");
+  });
+
+  it("keeps an assumed decision in the room, says it was you, and leaves the file checked", async () => {
+    renderCard("?art=decisions");
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Checked: Technical decisions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Keep: [data-model] Amounts are kept in cents. (F1)" }));
+    expect(readDocFile(doc, DECISIONS)).toContain(KEPT);
+    expect(await screen.findByText("by you")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Keep:/ })).toBeNull();
+    expect(screen.getByRole("checkbox", { name: "Checked: Technical decisions" })).toBeChecked();
+    expect(screen.queryByText("Changed since you checked it")).toBeNull();
+  });
+
+  it("opens the file's 💬 on the decision, quoted read-only, and adds the quote and the change as a Pending draft", async () => {
+    renderCard("?art=decisions");
+    fireEvent.click(await screen.findByRole("button", { name: "Change: [data-model] Amounts are kept in cents. (F1)" }));
+    expect(screen.getByRole("blockquote", { name: "The decision this comment changes" })).toHaveTextContent("[data-model] Amounts are kept in cents. (F1)");
+    expect(screen.getByText("Write what you want instead under the quote.")).toBeInTheDocument();
+    const box = screen.getByLabelText("Your comment on Technical decisions");
+    expect(box).toHaveValue("");
+    fireEvent.change(box, { target: { value: "Keep them as decimals." } });
+    fireEvent.click(screen.getByRole("button", { name: "Add comment" }));
+    expect(review().artifacts.find((a) => a.path === DECISIONS)?.comments?.[0]).toMatchObject({
+      text: "> [data-model] Amounts are kept in cents. (F1)\n\nKeep them as decimals.",
+      status: "draft",
+    });
+    expect(readDocFile(doc, DECISIONS)).toContain("*assumed*");
+    expect(await screen.findByText("Pending")).toBeInTheDocument();
+  });
+
+  it("keeps the quote read-only when its draft is edited", async () => {
+    renderCard("?art=decisions");
+    fireEvent.click(await screen.findByRole("button", { name: "Change: [data-model] Amounts are kept in cents. (F1)" }));
+    fireEvent.change(screen.getByLabelText("Your comment on Technical decisions"), { target: { value: "Keep them as decimals." } });
+    fireEvent.click(screen.getByRole("button", { name: "Add comment" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const box = screen.getByLabelText(/^Edit your comment/);
+    expect(box).toHaveValue("Keep them as decimals.");
+    expect(screen.getByRole("blockquote", { name: "The decision this comment changes" })).toHaveTextContent("[data-model] Amounts are kept in cents. (F1)");
+    fireEvent.change(box, { target: { value: "Keep them as decimals, two places." } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(review().artifacts.find((a) => a.path === DECISIONS)?.comments?.[0]?.text).toBe(
+      "> [data-model] Amounts are kept in cents. (F1)\n\nKeep them as decimals, two places.",
+    );
+  });
+
+  it("offers nothing on a decision already confirmed", async () => {
+    seed({ ...FILES, [DECISIONS]: "# Technical decisions\n\n- [data-model] Amounts are kept in cents. (F1)\n" });
+    renderCard("?art=decisions");
+    expect(await screen.findByText("[data-model] Amounts are kept in cents. (F1)")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^(Keep|Change):/ })).toBeNull();
   });
 });

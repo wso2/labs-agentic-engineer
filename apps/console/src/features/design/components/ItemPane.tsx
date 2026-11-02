@@ -16,6 +16,7 @@
  * under the License.
  */
 
+import { useState } from "react";
 import type { ReviewComment } from "@aep/agent-stream";
 import { AgentView } from "@aep/ui-agent-view";
 import { Box, Typography } from "@wso2/oxygen-ui";
@@ -27,6 +28,7 @@ import { ArtifactFrame } from "./ArtifactFrame";
 import type { ThreadActions } from "./CommentThreads";
 import { DependencyView } from "./DependencyView";
 import { AcceptanceList } from "./viewers/AcceptanceList";
+import { DecisionsView } from "./viewers/DecisionsView";
 import { DocumentView } from "./viewers/DocumentView";
 import { ArchitectureArtifact, ContractArtifact } from "./viewers/PackagedViewers";
 import { RolesView, SecurityView } from "./viewers/RecordViews";
@@ -34,8 +36,9 @@ import { RolesView, SecurityView } from "./viewers/RecordViews";
 // One of the design's files, open: its title line (Checked and 💬) over the
 // console's own renderer for that kind of file, unchanged (D13): the cell
 // diagram, DesignView and OpenApiView, roles then how they are enforced, the
-// documents as written, an agent in AgentView's tabs, the prototype's entry to
-// its full-screen review, and the acceptance tests as a plain list.
+// documents as written, the technical decisions with Keep and Change… on an
+// assumed one, an agent in AgentView's tabs, the prototype's entry to its
+// full-screen review, and the acceptance tests as a plain list.
 
 function SubHead({ children }: { children: string }) {
   return (
@@ -52,6 +55,7 @@ function Body({
   primary,
   featureName,
   onReview,
+  onQuote,
 }: {
   projectName: string;
   card: DesignCard;
@@ -59,6 +63,8 @@ function Body({
   primary: boolean;
   featureName: (id: string) => string;
   onReview: (component: string) => void;
+  /** Open the file's 💬 on a comment about this line of it. */
+  onQuote: (line: string) => void;
 }) {
   const { body } = item;
   switch (body.kind) {
@@ -66,6 +72,8 @@ function Body({
       return <ArchitectureArtifact source={body.source} layoutKey={`${projectName}:design`} />;
     case "document":
       return <DocumentView markdown={body.markdown} />;
+    case "decisions":
+      return <DecisionsView lines={card.decisions} ready={card.review.ready} onKeep={card.keepDecision} onChange={onQuote} />;
     case "roles":
       return (
         <>
@@ -130,6 +138,8 @@ export function ItemPane(props: {
   const { card, item } = props;
   const { review } = card;
   const hash = card.hashes[item.path];
+  // The line of this file a comment is being written about.
+  const [quote, setQuote] = useState<{ path: string; line: string } | null>(null);
   return (
     <ArtifactFrame
       title={item.title}
@@ -142,8 +152,10 @@ export function ItemPane(props: {
       onComment={(text) => void review.comment(item.path, text)}
       place={placeIn(card, item)}
       ready={review.ready}
+      quote={quote?.path === item.path ? quote.line : null}
+      onQuoteDone={() => setQuote(null)}
     >
-      <Body {...props} />
+      <Body {...props} onQuote={(line) => setQuote({ path: item.path, line })} />
     </ArtifactFrame>
   );
 }

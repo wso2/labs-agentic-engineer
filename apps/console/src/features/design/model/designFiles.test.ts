@@ -92,7 +92,14 @@ describe("the Design card's rail, from the design's files", () => {
 
   it("hashes a file's text, and a prototype as the kit names its revision", () => {
     const hashes = artifactHashes(items);
-    expect(hashes["specs/design/decisions.md"]).toBe(sha256Text(files["specs/design/decisions.md"]!));
+    expect(hashes["specs/design/flows/claim-decision.md"]).toBe(sha256Text(files["specs/design/flows/claim-decision.md"]!));
     expect(hashes[`${C}expense-webapp/prototype.json`]).toBe(prototypeHash('{ "name": "Expense Tracker" }', "export default 1;"));
+  });
+
+  it("hashes the technical decisions without their assumed tags, so a Keep leaves them checked", () => {
+    const kept = { ...files, "specs/design/decisions.md": "# Technical decisions\n\n- [data-model] Amounts in cents. (F1)\n" };
+    const hash = (f: Record<string, string>) => artifactHashes(designItems(f))["specs/design/decisions.md"];
+    expect(hash(kept)).toBe(hash(files));
+    expect(hash(kept)).toBe(sha256Text("# Technical decisions\n\n- [data-model] Amounts in cents. (F1)\n"));
   });
 });

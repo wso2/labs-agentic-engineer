@@ -20,7 +20,7 @@ import type { Node as PmNode } from "@tiptap/pm/model";
 import { Transform } from "@tiptap/pm/transform";
 import type * as Y from "yjs";
 import { updateYFragment } from "y-prosemirror";
-import { parseLine } from "../model/ids";
+import { parseLine, tagWithSpace, type Span } from "../model/ids";
 import { openEntries } from "../model/questions";
 import { docLines, type DocLine } from "./docLines";
 import { readFragment } from "./readFragment";
@@ -35,20 +35,24 @@ import { readFragment } from "./readFragment";
 /** Marks the user's edits made outside an editor. */
 const USER_ORIGIN = "console:user";
 
-/** Whitespace before the `*assumed*` tag goes with it. */
 function tagRange(line: DocLine): { from: number; to: number } | null {
   const tag = parseLine(line.text, line.emphasis).assumed;
   if (!tag) return null;
-  let start = tag.start;
-  while (start > 0 && /\s/.test(line.text[start - 1]!)) start--;
-  return { from: line.posAt(start), to: line.posAt(tag.end) };
+  const span = tagWithSpace(line.text, tag);
+  return { from: line.posAt(span.start), to: line.posAt(span.end) };
+}
+
+/** Drop a tag from a line, and the whitespace before it. */
+export function removeTag(tr: Transform, line: DocLine, tag: Span): void {
+  const span = tagWithSpace(line.text, tag);
+  tr.delete(line.posAt(span.start), line.posAt(span.end));
 }
 
 /** Settle an assumed line: drop its `*assumed*` tag, keep its words. False when it has none. */
 export function removeAssumedTag(tr: Transform, line: DocLine): boolean {
-  const range = tagRange(line);
-  if (!range) return false;
-  tr.delete(range.from, range.to);
+  const tag = parseLine(line.text, line.emphasis).assumed;
+  if (!tag) return false;
+  removeTag(tr, line, tag);
   return true;
 }
 

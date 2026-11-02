@@ -207,3 +207,33 @@ export function designRoomFiles(projectName: string, drafts: readonly ArtifactDr
     [DESIGN_REVIEW_PATH]: ACME_REVIEW,
   };
 }
+
+/** A decision line as words: no bullet, no `*assumed*`, no markdown escapes, single-spaced. */
+function decisionWords(line: string): string {
+  return line
+    .replace(/^\s*[-*]\s+/, "")
+    .replace(/\s*\*assumed\*/g, "")
+    .replace(/\\([\\`*_{}[\]()#+\-.!|>~])/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * How the mock agent applies a Change… comment on a technical decision: the
+ * comment quotes the decision on its first line, and the words under the
+ * quote become the decision, without `*assumed*` (its author decided it). The
+ * line keeps its artifact tag and its features. Null when the comment quotes
+ * no decision in the file, or says nothing under the quote.
+ */
+export function reviseDecision(markdown: string, comment: string): { from: string; to: string; words: string } | null {
+  const [first, ...rest] = comment.split("\n");
+  if (!first?.startsWith(">")) return null;
+  const quoted = first.slice(1).replace(/\s+/g, " ").trim();
+  const words = rest.join(" ").replace(/\s+/g, " ").trim();
+  if (!words) return null;
+  const from = markdown.split("\n").find((l) => /^\s*[-*]\s/.test(l) && decisionWords(l) === quoted);
+  if (!from) return null;
+  const lead = /^\s*[-*]\s+(?:\\?\[[^\]]*?\\?\]\s+)?/.exec(from)![0];
+  const features = /\s*\([^()]*\)\s*$/.exec(from)?.[0].trimEnd() ?? "";
+  return { from, to: `${lead}${words}${features}`, words };
+}

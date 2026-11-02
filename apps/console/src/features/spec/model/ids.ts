@@ -101,6 +101,13 @@ function closingTag(text: string, emphasis: Span[], word: string): Span | null {
   return tag ? { start: tag.start, end: tag.end } : null;
 }
 
+/** A tag's span in a line's text, widened over the whitespace before it: removing a tag removes that too. */
+export function tagWithSpace(text: string, tag: Span): Span {
+  let start = tag.start;
+  while (start > 0 && /\s/.test(text[start - 1]!)) start--;
+  return { start, end: tag.end };
+}
+
 /** Split a line into its ID, sources, tags and words. */
 export function parseLine(text: string, emphasis: Span[] = []): LineParts {
   const leadMatch = LEAD.exec(text);

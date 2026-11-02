@@ -114,6 +114,16 @@ function Count({ n }: { n: number }) {
   );
 }
 
+/** The technical decisions still assumed: they build as written until someone keeps or changes them. */
+function Assumed({ n }: { n: number }) {
+  if (n === 0) return null;
+  return (
+    <Box component="span" aria-label={`${n} assumed ${n === 1 ? "decision" : "decisions"}`} sx={{ fontSize: "0.75rem", color: "warning.main", whiteSpace: "nowrap" }}>
+      {n} assumed
+    </Box>
+  );
+}
+
 function Open({ projectName, art, title, primary }: { projectName: string; art: string; title: string; primary: boolean }) {
   return primary ? (
     <OpenButton to="/projects/$projectName/design" params={{ projectName }} search={{ art }} size="small" variant="contained" aria-label={`Open ${title}`}>
@@ -128,7 +138,7 @@ function Open({ projectName, art, title, primary }: { projectName: string; art: 
 
 function ReviewRows({ projectName, card, rows }: { projectName: string; card: DesignCard; rows: ReviewRow[] }) {
   const { primary, review } = card;
-  return rows.map(({ item, checked, changed, waiting }) => {
+  return rows.map(({ item, checked, changed, waiting, assumed }) => {
     const next = primary?.kind === "open" && primary.key === item.key;
     return (
       <Row key={item.key} highlight={next}>
@@ -143,6 +153,7 @@ function ReviewRows({ projectName, card, rows }: { projectName: string; card: De
         <Name sub={checked ? "checked" : changed ? "changed since you checked it" : undefined} subTone={checked ? "success" : "warning"}>
           {item.title}
         </Name>
+        <Assumed n={assumed} />
         <Count n={waiting} />
         <Open projectName={projectName} art={item.key} title={item.title} primary={next} />
       </Row>

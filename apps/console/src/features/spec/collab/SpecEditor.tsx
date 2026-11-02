@@ -30,30 +30,10 @@ import { idTarget, resolveId, type IdIndex } from "../model/ids";
 import type { SpecTarget } from "../useSpecWorkspace";
 import { IdPreview } from "../components/IdPreview";
 import { quietLinkSx } from "../components/QuietId";
-import { soft } from "../components/Tag";
+import { pillSx, soft } from "../components/Tag";
 import { actOnAssumed, AssumedLines, leaveAssumedEdit } from "./assumedLines";
 import { readFragment, type FragmentRead } from "./readFragment";
 import { ROWS_SLOT, SpecLines, setSpecLinesOptions, type AssumedAction } from "./specLinesPlugin";
-
-/** A pill button inside the document, in one palette colour. */
-function pillSx(tone: "warning") {
-  return {
-    fontFamily: "inherit",
-    fontStyle: "normal",
-    fontWeight: 600,
-    fontSize: "0.6875rem",
-    lineHeight: 1.6,
-    px: 1,
-    borderRadius: 999,
-    border: 1,
-    borderColor: `${tone}.main`,
-    color: `${tone}.main`,
-    bgcolor: "background.paper",
-    cursor: "pointer",
-    "&:hover": { bgcolor: soft(tone) },
-    "&:focus-visible": { outline: 2, outlineColor: `${tone}.main`, outlineOffset: 1 },
-  } as const;
-}
 
 // How a spec document reads: the app's prose (proseSx), and the spec's own
 // line decorations on top. The decorations (specLinesPlugin.ts) only name
