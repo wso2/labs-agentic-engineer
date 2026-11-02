@@ -295,9 +295,13 @@ var (
 	privateKeyBlock = regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`)
 	assignedSecret  = regexp.MustCompile(`(?i)\b(password|passwd|secret|api[_-]?key|access[_-]?key|private[_-]?key|token|client[_-]?secret)\b\s*[:=]\s*["']?([A-Za-z0-9_\-+/=.]{16,})`)
 	credentialInURL = regexp.MustCompile(`://[^/\s:@]+:[^/\s@]+@`)
-	bareToken       = regexp.MustCompile(`[A-Za-z0-9+/_\-]{32,}`)
-	lowerWord       = regexp.MustCompile(`^[a-z]+$`)
+	bareToken       = regexp.MustCompile(`[A-Za-z0-9+` + tokenSeparators + `]{32,}`)
 )
+
+// tokenSeparators are the characters a token may carry that also join the
+// words of a slug and the segments of a path. The hyphen is last so the
+// bareToken class reads it literally.
+const tokenSeparators = "/_-"
 
 // credentialIn answers the rule a text trips, or "" when it trips none.
 func credentialIn(text []byte) string {
@@ -320,16 +324,30 @@ func credentialIn(text []byte) string {
 
 // looksLikeToken: three character classes and over 4 bits of entropy per
 // byte, which a word, a hex sha or a plain path (two classes) never reaches.
-// A name made of words still can: a feature link such as
+// A name made of words can, taken whole: a feature link such as
 // features/F12-visas-and-travel-documents carries one upper-case letter and
-// two digits in its ID, so that shape is set aside first.
+// two digits in its ID. So a run of three or more separated segments is
+// judged segment by segment and reads as a name when no segment is dense on
+// its own. A key with word prefixes (sk_live_<body>) still trips: its body is.
 func looksLikeToken(tok []byte) bool {
-	if isSlugOrPath(tok) {
-		return false
+	segments := bytes.FieldsFunc(tok, func(r rune) bool { return strings.ContainsRune(tokenSeparators, r) })
+	if len(segments) < 3 {
+		return denseMixed(tok)
 	}
+	for _, segment := range segments {
+		if denseMixed(segment) {
+			return true
+		}
+	}
+	return false
+}
+
+// denseMixed: upper case, lower case and digits all present, and over 4 bits
+// of entropy per byte.
+func denseMixed(s []byte) bool {
 	var upper, lower, digit bool
 	counts := map[byte]int{}
-	for _, c := range tok {
+	for _, c := range s {
 		counts[c]++
 		switch {
 		case c >= 'A' && c <= 'Z':
@@ -344,29 +362,10 @@ func looksLikeToken(tok []byte) bool {
 		return false
 	}
 	var entropy float64
-	n := float64(len(tok))
+	n := float64(len(s))
 	for _, k := range counts {
 		p := float64(k) / n
 		entropy -= p * math.Log2(p)
 	}
 	return entropy > 4.0
-}
-
-// isSlugOrPath: three or more segments between the separators a token may
-// also carry (slash, hyphen, underscore), all but at most one of them a
-// lower-case word. A kebab slug or a path always reads so; a random token
-// with that many separators almost never spells a word in every segment but
-// one.
-func isSlugOrPath(tok []byte) bool {
-	segments := bytes.FieldsFunc(tok, func(r rune) bool { return r == '/' || r == '-' || r == '_' })
-	if len(segments) < 3 {
-		return false
-	}
-	other := 0
-	for _, s := range segments {
-		if !lowerWord.Match(s) {
-			other++
-		}
-	}
-	return other <= 1
 }
