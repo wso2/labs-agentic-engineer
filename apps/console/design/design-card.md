@@ -160,10 +160,12 @@ and a prototype it may rewrite shows its last revision until the run ends.
 the run's end: the design agent ends the turn's stream, then its usage outbox
 posts the record (with the run's `endRef` and `changedPaths`) to aep-api. So
 when a turn completes the console reads the spec state again, backing off for
-about 15 s, until `designedFrom` or `artifactRevisions` changes
-(`agent-chat/turnRecord.ts`); read only at the end, a run read as leaving its
-own design out of date, and the title line kept the old revision, until a
-reload.
+about 15 s, until `designedFrom` changes (`agent-chat/turnRecord.ts`), and
+reads the build preflight again. A revision can move on an earlier read,
+while the commit the basis is taken from is not readable yet; the build gate
+reads the basis, so that read is not when it stops. Read only at the end, a
+run read as not designed yet, or as leaving its own design out of date, and
+the title line kept the old revision, until a reload.
 
 ## The chat
 

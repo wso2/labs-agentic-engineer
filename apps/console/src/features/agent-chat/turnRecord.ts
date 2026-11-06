@@ -27,21 +27,26 @@ import { specKey } from "../spec/api/specModel";
 // lands: a design run's basis, read where the run ended (`designedFrom`), and
 // each design file's revision (`artifactRevisions`). Read only at the turn's
 // end, the spec state is usually the one from before the run, and the Design
-// card would say the design it just made is out of date until a reload.
+// card would say the design it just made is out of date — or not designed
+// yet — until a reload.
 //
 // So after a completed turn the spec state is read again, backing off, until
-// what the record decides in it changes, for a bounded while (the outbox
-// retries every 2 s while its socket is down). A turn that changed none of it
-// (an interview, a reply) reads it a few more times and stops.
+// the basis changes, for a bounded while (the outbox retries every 2 s while
+// its socket is down, then the tools side holds the record for its coalesce
+// window). Revisions can move on an earlier read, while the commit the basis
+// is taken from is not readable yet. The build gate reads the basis ("not
+// designed yet", "design out of date"), so that read is not the one to stop
+// on. A turn that changed none of it (an interview, a reply) reads it a few
+// more times and stops.
 
 type SpecState = components["schemas"]["SpecState"];
 
 /** The waits between reads after a completed turn: about 15 s in all. */
 export const RECORD_READ_DELAYS_MS: readonly number[] = [500, 1_000, 2_000, 4_000, 8_000];
 
-/** What a turn's record decides in the spec state, comparable; undefined before the state was read. */
+/** The basis the build gate reads, comparable; undefined before the state was read. */
 function recorded(state: SpecState | undefined): string | undefined {
-  return state && JSON.stringify([state.designedFrom, state.artifactRevisions]);
+  return state && JSON.stringify(state.designedFrom);
 }
 
 function wait(ms: number, signal: AbortSignal): Promise<void> {
@@ -60,7 +65,7 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
 
 /**
  * Read the project's spec state again now, then after each of `delays` until
- * what a turn's record decides in it differs from what it was when the turn
+ * the design basis (`designedFrom`) differs from what it was when the turn
  * ended. No delays (a failed turn) reads it once. A state never read (nothing
  * shows it) is read once: whatever shows it later reads it fresh. `signal`
  * stops the reads (a later turn's end, or the shell unmounting).
