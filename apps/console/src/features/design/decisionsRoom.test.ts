@@ -19,9 +19,8 @@
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { readDocFile, setDocFile, setDocFileAsAgent } from "@aep/collab-doc";
-import { keepDecision, readDecisionLines } from "./decisionsRoom";
-import { assumedCount, decisionTag, keptText, withoutAssumedTags } from "./model/decisions";
-import { DECISIONS_PATH } from "./model/designFiles";
+import { keepDecision, keptMarkdown, readDecisionLines } from "./decisionsRoom";
+import { assumedCount, decisionTag, DECISIONS_PATH, keptText } from "./model/decisions";
 
 // The decisions file as the design skill writes it, through a Y.Doc as the
 // room holds it, read back as the committer would write it.
@@ -81,23 +80,6 @@ describe("keepDecision", () => {
     expect(keepDecision(doc, "[data-model] Amounts are floats. assumed (F1)")).toBe(false);
   });
 
-  it("hashes a tag that closes no decision as the file's words", () => {
-    const markdown = "# Technical decisions\n\nA note. *assumed*\n\n```\n- a sample *assumed*\n```\n";
-    expect(withoutAssumedTags(markdown)).toBe(markdown);
-    expect(withoutAssumedTags("- [data-model] Amounts in cents. *assumed* (F1)\n  - Nested. *assumed*\n")).toBe(
-      "- [data-model] Amounts in cents. (F1)\n  - Nested.\n",
-    );
-  });
-
-  it("leaves the file's Checked hash as it was", () => {
-    const doc = docWith(DECISIONS);
-    const before = withoutAssumedTags(readDocFile(doc, DECISIONS_PATH)!);
-    for (const line of readDecisionLines(doc).filter((l) => decisionTag(l) !== null)) keepDecision(doc, line.text);
-    const after = readDocFile(doc, DECISIONS_PATH)!;
-    expect(after).not.toContain("assumed");
-    expect(withoutAssumedTags(after)).toBe(before);
-  });
-
   it("keeps a run's concurrent write to another line of the file", () => {
     const doc = docWith(DECISIONS);
     const agent = new Y.Doc();
@@ -109,5 +91,41 @@ describe("keepDecision", () => {
     const merged = readDocFile(doc, DECISIONS_PATH)!;
     expect(merged).toContain("never as decimals. (F1, F2)");
     expect(merged).toContain("newest first. *assumed* (F2)");
+  });
+});
+
+describe("keptMarkdown, what the Checked hash is taken of", () => {
+  /** The file's hash input before and after one Keep of each assumed decision, in turn. */
+  function eachKeep(markdown: string): { before: string; after: string[] } {
+    const doc = docWith(markdown);
+    const before = keptMarkdown(readDocFile(doc, DECISIONS_PATH)!);
+    const after = readDecisionLines(doc)
+      .filter((l) => decisionTag(l) !== null)
+      .map((l) => {
+        expect(keepDecision(doc, l.text)).toBe(true);
+        return keptMarkdown(readDocFile(doc, DECISIONS_PATH)!);
+      });
+    expect(readDocFile(doc, DECISIONS_PATH)).not.toMatch(/assumed\* \(F/);
+    return { before, after };
+  }
+
+  it("does not change with a Keep", () => {
+    const { before, after } = eachKeep(DECISIONS);
+    expect(after).toEqual([before, before, before]);
+  });
+
+  it("does not change with a Keep on a decision that wraps onto a second line", () => {
+    const wrapped = "# Technical decisions\n\n- [data-model] Amounts are stored\n  in cents. *assumed* (F1)\n- [contract] Oldest  \n  first. *assumed* (F2)\n";
+    const { before, after } = eachKeep(wrapped);
+    expect(after).toEqual([before, before]);
+  });
+
+  it("keeps a tag that closes no decision as the file's words", () => {
+    const markdown = "# Technical decisions\n\nA note. *assumed*\n\n```\n- a sample *assumed*\n~~~\n- still code *assumed*\n```\n\n- [data-model] Amounts in cents. *assumed* (F1)\n";
+    const kept = keptMarkdown(markdown);
+    expect(kept).toContain("A note. *assumed*");
+    expect(kept).toContain("- a sample *assumed*");
+    expect(kept).toContain("- still code *assumed*");
+    expect(kept).toContain("Amounts in cents. (F1)");
   });
 });

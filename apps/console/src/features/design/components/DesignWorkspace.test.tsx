@@ -38,7 +38,7 @@ import { sha256Text } from "../../../lib/sha256";
 import type { ProjectChat } from "../../agent-chat/chatStore";
 import type { BuildHold } from "../../builds/model/picker";
 import type { DesignModel } from "../api/designModel";
-import { withoutAssumedTags } from "../model/decisions";
+import { keptMarkdown } from "../decisionsRoom";
 import { readReview } from "../model/review";
 import { readSpecLines } from "../../spec/collab/useSpecLines";
 
@@ -250,8 +250,8 @@ describe("Checked and comments on a file's title line", () => {
     const box = await screen.findByRole("checkbox", { name: "Checked: Technical decisions" });
     fireEvent.click(box);
     await waitFor(() => expect(box).toBeChecked());
-    // The technical decisions' hash leaves out their assumed tags (ADR-0006).
-    expect(review().artifacts).toEqual([{ path: DECISIONS, checkedHash: sha256Text(withoutAssumedTags(readDocFile(doc, DECISIONS)!)) }]);
+    // The technical decisions are hashed as they read once every one is kept (ADR-0006).
+    expect(review().artifacts).toEqual([{ path: DECISIONS, checkedHash: sha256Text(keptMarkdown(readDocFile(doc, DECISIONS)!)) }]);
 
     act(() => setDocFile(doc, DECISIONS, `${FILES[DECISIONS]}- [contract] Oldest first. (F2)\n`, "agent"));
     await waitFor(() => expect(box).not.toBeChecked());

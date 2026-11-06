@@ -21,7 +21,7 @@ import type * as Y from "yjs";
 import { readDocFile } from "@aep/collab-doc";
 import { DESIGN_REVIEW_PATH, type ReviewComment } from "@aep/agent-stream";
 import type { MockSpecModel } from "./spec";
-import { DECISIONS_PATH } from "../../features/design/model/designFiles";
+import { DECISIONS_PATH } from "../../features/design/model/decisions";
 import { readReview, reviewText, splitQuote } from "../../features/design/model/review";
 import { manifestPath, sourcePath } from "../../features/prototype/model/prototypes";
 import { projectSpecDoc } from "../../features/spec/collab/specDoc";

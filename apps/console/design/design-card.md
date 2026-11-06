@@ -56,9 +56,10 @@ is the signed-in user (`useSession`, the token's sub and name); ids are
 The hash (`artifactHashes`) is the lowercase hex SHA-256 of the file's UTF-8
 text as the room holds it (`lib/sha256.ts`, plain JavaScript, copied from the
 prototype kit, so it is the same over plain HTTP), and for a prototype the
-kit's `prototypeHash(manifest, source)`. The technical decisions' text is
-hashed without its `*assumed*` tags (`withoutAssumedTags`), so a Keep leaves
-the file checked
+kit's `prototypeHash(manifest, source)`. The technical decisions are hashed
+as the file reads once every decision is kept (`keptMarkdown`: Keep's own
+edit of every assumed line, on a scratch copy), so a Keep leaves the file
+checked
 ([ADR-0006](decisions/ADR-0006-an-assumed-technical-decision-is-kept-in-place-or-changed-by-a-comment.md)).
 
 ## A file's title line

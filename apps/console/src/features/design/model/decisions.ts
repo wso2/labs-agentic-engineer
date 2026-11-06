@@ -26,6 +26,9 @@ import { closingTag, tagWithSpace, type LineBlock, type Span } from "../../spec/
 // requirement's, the tag is followed by the features, so the spec's
 // parseLine does not find it.
 
+/** The file the technical decisions are written in. */
+export const DECISIONS_PATH = "specs/design/decisions.md";
+
 /** After the tag: punctuation, and the features the decision serves, "(F1, F2)" or "(all)". */
 const AFTER_TAG = /^[\s.,;:]*(\([^()]*\))?[\s.,;:]*$/;
 
@@ -45,35 +48,4 @@ export function keptText(line: LineBlock): string {
   if (!tag) return line.text;
   const span = tagWithSpace(line.text, tag);
   return line.text.slice(0, span.start) + line.text.slice(span.end);
-}
-
-/**
- * The `*assumed*` tag closing a decision's markdown line, with the space
- * before it: AFTER_TAG's rule over the markdown, where the room escapes a
- * bracket.
- */
-const MARKDOWN_TAG = /[ \t]*(?:\*assumed\*|_assumed_)(?=[ \t.,;:]*(?:\\?\([^()\n]*\\?\))?[ \t.,;:]*$)/;
-
-/** A list entry's line: a decision is one. */
-const LIST_LINE = /^\s*(?:[-*+]|\d+[.)])\s/;
-const FENCE = /^\s*(?:```|~~~)/;
-
-/**
- * The file's markdown as its Checked hash reads it: without the tags that
- * close decisions, which are list entries outside a code block, as
- * decisionTag reads them. Keep changes no words, so a checked file stays
- * checked (ADR-0006); any other change, a tag elsewhere included, unticks it.
- */
-export function withoutAssumedTags(markdown: string): string {
-  let fenced = false;
-  return markdown
-    .split("\n")
-    .map((line) => {
-      if (FENCE.test(line)) {
-        fenced = !fenced;
-        return line;
-      }
-      return !fenced && LIST_LINE.test(line) ? line.replace(MARKDOWN_TAG, "") : line;
-    })
-    .join("\n");
 }

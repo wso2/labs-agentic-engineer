@@ -28,7 +28,8 @@ offered no way to settle any of its lines.
    read-only viewer; no design file is typed into on the Design page.
 3. **Dropping an `*assumed*` tag is never a change.** It already moves no
    design basis and changes no build; now it also leaves a Checked file
-   checked: the hash of `decisions.md` is taken without its tags.
+   checked: the hash of `decisions.md` is taken of the file as it reads once
+   every decision is kept, made by Keep's own edit.
 
 ## Rejected
 

@@ -18,7 +18,7 @@
 
 import { DESIGN_REVIEW_PATH } from "@aep/agent-stream";
 import type { DesignDependency } from "../../features/design/api/designModel";
-import { DECISIONS_PATH } from "../../features/design/model/designFiles";
+import { DECISIONS_PATH } from "../../features/design/model/decisions";
 import { splitQuote } from "../../features/design/model/review";
 import { manifestPath, sourcePath } from "../../features/prototype/model/prototypes";
 import type { ArtifactDraft } from "./design";
@@ -209,6 +209,9 @@ export function designRoomFiles(projectName: string, drafts: readonly ArtifactDr
   };
 }
 
+/** The features clause closing a decision: "(F1, F2)" or "(all)". */
+const FEATURES = /\s*(\((?:all|F\d+(?:\s*,\s*F\d+)*)\))\s*$/;
+
 /** A decision line as words: no bullet, no `*assumed*`, no markdown escapes, single-spaced. */
 function decisionWords(line: string): string {
   return line
@@ -238,8 +241,8 @@ export function reviseDecision(markdown: string, comment: string): { from: strin
   if (!from) return null;
   const lead = /^\s*[-*]\s+(?:\\?\[[^\]]*?\\?\]\s+)?/.exec(from)![0];
   // The features the decision serves, unless the comment's words name them; the tag goes before them.
-  const own = /\s*(\([^()]*\))$/.exec(words);
+  const own = FEATURES.exec(words);
   const decision = own ? words.slice(0, own.index) : words;
-  const features = own ? ` ${own[1]}` : (/\s*\([^()]*\)\s*$/.exec(from)?.[0].trimEnd() ?? "");
+  const features = ` ${own?.[1] ?? FEATURES.exec(from)?.[1] ?? ""}`.trimEnd();
   return { from, to: `${lead}${decision} *assumed*${features}`, words };
 }

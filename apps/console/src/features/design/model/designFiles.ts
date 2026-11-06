@@ -28,7 +28,8 @@ import {
   securityRowsOf,
   type SecurityDoc,
 } from "./catalog";
-import { withoutAssumedTags } from "./decisions";
+import { keptMarkdown } from "../decisionsRoom";
+import { DECISIONS_PATH } from "./decisions";
 
 // The Design card's rail (L21, D12): the files Design generates, read from the
 // room, one item per file and in the order Design makes them:
@@ -40,7 +41,7 @@ import { withoutAssumedTags } from "./decisions";
 //
 // An item shows only once its file exists. Each names the path review.json
 // keys it by (the prototype by its manifest), what its Checked hash is taken
-// of (the technical decisions' without their `*assumed*` tags, ADR-0006), and
+// of (the technical decisions' as they read once every one is kept, ADR-0006), and
 // which Overview list reviews it: a business reviewer's (prototypes,
 // agents, roles and permissions) or a technical one's (architecture, data
 // model, contracts, flows, technical decisions). Only those are checkable;
@@ -58,7 +59,6 @@ const HEADING = /^#\s+(.+)$/m;
 /** The room's prefixes the rail reads. */
 export const DESIGN_FILE_PREFIXES = [DESIGN, "specs/validation/acceptance/"] as const;
 
-export const DECISIONS_PATH = `${DESIGN}decisions.md`;
 
 export type ReviewList = "business" | "technical";
 
@@ -262,7 +262,7 @@ export function designItems(files: Readonly<Record<string, string>>): DesignItem
         label: "Technical decisions",
         title: "Technical decisions",
         list: "technical",
-        hashOf: { text: withoutAssumedTags(decisions) },
+        hashOf: { text: keptMarkdown(decisions) },
         body: { kind: "decisions" },
       }),
     );

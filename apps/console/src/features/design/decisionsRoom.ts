@@ -16,18 +16,21 @@
  * under the License.
  */
 
-import type * as Y from "yjs";
+import * as Y from "yjs";
+import type { Transform } from "@tiptap/pm/transform";
+import { readDocFile, setDocFile } from "@aep/collab-doc";
 import { docLines } from "../spec/collab/docLines";
 import { readFragment } from "../spec/collab/readFragment";
 import { editFile, fileFragment, removeTag } from "../spec/collab/specEdits";
 import type { LineBlock } from "../spec/model/ids";
-import { decisionTag } from "./model/decisions";
-import { DECISIONS_PATH } from "./model/designFiles";
+import { decisionTag, DECISIONS_PATH } from "./model/decisions";
 
 // The technical decisions in the room. Their lines are read from the file's
 // fragment, as the spec's are, so a line is known by the same words that Keep
 // finds it by. Keep is a minimal edit of that fragment (editFile), so it lands
-// while a design run writes the same file.
+// while a design run writes the same file. The file's Checked hash is taken of
+// it as it reads once every decision is kept, made by Keep's own edit, so a
+// Keep can never change that hash (ADR-0006).
 
 /** The decisions file's lines; empty while Design has not written it. */
 export function readDecisionLines(doc: Y.Doc): LineBlock[] {
@@ -46,4 +49,24 @@ export function keepDecision(doc: Y.Doc, text: string): boolean {
     const tag = line ? decisionTag(line) : null;
     if (line && tag) removeTag(tr, line, tag);
   });
+}
+
+/** Keep every assumed decision of a file: each tag comes off as Keep takes it off, the last line first so the earlier positions hold. */
+function keepAll(tr: Transform): void {
+  for (const line of docLines(tr.doc).reverse()) {
+    const tag = decisionTag(line);
+    if (tag) removeTag(tr, line, tag);
+  }
+}
+
+/**
+ * The decisions file as it reads once every decision is kept, as the room
+ * writes it out: what its Checked hash is taken of. Worked out on a scratch
+ * copy of the file, never the room's.
+ */
+export function keptMarkdown(markdown: string): string {
+  const scratch = new Y.Doc();
+  setDocFile(scratch, DECISIONS_PATH, markdown);
+  editFile(scratch, DECISIONS_PATH, keepAll);
+  return readDocFile(scratch, DECISIONS_PATH) ?? markdown;
 }

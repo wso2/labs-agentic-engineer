@@ -100,6 +100,5 @@ describe("the Design card's rail, from the design's files", () => {
     const kept = { ...files, "specs/design/decisions.md": "# Technical decisions\n\n- [data-model] Amounts in cents. (F1)\n" };
     const hash = (f: Record<string, string>) => artifactHashes(designItems(f))["specs/design/decisions.md"];
     expect(hash(kept)).toBe(hash(files));
-    expect(hash(kept)).toBe(sha256Text("# Technical decisions\n\n- [data-model] Amounts in cents. (F1)\n"));
   });
 });

@@ -35,7 +35,8 @@ history.
 2. **Checked is a content hash.** It is the lowercase hex SHA-256 of the
    file's UTF-8 text as stored. For a prototype it is the kit's
    `prototypeHash` of the two files. For `specs/design/decisions.md` it is
-   taken without the `*assumed*` tags (amended below). A changed artifact unticks itself, and
+   taken as the file reads once every decision is kept (amended below). A
+   changed artifact unticks itself, and
    nothing else clears the tick.
 3. **A comment** has an id, an author (the platform user's id and name), its
    text and `createdAt`. Its status moves `draft` → `sent` → `addressed`, and
@@ -112,6 +113,8 @@ changed which file.
 The console now lets a user keep an assumed technical decision, which drops
 its `*assumed*` tag and changes no words
 ([console ADR-0006](../../apps/console/design/decisions/ADR-0006-an-assumed-technical-decision-is-kept-in-place-or-changed-by-a-comment.md)).
-So the Checked hash of `specs/design/decisions.md` is taken of its text with
-each closing `*assumed*` tag, and the space before it, removed. A Keep then
-leaves the file checked. Every other artifact is hashed as stored.
+So the Checked hash of `specs/design/decisions.md` is taken of the file as it
+reads once every decision is kept: each decision's closing `*assumed*` tag
+and the space before it removed, by the console's own Keep, and written out
+as the room writes it. A Keep then leaves the file checked. Every other
+artifact is hashed as stored.
