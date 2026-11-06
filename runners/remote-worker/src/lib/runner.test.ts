@@ -76,6 +76,15 @@ test("onDemandSkills: an implementation run names nothing", () => {
 
 // Both task kinds read the one project mirror, so a coding run must drop the
 // validation workflow from it and keep everything else.
+test("always-on workflow skills are excluded from an implementation allowlist", () => {
+  // Mirrors the filter in startCodingRun: a skill already injected must not also
+  // be loadable on demand.
+  const mirrored = ["aep", "agent-browser", "go", "validation-task"];
+  const allow = mirrored.filter((n) => !alwaysOnSkills("implementation").includes(n));
+  assert.deepEqual(allow, ["agent-browser", "go", "validation-task"]);
+  assert.ok(!allow.includes("aep"));
+});
+
 test("implementationSkills: the whole mirror but the validation workflow", async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "aep-mirror-"));
   try {

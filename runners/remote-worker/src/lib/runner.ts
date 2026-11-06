@@ -338,7 +338,11 @@ export async function startCodingRun(
   // `validation-task` runs the platform's report checker rather than a copy the
   // repo committed. The runner is still the only layer that knows the path.
   childEnv.AEP_SKILLS_DIR = mirrorDir(layout.workspace);
-  const skills = perTaskSkills?.availableSkillNames ?? [];
+  // Drop always-on workflow skills from the on-demand allowlist: their bodies are
+  // already injected via requireWorkflowBodies / preloadBodies. Leaving them
+  // loadable only re-adds ~24 KB, and lets a fan-out subagent load the umbrella.
+  const alwaysOn = alwaysOnSkills(req.taskKind);
+  const skills = (perTaskSkills?.availableSkillNames ?? []).filter((n) => !alwaysOn.includes(n));
   // FATAL when the workflow is missing — see requireWorkflowBodies. This is the
   // structural guarantee that no entrypoint can start a coding run with no
   // procedure: it throws here, before a session exists, not in each caller.
