@@ -202,6 +202,21 @@ design.json, re-emit the whole corrected file (removeFile + addFile) — never
 patch JSON with anchored edits. On INVALID_JSON or SCHEMA_VIOLATION, fix what
 the message lists and re-emit.
 
+**Read-only lookup tables need a source.** A component may expose tables that
+callers only `GET` — organisational units, regions, code lists, and similar
+reference data. Every such table MUST name where its rows come from, in the
+component's `description` (and in any schema/OpenAPI notes the design carries):
+
+- a **seed file** in the repository and the migration that loads it, or
+- a **registered resource** it is synced from, or
+- a **write endpoint** that is in scope for this component (or a named sibling).
+
+"The legacy system had rows" is not a source. Without one of the three, the build
+ships green, list endpoints answer `200 []` forever, and every validation
+scenario that starts from a lookup value is blocked with nothing to repair. The
+scenarios' preconditions must be satisfiable from that named source so a
+scenario can set up the value it needs rather than report blocked.
+
 `endpoint` is optional: omit it and a service's endpoint takes the default name
 `"http"`. Declare `{ "name": "<endpoint-name>" }` only when the endpoint must be
 named otherwise — `name` is the single source of truth the coding agent copies
