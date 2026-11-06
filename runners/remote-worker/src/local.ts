@@ -64,7 +64,7 @@ import type { DispatchRequest } from "./lib/types.js";
 import type { WorkspaceLayout } from "./lib/workspace.js";
 import { emit, primeScrubber } from "./lib/progress/emitter.js";
 import { PROVISIONING, WORKSPACE_READY } from "./lib/progress/lifecycle.js";
-import { installLogRedaction } from "./lib/progress/console_scrub.js";
+import { declareConsoleWorkspace, installLogRedaction } from "./lib/progress/console_scrub.js";
 import { resolveTaskSkills } from "./lib/skills_resolver.js";
 import { readSkillBodies, resolveSkillPresence } from "./lib/skills_presence.js";
 import { mirrorLocalSkillLibrary } from "./lib/local_skill_mirror.js";
@@ -164,6 +164,7 @@ async function main(): Promise<number> {
     emit({ kind: "run_settled", outcome: "failure", error: `workspace_provisioning: ${msg}` });
     return 2;
   }
+  declareConsoleWorkspace(layout.workspace);
   emit(WORKSPACE_READY);
 
   // The playground writes its own mirror, standing in for the BFF write that

@@ -18,7 +18,13 @@
 
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { installConsoleScrubber, installLogRedaction, type ConsoleLike } from "./console_scrub.js";
+import {
+  _resetConsolePathsForTesting,
+  declareConsoleWorkspace,
+  installConsoleScrubber,
+  installLogRedaction,
+  type ConsoleLike,
+} from "./console_scrub.js";
 import { _resetEmitterForTesting } from "./emitter.js";
 import { scrubber } from "./scrubber.js";
 
@@ -65,6 +71,7 @@ function fakeConsole(): ConsoleLike {
 beforeEach(() => {
   captured = [];
   _resetEmitterForTesting();
+  _resetConsolePathsForTesting();
   captureStdout();
 });
 
@@ -162,6 +169,28 @@ test("installConsoleScrubber: leaves ordinary lines untouched", () => {
   scrubber.addLiteral(OPAQUE_TOKEN);
   c.log("[oneshot] no per-task skills to materialise");
   assert.equal(summaries()[0], "[oneshot] no per-task skills to materialise");
+});
+
+test("installConsoleScrubber: a workspace path reaches the feed in reader form", () => {
+  // Installed at process start, before provisionWorkspace names the root.
+  const c = fakeConsole();
+  installConsoleScrubber(c);
+  const home = "/home/aep";
+  const workspace = `${home}/aep-workspace/default/acme/notes/task-1`;
+  const browser = `[oneshot] mapped the deployed .localhost hosts for the browser → ${workspace}/.aep/agent-browser`;
+
+  c.log(browser);
+  declareConsoleWorkspace(`${workspace}/`, `${home}/`);
+  c.log(`[oneshot] pinned 2 endpoint host(s) for curl → ${home}/.curlrc`);
+  c.log(browser);
+  c.log(`left ${home}-old/x ${workspace}/src/main.bal /etc/hosts`);
+
+  assert.deepEqual(summaries(), [
+    browser,
+    "[oneshot] pinned 2 endpoint host(s) for curl → ~/.curlrc",
+    "[oneshot] mapped the deployed .localhost hosts for the browser → ~ws/.aep/agent-browser",
+    `left ${home}-old/x ~ws/src/main.bal /etc/hosts`,
+  ]);
 });
 
 test("installConsoleScrubber: is idempotent — no double wrapping", () => {

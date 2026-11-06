@@ -39,11 +39,15 @@
 // call site to remember, which also covers output we don't author — the Agent
 // SDK, git's own stderr as relayed by child_process errors, and any dependency
 // that logs. Scrubbing is applied per call by emit(), so literals enrolled later
-// (the git token, minted mid-run) still redact earlier-wrapped methods.
+// (the git token, minted mid-run) still redact earlier-wrapped methods. Path
+// shortening is the same: the wrapper is installed before provisionWorkspace
+// names the workspace, and declareConsoleWorkspace teaches it afterwards.
 
+import os from "node:os";
 import { format } from "node:util";
 import { emit, primeScrubber } from "./emitter.js";
 import { MIN_LITERAL_LEN } from "./scrubber.js";
+import { readerText } from "./tool_rows.js";
 import { scanCredentialEnv } from "../credential_env.js";
 
 type ConsoleMethod = "log" | "info" | "warn" | "error" | "debug";
@@ -55,6 +59,27 @@ export type ConsoleLike = Pick<Console, ConsoleMethod>;
 // Wrapping the same console twice would emit twice — and it would stack a
 // wrapper per call in tests.
 const wrapped = new WeakSet<object>();
+
+// Empty until declareConsoleWorkspace. Trailing slashes stripped: that is the
+// boundary form readerText matches, and a home of "/" becomes unknown.
+let workspace = "";
+let home = "";
+
+function rootDir(dir: string): string {
+  return dir.replace(/\/+$/, "");
+}
+
+/** Workspace root, and the runtime home (`os.homedir()` when omitted). */
+export function declareConsoleWorkspace(dir: string, homeDir: string = os.homedir()): void {
+  workspace = rootDir(dir);
+  home = rootDir(homeDir);
+}
+
+// Test seam. Roots are process-global.
+export function _resetConsolePathsForTesting(): void {
+  workspace = "";
+  home = "";
+}
 
 // console's five levels collapse to the feed's three. `debug` joins `info`
 // rather than being dropped: the runner logs its provisioning trail there, and
@@ -110,7 +135,11 @@ export function installConsoleScrubber(target: ConsoleLike = console): void {
     // specifiers and Error stacks, so nothing is lost by collapsing the args
     // to one string.
     target[method] = (...args: unknown[]): void => {
-      emit({ kind: "notice", level: LEVELS[method], detail: format(...args) });
+      emit({
+        kind: "notice",
+        level: LEVELS[method],
+        detail: readerText(format(...args), { workspace, home }),
+      });
     };
   }
 }

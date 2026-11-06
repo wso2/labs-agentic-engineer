@@ -39,7 +39,7 @@ import { isUUID, isSlug } from "./lib/uuid.js";
 import type { DispatchRequest } from "./lib/types.js";
 import { emit, primeScrubber } from "./lib/progress/emitter.js";
 import { PROVISIONING, WORKSPACE_READY } from "./lib/progress/lifecycle.js";
-import { installLogRedaction } from "./lib/progress/console_scrub.js";
+import { declareConsoleWorkspace, installLogRedaction } from "./lib/progress/console_scrub.js";
 import { resolveTaskSkills } from "./lib/skills_resolver.js";
 import { readSkillBodies, resolveSkillPresence } from "./lib/skills_presence.js";
 import { ClientCredentialsTokenProvider } from "./lib/oauth.js";
@@ -205,6 +205,7 @@ async function main(): Promise<number> {
     console.error("[oneshot] provisionWorkspace failed:", msg);
     return 2;
   }
+  declareConsoleWorkspace(layout.workspace);
 
   emit(WORKSPACE_READY);
 
