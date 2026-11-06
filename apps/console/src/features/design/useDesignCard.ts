@@ -26,8 +26,11 @@ import { answerOpenQuestion } from "../spec/collab/specEdits";
 import { useRoomFiles } from "../spec/collab/useRoomFiles";
 import { useSpecState } from "../spec/api/specModel";
 import { useSpecWorkspace } from "../spec/useSpecWorkspace";
+import type { LineBlock } from "../spec/model/ids";
+import { keepDecision, readDecisionLines } from "./decisionsRoom";
 import type { DesignDependency } from "./api/designModel";
 import { blockingDependencies } from "./model/artifacts";
+import { assumedCount, DECISIONS_PATH } from "./model/decisions";
 import { artifactHashes, designItems, DESIGN_FILE_PREFIXES, reviewLists, type DesignItem, type ReviewList } from "./model/designFiles";
 import type { DesignQuestion } from "./model/questions";
 import { answerComment, changedSinceChecked, commentsOn, isChecked, isWaiting, primaryAction, waitingComments, type Primary } from "./model/review";
@@ -40,7 +43,8 @@ import { useDesignReview, type DesignReviewActions } from "./useDesignReview";
 // body: the rail's items from the room's files (model/designFiles.ts), each
 // one's hash, the review (review.json), the questions waiting on the user
 // (model/questions.ts), the web applications' prototypes, the dependencies
-// that block a build, and the one primary action.
+// that block a build, the technical decisions' lines and the one primary
+// action.
 
 /** One row of an Overview review list. */
 export interface ReviewRow {
@@ -49,6 +53,8 @@ export interface ReviewRow {
   changed: boolean;
   /** Comments on it waiting to be sent. */
   waiting: number;
+  /** Decisions in it still assumed: the technical decisions only. */
+  assumed: number;
 }
 
 export interface DesignCard {
@@ -69,10 +75,15 @@ export interface DesignCard {
   reviews: PrototypeReviews;
   /** The dependencies that wait on a person before their feature builds. */
   blocking: DesignDependency[];
+  /** The technical decisions' lines, read from the room. */
+  decisions: LineBlock[];
+  /** Keep an assumed decision, by its line's text: its tag comes off. False when nothing was written. */
+  keepDecision: (text: string) => boolean;
 }
 
 const NO_PROTOTYPES: AppPrototype[] = [];
 const NO_REVISIONS: Readonly<Record<string, number>> = {};
+const NO_LINES: LineBlock[] = [];
 
 export function useDesignCard(projectName: string): DesignCard {
   const doc = useSpecDoc(projectName);
@@ -83,6 +94,10 @@ export function useDesignCard(projectName: string): DesignCard {
   const chat = useProjectChat(projectName);
   const items = useMemo(() => designItems(files), [files]);
   const hashes = useMemo(() => artifactHashes(items), [items]);
+  // Re-read when the file's text changes: the lines come from its fragment, which Keep edits.
+  const decisionsText = files[DECISIONS_PATH];
+  const decisions = useMemo(() => (doc && decisionsText !== undefined ? readDecisionLines(doc) : NO_LINES), [doc, decisionsText]);
+  const keep = useCallback((text: string) => doc !== null && keepDecision(doc, text), [doc]);
 
   // A design run (Design, or Address comments) may rewrite a prototype: it is revising until the run ends.
   const instruction = chat.turn.phase === "idle" ? undefined : chat.turn.instruction;
@@ -118,6 +133,7 @@ export function useDesignCard(projectName: string): DesignCard {
       checked: isChecked(review.review, item.path, hashes[item.path]),
       changed: changedSinceChecked(review.review, item.path, hashes[item.path]),
       waiting: commentsOn(review.review, item.path).filter(isWaiting).length,
+      assumed: item.body.kind === "decisions" ? assumedCount(decisions) : 0,
     });
     const byList = reviewLists(items);
     const lists = { business: byList.business.map(row), technical: byList.technical.map(row) };
@@ -135,7 +151,9 @@ export function useDesignCard(projectName: string): DesignCard {
       primary: primaryAction({ questions: questions.length, waiting: waiting.length, toDesign, rows }),
       prototypes: new Map(list.map((p) => [p.component, p])),
       blocking: blockingDependencies(model?.dependencies ?? []),
+      decisions,
+      keepDecision: keep,
     };
-  }, [items, hashes, review, list, model?.dependencies, revisions, questions, answer, toDesign]);
+  }, [items, hashes, review, list, model?.dependencies, revisions, questions, answer, toDesign, decisions, keep]);
   return { ...card, reviews };
 }

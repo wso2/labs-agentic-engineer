@@ -23,7 +23,7 @@ order Design makes them, an item showing only once its file exists:
     Dependencies › <name>        dependencies/<n>/dependency.json (+ assumptions.md), then
                                  what blocks a build (`dep-F3`, DependencyView)
     Flows › <title>              flows/<slug>.md             (DocumentView)
-    Technical decisions          decisions.md                (DocumentView)
+    Technical decisions          decisions.md                (DecisionsView)
     Acceptance tests › F<n> …    <F-n>.feature               (AcceptanceList)
 
 Components are ordered web applications, services, agents, then any other
@@ -56,7 +56,11 @@ is the signed-in user (`useSession`, the token's sub and name); ids are
 The hash (`artifactHashes`) is the lowercase hex SHA-256 of the file's UTF-8
 text as the room holds it (`lib/sha256.ts`, plain JavaScript, copied from the
 prototype kit, so it is the same over plain HTTP), and for a prototype the
-kit's `prototypeHash(manifest, source)`.
+kit's `prototypeHash(manifest, source)`. The technical decisions are hashed
+as the file reads once every decision is kept (`keptMarkdown`: Keep's own
+edit of every assumed line, on a scratch copy), so a Keep leaves the file
+checked
+([ADR-0006](decisions/ADR-0006-an-assumed-technical-decision-is-kept-in-place-or-changed-by-a-comment.md)).
 
 ## A file's title line
 
@@ -121,7 +125,8 @@ prompt is optional and the project name is suggested from the bundle's name.
 ## The Overview
 
 `DesignOverview`: For business review, For technical review (each row: the
-Checked box, the name, its pending 💬 count, Open), Dependencies (each
+Checked box, the name, the technical decisions' "N assumed", its pending 💬
+count, Open), Dependencies (each
 definition, and what still blocks a build), Acceptance tests (one row per
 feature). At the bottom **Address comments (N)** and **Build**, the only
 place comments are sent from. Exactly one is the primary, first match wins
@@ -191,6 +196,31 @@ flow, role, state and elements (`model/reviewDrafts.ts`), and the dock reads
 agent, no Make prototype and no Prototype tab: Design makes the prototype in
 its own run.
 
+## Technical decisions
+
+`DecisionsView` draws `decisions.md` read-only, as written, from the room's
+lines of the file (`decisionsRoom.ts`, `readDecisionLines`: the fragment, as
+the spec's lines are read). A decision still tagged `*assumed*` (the tag
+before its features, `model/decisions.ts`) is highlighted and offers two
+pills, drawn with the spec editor's look for an assumed line
+(`spec/components/assumedLook.ts`)
+([ADR-0006](decisions/ADR-0006-an-assumed-technical-decision-is-kept-in-place-or-changed-by-a-comment.md)):
+
+- **Keep** drops the tag in the room (`keepDecision`: a minimal edit of the
+  fragment, as `editFile` makes, found by the line's words, so it lands while
+  a design run writes the file). The line shows "by you" for 4 seconds.
+- **Change…** opens the file's 💬 on the decision: the decision quoted
+  above the text box, read-only, so the comment always names which decision
+  it is about (`ArtifactFrame`'s `quote`). The comment is the quote, then
+  what the user typed (`quotedComment`, `model/review.ts`); it is a draft
+  like any other. The agent rewrites the decision in its own words, which
+  can come back still assumed: the user rereads them and keeps them.
+  Any comment that opens with a quote shows it set apart in its thread, and
+  Edit changes only the words under it (`splitQuote`).
+
+A confirmed decision offers nothing: it is changed with an ordinary comment.
+An assumed decision does not hold Build.
+
 ## Acceptance tests
 
 `AcceptanceList`: the feature file as written, rule bands with their
@@ -206,8 +236,10 @@ files into the room one by one, as the design agent does
 (`mocks/fixtures/designFiles.ts`; for Acme a full design with the kit's sample
 prototype, the Xero dependency, technical decisions and a review holding one
 addressed comment), each through the agent's write gates. Its
-`/address-comments` turn answers every sent comment with a reply, and revises
-the sample prototype where a comment asks for a change it knows. A comment
+`/address-comments` turn answers every sent comment with a reply, revises
+the sample prototype where a comment asks for a change it knows, and rewrites
+a technical decision that a Change… comment quotes in the comment's words,
+still assumed for the user to keep (`reviseDecision`). A comment
 that offers two readings ("… or …") and has no answer gets a question
 instead, and is addressed once answered. Each run closes with what is next
 on the card.

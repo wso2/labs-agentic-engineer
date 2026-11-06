@@ -30,30 +30,11 @@ import { idTarget, resolveId, type IdIndex } from "../model/ids";
 import type { SpecTarget } from "../useSpecWorkspace";
 import { IdPreview } from "../components/IdPreview";
 import { quietLinkSx } from "../components/QuietId";
+import { assumedActionsSx, assumedLineSx, assumedTagSx, byYouLineSx, byYouSx, pillSx } from "../components/assumedLook";
 import { soft } from "../components/Tag";
 import { actOnAssumed, AssumedLines, leaveAssumedEdit } from "./assumedLines";
 import { readFragment, type FragmentRead } from "./readFragment";
 import { ROWS_SLOT, SpecLines, setSpecLinesOptions, type AssumedAction } from "./specLinesPlugin";
-
-/** A pill button inside the document, in one palette colour. */
-function pillSx(tone: "warning") {
-  return {
-    fontFamily: "inherit",
-    fontStyle: "normal",
-    fontWeight: 600,
-    fontSize: "0.6875rem",
-    lineHeight: 1.6,
-    px: 1,
-    borderRadius: 999,
-    border: 1,
-    borderColor: `${tone}.main`,
-    color: `${tone}.main`,
-    bgcolor: "background.paper",
-    cursor: "pointer",
-    "&:hover": { bgcolor: soft(tone) },
-    "&:focus-visible": { outline: 2, outlineColor: `${tone}.main`, outlineOffset: 1 },
-  } as const;
-}
 
 // How a spec document reads: the app's prose (proseSx), and the spec's own
 // line decorations on top. The decorations (specLinesPlugin.ts) only name
@@ -61,16 +42,16 @@ function pillSx(tone: "warning") {
 const documentSx = {
   ...proseSx,
   "& .aep-line": { borderRadius: 1.5 },
-  "& .aep-line--assumed": { bgcolor: soft("warning", 0.14) },
+  "& .aep-line--assumed": assumedLineSx,
   // A blocking question and its options: the warning's wash, a rule down the left.
   "& .aep-line--blocking": { bgcolor: soft("warning", 0.14), boxShadow: "inset 2px 0 0 var(--oxygen-palette-warning-main)" },
   // What the agent just wrote: a green wash that fades as it lands (FRESH_MS).
   "@keyframes aep-fresh": { from: { backgroundColor: soft("success", 0.28) }, to: { backgroundColor: "transparent" } },
   "& .aep-fresh": { borderRadius: 0.5, animation: "aep-fresh 5s ease-out forwards" },
   // Changed by a design comment: the accent's wash, a rule down the left.
-  "& .aep-asm": { display: "inline-flex", flexWrap: "wrap", gap: 0.5, ml: 0.75, verticalAlign: "baseline", "& button": pillSx("warning") },
-  "& .aep-line--by-you": { textDecoration: "underline dotted var(--oxygen-palette-success-main)", textUnderlineOffset: "4px" },
-  "& .aep-you": { fontSize: "0.6875rem", color: "success.main", whiteSpace: "nowrap", ml: 1, textDecoration: "none", display: "inline-block" },
+  "& .aep-asm": { ...assumedActionsSx, "& button": pillSx("warning") },
+  "& .aep-line--by-you": byYouLineSx,
+  "& .aep-you": byYouSx,
   "& .aep-sid": { fontFamily: "monospace", fontSize: "0.75rem", color: "text.secondary" },
   "& .aep-was": { fontSize: "0.75rem", color: "text.secondary" },
   // A Needs or Applies to clause: quiet words, not a tag, as the IDs in it are links.
@@ -85,7 +66,7 @@ const documentSx = {
     px: 0.5,
     whiteSpace: "nowrap",
   },
-  "& .aep-assumed, & .aep-blocking": { fontSize: "0.75rem", color: "warning.main" },
+  "& .aep-assumed, & .aep-blocking": assumedTagSx,
   "& .aep-ref": quietLinkSx,
   "& .aep-hidden": { display: "none" },
   "& .aep-fog": {

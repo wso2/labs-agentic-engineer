@@ -21,7 +21,8 @@ import type * as Y from "yjs";
 import { readDocFile } from "@aep/collab-doc";
 import { DESIGN_REVIEW_PATH, type ReviewComment } from "@aep/agent-stream";
 import type { MockSpecModel } from "./spec";
-import { readReview, reviewText } from "../../features/design/model/review";
+import { DECISIONS_PATH } from "../../features/design/model/decisions";
+import { readReview, reviewText, splitQuote } from "../../features/design/model/review";
 import { manifestPath, sourcePath } from "../../features/prototype/model/prototypes";
 import { projectSpecDoc } from "../../features/spec/collab/specDoc";
 import { readSpecLines } from "../../features/spec/collab/useSpecLines";
@@ -31,7 +32,7 @@ import type { components } from "../../generated/ae-design-agent";
 import type { ScriptFrame } from "../chatServer";
 import { liveDesign, type DesignEffect } from "../designState";
 import { dependencyOf, designCatalog, replyTo } from "./design";
-import { designRoomFiles } from "./designFiles";
+import { designRoomFiles, reviseDecision } from "./designFiles";
 import { Script } from "./interview";
 import { SAMPLE_COMPONENT, tweakSource } from "./prototype";
 
@@ -48,7 +49,10 @@ type ConversationMessage = components["schemas"]["ConversationMessage"];
 //  - "/address-comments": answers every comment the console sent in
 //    specs/design/review.json, marking each addressed with a one-line reply,
 //    and revises the prototype where a comment on it asks for a change the
-//    sample knows (fixtures/prototype.ts). A comment that offers two readings
+//    sample knows (fixtures/prototype.ts), and rewrites a technical decision a
+//    Change… comment quotes in the comment's words, still assumed for the
+//    user to keep (fixtures/designFiles.ts).
+//    A comment that offers two readings
 //    ("… or …") and has no answer yet is not guessed: the mock writes its
 //    question on it and leaves it sent; once answered, it is addressed with
 //    the answer. Each run closes with what is next on the Design card.
@@ -134,7 +138,7 @@ function nextRevision(comments: readonly ReviewComment[]): number {
   return Math.max(1, ...comments.map((c) => c.revision ?? 1)) + 1;
 }
 
-/** A comment the mock treats as ambiguous: it offers two readings. */
+/** A comment the mock treats as ambiguous: its own words, not a line it quotes, offer two readings. */
 const TWO_READINGS = /\bor\b/i;
 
 function questionFor(comment: ReviewComment): string {
@@ -161,10 +165,11 @@ function scriptAddressComments(projectName: string, text: string, model: MockSpe
   const files: Record<string, string> = {};
   // A comment on the prototype the sample knows how to take changes its source.
   let source = readDocFile(doc, sourcePath(SAMPLE_COMPONENT));
+  let decisions = readDocFile(doc, DECISIONS_PATH);
   const replies = new Map<string, string>();
   const questions = new Map<string, string>();
   for (const { path, comment } of sent) {
-    if (comment.answer === undefined && TWO_READINGS.test(comment.text)) {
+    if (comment.answer === undefined && TWO_READINGS.test(splitQuote(comment.text).words)) {
       questions.set(comment.id, questionFor(comment));
       continue;
     }
@@ -178,7 +183,13 @@ function scriptAddressComments(projectName: string, text: string, model: MockSpe
       source = source.replace(tweak.from, tweak.to);
       files[sourcePath(SAMPLE_COMPONENT)] = source;
     }
-    replies.set(comment.id, tweak?.applied ?? replyTo(projectName, comment.text));
+    const revised = path === DECISIONS_PATH && decisions !== undefined ? reviseDecision(decisions, comment.text) : null;
+    if (revised && decisions !== undefined) {
+      s.pause(400).edit(`${turnKey}-${comment.id}`, DECISIONS_PATH, revised.from, revised.to);
+      decisions = decisions.replace(revised.from, revised.to);
+      files[DECISIONS_PATH] = decisions;
+    }
+    replies.set(comment.id, tweak?.applied ?? (revised ? `Changed the decision: ${revised.words}` : replyTo(projectName, comment.text)));
   }
   const answered = {
     version: 1 as const,

@@ -20,7 +20,7 @@ import { describe, expect, it } from "vitest";
 import { FileBundle } from "@aep/agent-stream";
 import { designItems } from "../../features/design/model/designFiles";
 import { dependencyOf, designCatalog } from "./design";
-import { designRoomFiles } from "./designFiles";
+import { designRoomFiles, reviseDecision } from "./designFiles";
 import { acmeExpensesSpec } from "./spec";
 
 // What a mock design turn leaves in the room has to get through the design
@@ -56,5 +56,39 @@ describe("the files a mock design writes into the room", () => {
       "acceptance-F1",
       "acceptance-F2",
     ]);
+  });
+});
+
+describe("reviseDecision", () => {
+  // As the room writes the file back: the tag's brackets escaped.
+  const markdown = `# Technical decisions
+
+- \\[data-model\\] Amounts are stored in cents, never as decimals. *assumed* (F1, F2)
+- \\[contract\\] Pending approvals are listed oldest first. *assumed* (F2)
+`;
+
+  it("rewrites the quoted decision in the comment's words, still assumed, for the user to keep", () => {
+    const comment = "> [data-model] Amounts are stored in cents, never as decimals. (F1, F2)\n\nStore amounts as decimals with two places.";
+    expect(reviseDecision(markdown, comment)).toEqual({
+      from: "- \\[data-model\\] Amounts are stored in cents, never as decimals. *assumed* (F1, F2)",
+      to: "- \\[data-model\\] Store amounts as decimals with two places. *assumed* (F1, F2)",
+      words: "Store amounts as decimals with two places.",
+    });
+  });
+
+  it("keeps the features once when the comment's words name them", () => {
+    const comment = "> [data-model] Amounts are stored in cents, never as decimals. (F1, F2)\n\nStore amounts as decimals. (F1)";
+    expect(reviseDecision(markdown, comment)?.to).toBe("- \\[data-model\\] Store amounts as decimals. *assumed* (F1)");
+  });
+
+  it("keeps the decision's features when the comment's words end in other brackets", () => {
+    const comment = "> [data-model] Amounts are stored in cents, never as decimals. (F1, F2)\n\nStore amounts as DECIMAL(18, 2)";
+    expect(reviseDecision(markdown, comment)?.to).toBe("- \\[data-model\\] Store amounts as DECIMAL(18, 2) *assumed* (F1, F2)");
+  });
+
+  it("leaves a comment that quotes no decision, or asks for nothing, to the agent's reply", () => {
+    expect(reviseDecision(markdown, "Why cents?")).toBeNull();
+    expect(reviseDecision(markdown, "> [data-model] Amounts are floats. (F1)\n\nUse decimals.")).toBeNull();
+    expect(reviseDecision(markdown, "> [contract] Pending approvals are listed oldest first. (F2)\n\n")).toBeNull();
   });
 });

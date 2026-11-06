@@ -21,6 +21,7 @@ import { Box, Button, Link, TextField, Typography } from "@wso2/oxygen-ui";
 import type { ReviewComment } from "@aep/agent-stream";
 import { stamp } from "../../../lib/stamp";
 import { soft } from "../../spec/components/Tag";
+import { quotedComment, splitQuote } from "../model/review";
 
 // One artifact's comment threads, as GitHub's pull request review keeps them
 // (D13): a draft is Pending, with Edit and Delete, until Address comments
@@ -50,20 +51,56 @@ function Badge({ tone, children }: { tone: "warning" | "info"; children: string 
   );
 }
 
+/** The line a comment is about, read-only. */
+function Quote({ children }: { children: string }) {
+  return (
+    <Typography
+      component="blockquote"
+      variant="body2"
+      aria-label="Quoted line"
+      sx={{ m: 0, pl: 1.25, borderLeft: 3, borderColor: "divider", color: "text.secondary", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
+    >
+      {children}
+    </Typography>
+  );
+}
+
+/** A comment's text with the quote it opens with, if any, put back in front of what was typed. */
+function withQuote(quote: string | null, typed: string): string {
+  return quote === null ? typed.trim() : quotedComment(quote, typed.trim());
+}
+
+/** A draft's text, to edit: what was typed; a quote stays as it was, above the box. */
 function Editor({ initial, label, onSave, onCancel }: { initial: string; label: string; onSave: (text: string) => void; onCancel: () => void }) {
-  const [text, setText] = useState(initial);
+  const { quote, words } = splitQuote(initial);
+  const [text, setText] = useState(words);
+  const save = () => onSave(withQuote(quote, text));
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
+      {quote !== null && <Quote>{quote}</Quote>}
       <TextField size="small" fullWidth multiline minRows={2} autoFocus value={text} onChange={(e) => setText(e.target.value)} inputProps={{ "aria-label": label }} />
       <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
         <Button size="small" onClick={onCancel}>
           Cancel
         </Button>
-        <Button size="small" variant="outlined" disabled={!text.trim()} onClick={() => onSave(text.trim())}>
+        <Button size="small" variant="outlined" disabled={!text.trim()} onClick={save}>
           Save
         </Button>
       </Box>
     </Box>
+  );
+}
+
+/** A comment as written: its quote, if it has one, set apart from the words under it. */
+function Body({ text }: { text: string }) {
+  const { quote, words } = splitQuote(text);
+  return (
+    <>
+      {quote !== null && <Quote>{quote}</Quote>}
+      <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+        {words}
+      </Typography>
+    </>
   );
 }
 
@@ -111,9 +148,7 @@ function Thread({ comment: c, place, actions }: { comment: ReviewComment; place:
             }}
           />
         ) : (
-          <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
-            {c.text}
-          </Typography>
+          <Body text={c.text} />
         )}
       </Box>
       {c.question && (
@@ -181,16 +216,33 @@ export function CommentThreads({
   );
 }
 
-/** The text box a comment is written in: it stays Pending until Address comments on the Overview sends it. */
-export function CommentComposer({ label, disabled, onAdd }: { label: string; disabled: boolean; onAdd: (text: string) => void }) {
+/**
+ * The text box a comment is written in: it stays Pending until Address
+ * comments on the Overview sends it. A comment about one line (a technical
+ * decision's Change…) shows that line above the box, read-only, so it always
+ * names what it is about; the comment is the quote, then what was typed.
+ */
+export function CommentComposer({
+  label,
+  disabled,
+  quote = null,
+  onAdd,
+}: {
+  label: string;
+  disabled: boolean;
+  /** The line the comment is about. */
+  quote?: string | null;
+  onAdd: (text: string) => void;
+}) {
   const [text, setText] = useState("");
   const add = () => {
     if (!text.trim() || disabled) return;
-    onAdd(text.trim());
+    onAdd(withQuote(quote, text));
     setText("");
   };
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
+      {quote !== null && <Quote>{quote}</Quote>}
       <TextField
         size="small"
         fullWidth
@@ -205,6 +257,11 @@ export function CommentComposer({ label, disabled, onAdd }: { label: string; dis
         }}
         inputProps={{ "aria-label": label }}
       />
+      {quote !== null && (
+        <Typography variant="caption" color="text.secondary">
+          Write what you want instead under the quote.
+        </Typography>
+      )}
       <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
         <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
           Stays Pending until you address your comments from the Overview.

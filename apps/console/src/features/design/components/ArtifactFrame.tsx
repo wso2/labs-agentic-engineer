@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Box, Button, Checkbox, Popover, Typography } from "@wso2/oxygen-ui";
 import { MessageSquare } from "@wso2/oxygen-ui-icons-react";
 import type { ReviewComment } from "@aep/agent-stream";
@@ -29,7 +29,8 @@ import { CommentComposer, CommentThreads, type ThreadActions } from "./CommentTh
 // collapse anything) and a 💬 with the count of its comments, which drops
 // down its threads and a text box for a new one. Acceptance tests take
 // comments but no Checked. The title line names the artifact's revision once
-// a design run has changed it ("Revision 2").
+// a design run has changed it ("Revision 2"). The file's body can open the 💬
+// on a comment about one line (`quote`: a technical decision's Change…).
 
 export interface CheckState {
   checked: boolean;
@@ -48,6 +49,8 @@ export function ArtifactFrame({
   onComment,
   place,
   ready,
+  quote = null,
+  onQuoteDone,
   children,
 }: {
   title: string;
@@ -63,9 +66,15 @@ export function ArtifactFrame({
   place?: (comment: ReviewComment) => string | null;
   /** Whether the review can be written now. */
   ready: boolean;
+  /** A line of the file to comment on: the 💬 opens with it quoted above the text box. */
+  quote?: string | null;
+  /** The 💬 closed, or the comment on the quoted line was added. */
+  onQuoteDone?: () => void;
   children: ReactNode;
 }) {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const open = anchor !== null || quote !== null;
   return (
     <Box component="section" aria-label={title} sx={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
       <Box
@@ -104,20 +113,24 @@ export function ArtifactFrame({
           </Box>
         )}
         <Button
+          ref={button}
           size="small"
           variant="text"
           onClick={(e) => setAnchor(anchor ? null : e.currentTarget)}
           aria-label={`Comments on ${title}: ${comments.length}`}
-          aria-expanded={Boolean(anchor)}
+          aria-expanded={open}
           startIcon={<MessageSquare size={15} />}
           sx={{ minWidth: 0, px: 1 }}
         >
           {comments.length > 0 ? comments.length : ""}
         </Button>
         <Popover
-          open={Boolean(anchor)}
-          anchorEl={anchor}
-          onClose={() => setAnchor(null)}
+          open={open}
+          anchorEl={anchor ?? button.current}
+          onClose={() => {
+            setAnchor(null);
+            onQuoteDone?.();
+          }}
           anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
           transformOrigin={{ vertical: "top", horizontal: "right" }}
           slotProps={{ paper: { sx: { width: 440, maxWidth: "calc(100vw - 32px)", p: 1.5, display: "flex", flexDirection: "column", gap: 1.25 } } }}
@@ -134,7 +147,20 @@ export function ArtifactFrame({
               <CommentThreads comments={comments} actions={actions} {...(place ? { place } : {})} />
             </Box>
           )}
-          <CommentComposer label={`Your comment on ${title}`} disabled={!ready} onAdd={onComment} />
+          <CommentComposer
+            key={quote ?? ""}
+            label={`Your comment on ${title}`}
+            disabled={!ready}
+            quote={quote}
+            onAdd={(text) => {
+              onComment(text);
+              // Stay open on the threads, as after any comment.
+              if (quote !== null) {
+                setAnchor(button.current);
+                onQuoteDone?.();
+              }
+            }}
+          />
         </Popover>
       </Box>
       <Box sx={{ minWidth: 0 }}>{children}</Box>

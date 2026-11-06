@@ -18,7 +18,8 @@
 
 import { DESIGN_REVIEW_PATH } from "@aep/agent-stream";
 import type { DesignDependency } from "../../features/design/api/designModel";
-import { DECISIONS_PATH } from "../../features/design/model/designFiles";
+import { DECISIONS_PATH } from "../../features/design/model/decisions";
+import { splitQuote } from "../../features/design/model/review";
 import { manifestPath, sourcePath } from "../../features/prototype/model/prototypes";
 import type { ArtifactDraft } from "./design";
 import { SAMPLE_COMPONENT, SAMPLE_MANIFEST, SAMPLE_SOURCE } from "./prototype";
@@ -206,4 +207,42 @@ export function designRoomFiles(projectName: string, drafts: readonly ArtifactDr
     [DECISIONS_PATH]: ACME_DECISIONS,
     [DESIGN_REVIEW_PATH]: ACME_REVIEW,
   };
+}
+
+/** The features clause closing a decision: "(F1, F2)" or "(all)". */
+const FEATURES = /\s*(\((?:all|F\d+(?:\s*,\s*F\d+)*)\))\s*$/;
+
+/** A decision line as words: no bullet, no `*assumed*`, no markdown escapes, single-spaced. */
+function decisionWords(line: string): string {
+  return line
+    .replace(/^\s*[-*]\s+/, "")
+    .replace(/\s*\*assumed\*/g, "")
+    .replace(/\\([\\`*_{}[\]()#+\-.!|>~])/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * How the mock agent applies a Change… comment on a technical decision: the
+ * comment quotes the decision on its first line, and the words under the
+ * quote become the decision, still `*assumed*`, as the design agent leaves
+ * it: the new words are the agent's reading of the comment, and the user
+ * keeps them (ADR-0006). The line keeps its artifact tag and its features.
+ * Null when the comment quotes no decision in the file, or says nothing
+ * under the quote.
+ */
+export function reviseDecision(markdown: string, comment: string): { from: string; to: string; words: string } | null {
+  const split = splitQuote(comment);
+  if (split.quote === null) return null;
+  const quoted = split.quote.replace(/\s+/g, " ").trim();
+  const words = split.words.replace(/\s+/g, " ").trim();
+  if (!words) return null;
+  const from = markdown.split("\n").find((l) => /^\s*[-*]\s/.test(l) && decisionWords(l) === quoted);
+  if (!from) return null;
+  const lead = /^\s*[-*]\s+(?:\\?\[[^\]]*?\\?\]\s+)?/.exec(from)![0];
+  // The features the decision serves, unless the comment's words name them; the tag goes before them.
+  const own = FEATURES.exec(words);
+  const decision = own ? words.slice(0, own.index) : words;
+  const features = ` ${own?.[1] ?? FEATURES.exec(from)?.[1] ?? ""}`.trimEnd();
+  return { from, to: `${lead}${decision} *assumed*${features}`, words };
 }
