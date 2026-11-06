@@ -586,14 +586,10 @@ verifies that signature. That is the whole of backend authentication.
 Both read the same three variables, which the platform sets on the container
 when the environment's gateway publishes a keypair:
 `GATEWAY_ASSERTION_CERTIFICATE`, `GATEWAY_ASSERTION_ISSUER`,
-`GATEWAY_ASSERTION_HEADER`. **A partial trio stops the service from starting**,
-in both stacks, on purpose: a service that starts on half of them cannot tell a
-real caller from a forged one, and a half-configured assertion is a broken
-deployment rather than an unconfigured one. All three **absent** is a separate
-and temporary case — an environment gateway provisioned before the backend-JWT
-keypair existed sets none of them, and the asset then reads the caller without
-verifying any signature and warns on every boot. That fallback is tracked for
-removal in issue #789; author nothing that relies on it.
+`GATEWAY_ASSERTION_HEADER`. **Any missing variable stops the service from
+starting**, in both stacks, on purpose: a service that starts without the full
+trio cannot tell a real caller from a forged one, and a missing or
+half-configured assertion is a broken deployment.
 
 **You author no new check.** The asset verifies the signature, pins the issuer
 to the gateway (never the IdP), checks the expiry and puts the caller on the
