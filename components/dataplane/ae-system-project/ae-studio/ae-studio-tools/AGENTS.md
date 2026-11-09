@@ -29,7 +29,7 @@ reaper: [`design/clone-storage.md`](design/clone-storage.md).
 |---|---|
 | `cmd/ae-studio-tools` | wiring and shutdown order |
 | `internal/config` | `Load(getenv)` reads the pod env; `CheckSecretRev` refuses to start when `AE_SECRET_REV` is not `AE_EXPECTED_SECRET_REV` |
-| `internal/auth` | JWT verifier over the IdP JWKS; `UserGate` (`/v1`), `M2MGate` (`/internal/v1`). `auth/dialect` is the platform IdP's token dialect: the claim names and rules one IdP kind uses to say who the caller is (`AE_IDP_KIND`; thunder only), the twin of aep-api's `internal/platform/auth/dialect` |
+| `internal/auth` | JWT verifier over the IdP JWKS; `UserGate` (`/v1`), `M2MGate` (`/internal/v1`). `auth/dialect` is the platform IdP's token dialect (`AE_IDP_KIND`): how the verifier reads a token's org and type. Its package doc has the rules and names its twins |
 | `internal/problem` | the `application/problem+json` body (a leaf, shared by gates and edge) |
 | `internal/edge` | the mount tables (`routes.go`), the `/internal/v1` group (`internal*.go`; `internal_threads.go` is aep-api's `remove-issue-thread`), the owner guard, the Files and MCP socket mounts |
 | `internal/gen` | generated, never edited; one sub-package per contract |
