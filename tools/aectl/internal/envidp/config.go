@@ -48,6 +48,8 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
+
+	"github.com/wso2/aep/aectl/internal/oidc"
 )
 
 const (
@@ -112,15 +114,16 @@ type Config struct {
 
 	// PlatformThunderURL is the platform IdP's (T1) in-cluster admin URL —
 	// used only to log which issuer T2 will trust; T2's trust of T1 as an
-	// issuer is configured via PlatformThunderPublicURL's JWKS endpoint.
+	// issuer is configured from PlatformIDP's JWKS endpoint.
 	PlatformThunderURL string
 
-	// PlatformThunderPublicURL is T1's public URL. T2 trusts it as an issuer
-	// over HTTPS JWKS (ThunderID refuses a plain-http trusted-issuer JWKS
-	// URL). Reaching that URL over HTTPS from inside the cluster (custom
-	// CA trust, DNS) is an environment prerequisite this package does not
-	// configure — see the package-level Install doc comment.
-	PlatformThunderPublicURL string
+	// PlatformIDP is T1 as its discovery document names it (the public
+	// issuer and endpoints). T2 trusts the issuer over HTTPS JWKS (ThunderID
+	// refuses a plain-http trusted-issuer JWKS URL), reached through the
+	// control-plane gateway on 8443. Reaching that URL over HTTPS from inside
+	// the cluster (custom CA trust, DNS) is an environment prerequisite this
+	// package does not configure — see the package-level Install doc comment.
+	PlatformIDP oidc.Endpoints
 
 	// IDPBaseDomain is the suffix this environment's IdP is published under:
 	// the hostname is "<Env>-idp.<IDPBaseDomain>". Empty takes

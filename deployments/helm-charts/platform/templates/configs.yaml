@@ -6,5 +6,6 @@ metadata:
 data:
   THUNDER_ADMIN_URL: {{ .Values.thunder.adminURL | quote }}
   THUNDER_JWKS_URL: {{ .Values.thunder.jwksURL | quote }}
+  THUNDER_TOKEN_URL: {{ .Values.thunder.tokenURL | quote }}
   THUNDER_ISSUER: {{ .Values.console.thunderPublicURL | quote }}
   PLATFORM_API_SERVICE_BASE_URL: {{ .Values.platformAPI.baseURL | quote }}

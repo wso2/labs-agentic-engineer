@@ -165,3 +165,11 @@ thunder:
   # and the SRE agent's auth config.
   # Local: the k3d ingress hostname. Production: your real public Thunder URL.
   public_url: "http://thunder.openchoreo.localhost:8080"
+
+idp:
+  # The platform IdP's token dialect: the claim names and rules every reader
+  # of its tokens uses to say who the caller is (aep-api, the AE Studio pod,
+  # the console). `thunder` is the one kind this build knows; unset means it.
+  # The IdP's endpoints are not configured: `aectl` reads them from
+  # <thunder.public_url>/.well-known/openid-configuration at install and update.
+  kind: "thunder"

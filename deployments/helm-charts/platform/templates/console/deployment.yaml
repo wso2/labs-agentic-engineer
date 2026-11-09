@@ -41,3 +41,6 @@ spec:
               value: {{ .Values.console.thunder.clientId | quote }}
             - name: VITE_THUNDER_SCOPES
               value: {{ .Values.console.thunder.scopes | quote }}
+            # The IdP's token dialect: which claims name a token's org.
+            - name: VITE_IDP_KIND
+              value: {{ .Values.idp.kind | quote }}

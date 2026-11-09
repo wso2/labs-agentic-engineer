@@ -260,14 +260,19 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("build applier: %w", err)
 	}
 
-	thunderURL := viper.GetString("thunder.url")
+	// The platform IdP's endpoints, from its discovery document: the agent
+	// reaches the IdP in-cluster, and signs its users in at the public issuer.
+	idp, err := discoverPlatformIDP(ctx)
+	if err != nil {
+		return err
+	}
 	p := sreParams{
 		ObsNamespace:        sreObsNamespace,
 		PlatformSecretStore: srePlatformStore,
 		OCApiURL:            viper.GetString("oc.api_url"),
-		ThunderJwksURL:      thunderURL + "/oauth2/jwks",
-		ThunderTokenURL:     thunderURL + "/oauth2/token",
-		ThunderAuthURL:      viper.GetString("thunder.public_url"),
+		ThunderJwksURL:      idp.InCluster.JWKSURL,
+		ThunderTokenURL:     idp.InCluster.TokenURL,
+		ThunderAuthURL:      idp.Public.Issuer,
 		RcaImageRepo:        sreRcaImageRepo,
 		RcaImageTag:         sreRcaImageTag,
 		RcaPullPolicy:       sreRcaPullPolicy,
@@ -417,7 +422,7 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 	if err := removeLegacySREPush(ctx, client, applier, sreObsNamespace, sreNamespace); err != nil {
 		return err
 	}
-	if err := updatePlatformSreAgent(ctx, p, srePlatformChart, srePlatformVersion, sreHandoffTokenHash(handoffToken)); err != nil {
+	if err := updatePlatformSreAgent(ctx, p, srePlatformChart, srePlatformVersion, sreHandoffTokenHash(handoffToken), idp); err != nil {
 		return fmt.Errorf("wire sreAgent.* on the platform release: %w", err)
 	}
 	ui.Success("Platform SRE handoff wired")
@@ -559,13 +564,15 @@ func applyTemplate(ctx context.Context, applier yamlApplier, name, ns, tmpl stri
 // always reaches the config, is unit-testable without shelling out to helm.
 // tokenHash is the handoff key's sha256 (sreHandoffTokenHash): it lands on
 // aep-api's pod-template annotation, so a rotated key rolls aep-api, whose
-// SRE_HANDOFF_TOKEN env is otherwise fixed at pod start.
-func sreAgentPlatformUpdateConfig(p sreParams, chartPath, chartVersion, tokenHash string) platformUpdateConfig {
+// SRE_HANDOFF_TOKEN env is otherwise fixed at pod start. idp is the platform
+// IdP `sre install` already discovered, so the update does not fetch it again.
+func sreAgentPlatformUpdateConfig(p sreParams, chartPath, chartVersion, tokenHash string, idp platformIDP) platformUpdateConfig {
 	return platformUpdateConfig{
 		Namespace:    p.AEPNamespace,
 		Release:      defaultPlatformRelease,
 		ChartPath:    chartPath,
 		ChartVersion: chartVersion,
+		IDP:          idp,
 		HelmSets: []string{
 			"sreAgent.enabled=true",
 			"sreAgent.tokenSecret=" + sreHandoffSecretName,
@@ -580,8 +587,8 @@ func sreAgentPlatformUpdateConfig(p sreParams, chartPath, chartVersion, tokenHas
 // update`'s cobra RunE calls). chartPath/chartVersion pin the chart source
 // (runSreInstall requires one of them up front) so this never falls back to
 // platformUpdate's own unpinned-OCI default.
-func updatePlatformSreAgent(ctx context.Context, p sreParams, chartPath, chartVersion, tokenHash string) error {
-	return platformUpdate(ctx, sreAgentPlatformUpdateConfig(p, chartPath, chartVersion, tokenHash))
+func updatePlatformSreAgent(ctx context.Context, p sreParams, chartPath, chartVersion, tokenHash string, idp platformIDP) error {
+	return platformUpdate(ctx, sreAgentPlatformUpdateConfig(p, chartPath, chartVersion, tokenHash, idp))
 }
 
 // removeLegacySREPush deletes what earlier versions installed for aep-api to

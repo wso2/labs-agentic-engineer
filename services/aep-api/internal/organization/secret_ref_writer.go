@@ -573,8 +573,8 @@ func vaultKeyFor(ouID, secretRefName string) string {
 // materialises both into the per-run Job as PUBLISHER_CLIENT_ID and
 // PUBLISHER_CLIENT_SECRET via two Workload secretEnv entries on the same
 // SecretReference (PUBLISHER_CLIENT_ID ← client_id, PUBLISHER_CLIENT_SECRET ←
-// client_secret). Token URL is non-secret plain Job env derived from
-// PLATFORM_IDP_JWKS_URL (/oauth2/jwks → /oauth2/token).
+// client_secret). The token URL is non-secret plain Job env: the platform
+// IdP's token endpoint, PLATFORM_IDP_TOKEN_URL.
 const (
 	PublisherSecretFieldClientID     = "client_id"
 	PublisherSecretFieldClientSecret = "client_secret"

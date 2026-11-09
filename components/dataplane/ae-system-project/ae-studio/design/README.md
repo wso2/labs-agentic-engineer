@@ -88,9 +88,9 @@ the mirrors or the reference store. Budget and eviction:
 
 | Container | Plain env | Secret env (from its ExternalSecret) |
 |---|---|---|
-| `ae-design-agent` | `AE_ORG_ID`, `AE_ORG_HANDLE`, `AE_IDP_ISSUER`, `AE_IDP_JWKS_URL`, `AE_USER_AUDIENCES`, `AE_MCP_SOCKET`, `AE_TURN_SOCKET`, `AE_ROOM_SOCKET`, `AE_SNAPSHOTS_DIR`, `AE_MODEL_CONNECTION`, `AE_EXPECTED_SECRET_REV` (`""` without a key), `AE_LISTEN_PORT`, `AE_HEALTH_PORT` | `ANTHROPIC_API_KEY`, `AE_SECRET_REV` |
-| `ae-collab` | `AE_ORG_ID`, `AE_ORG_HANDLE`, `AE_IDP_ISSUER`, `AE_IDP_JWKS_URL`, `AE_USER_AUDIENCES`, `AE_ALLOWED_ORIGINS`, `AE_FILES_SOCKET`, `AE_ROOM_SOCKET`, `AE_LISTEN_PORT`, `AE_HEALTH_PORT` | none |
-| `ae-studio-tools` | `AE_ORG_ID`, `AE_ORG_HANDLE`, `AE_IDP_ISSUER`, `AE_IDP_JWKS_URL`, `AE_IDP_TOKEN_URL`, `AE_USER_AUDIENCES`, `AE_M2M_CLIENT_ID`, `AEP_API_BASE_URL`, `AE_FILES_SOCKET`, `AE_MCP_SOCKET`, `AE_TURN_SOCKET`, `AE_STUDIO_DATA_DIR`, `AE_STORAGE_BUDGET_BYTES`, `AE_EXPECTED_SECRET_REV`, `AE_LISTEN_PORT`, `AE_HEALTH_PORT`, `AE_GITHUB_OWNER`, `AE_WEBHOOK_URL` | `GITHUB_PAT`, `GITHUB_WEBHOOK_SECRET`, `AE_STUDIO_CLIENT_ID`, `AE_STUDIO_CLIENT_SECRET`, `AE_SECRET_REV` |
+| `ae-design-agent` | `AE_ORG_ID`, `AE_ORG_HANDLE`, `AE_IDP_ISSUER`, `AE_IDP_JWKS_URL`, `AE_IDP_KIND` (the IdP's token dialect, from `environmentConfigs.idp.kind`; each container defaults to `thunder` when it is unset), `AE_USER_AUDIENCES`, `AE_MCP_SOCKET`, `AE_TURN_SOCKET`, `AE_ROOM_SOCKET`, `AE_SNAPSHOTS_DIR`, `AE_MODEL_CONNECTION`, `AE_EXPECTED_SECRET_REV` (`""` without a key), `AE_LISTEN_PORT`, `AE_HEALTH_PORT` | `ANTHROPIC_API_KEY`, `AE_SECRET_REV` |
+| `ae-collab` | `AE_ORG_ID`, `AE_ORG_HANDLE`, `AE_IDP_ISSUER`, `AE_IDP_JWKS_URL`, `AE_IDP_KIND`, `AE_USER_AUDIENCES`, `AE_ALLOWED_ORIGINS`, `AE_FILES_SOCKET`, `AE_ROOM_SOCKET`, `AE_LISTEN_PORT`, `AE_HEALTH_PORT` | none |
+| `ae-studio-tools` | `AE_ORG_ID`, `AE_ORG_HANDLE`, `AE_IDP_ISSUER`, `AE_IDP_JWKS_URL`, `AE_IDP_TOKEN_URL`, `AE_IDP_KIND`, `AE_USER_AUDIENCES`, `AE_M2M_CLIENT_ID`, `AEP_API_BASE_URL`, `AE_FILES_SOCKET`, `AE_MCP_SOCKET`, `AE_TURN_SOCKET`, `AE_STUDIO_DATA_DIR`, `AE_STORAGE_BUDGET_BYTES`, `AE_EXPECTED_SECRET_REV`, `AE_LISTEN_PORT`, `AE_HEALTH_PORT`, `AE_GITHUB_OWNER`, `AE_WEBHOOK_URL` | `GITHUB_PAT`, `GITHUB_WEBHOOK_SECRET`, `AE_STUDIO_CLIENT_ID`, `AE_STUDIO_CLIENT_SECRET`, `AE_SECRET_REV` |
 
 `AE_ORG_ID` is the org's Platform IdP OU id; `AE_ORG_HANDLE` the org name.
 `AE_USER_AUDIENCES` and `AE_ALLOWED_ORIGINS` are comma lists. `ae-collab`
@@ -223,7 +223,8 @@ its own deployment.
 | `publicScheme`, `listenerName`, `publicPortSuffix` | `AE_STUDIO_PUBLIC_SCHEME`, `AE_STUDIO_LISTENER_NAME`, `AE_STUDIO_PUBLIC_PORT_SUFFIX` | from aectl `tls.enabled` alone: `http`/`http`/`:19080`, or `https`/`https`/`:19443` |
 | `consoleOrigins` | `AE_STUDIO_CONSOLE_ORIGINS` | the console's public URL and `http://localhost:8090` (Vite `pnpm dev`) |
 | `idp.issuer` | `AE_STUDIO_IDP_ISSUER` | aectl `thunder.public_url` |
-| `idp.jwksUrl`, `idp.tokenUrl` | `AE_STUDIO_IDP_JWKS_URL`, `AE_STUDIO_IDP_TOKEN_URL` | aectl `thunder.url` + `/oauth2/jwks`, `/oauth2/token` (in-cluster: the issuer's host is loopback inside a pod) |
+| `idp.jwksUrl`, `idp.tokenUrl` | `AE_STUDIO_IDP_JWKS_URL`, `AE_STUDIO_IDP_TOKEN_URL` | the IdP's OIDC discovery document (`jwks_uri`, `token_endpoint`), its paths on aectl `thunder.url` (in-cluster: the issuer's host is loopback inside a pod) |
+| `idp.kind` | `AE_STUDIO_IDP_KIND` | the chart's `idp.kind`, from aectl `idp.kind` (`thunder` when unset): the token dialect the three containers read the IdP's claims by, their `AE_IDP_KIND` |
 | `idp.userAudiences` | `AE_STUDIO_IDP_USER_AUDIENCES` | the console's client id (chart default) |
 | `aepApiBaseUrl` | `AE_STUDIO_AEP_API_BASE_URL` | the chart: `aep-api`'s in-cluster Service URL |
 | `aeOnlyClientId` | `AE_STUDIO_INTERNAL_CLIENT_ID` | `ae-studio-internal-client` |

@@ -218,7 +218,7 @@ func rtVars(relayURL string) map[string]any {
 			"gatewayHost": "openchoreoapis.localhost", "publicScheme": "http", "publicPortSuffix": ":19080",
 			"listenerName": "http", "consoleOrigins": []any{"http://console.ae.localhost:8080"},
 			"idp": map[string]any{"issuer": "http://idp", "jwksUrl": "http://idp/jwks", "tokenUrl": "http://idp/token",
-				"userAudiences": []any{"APP_FACTORY_CONSOLE"}},
+				"kind": "thunder", "userAudiences": []any{"APP_FACTORY_CONSOLE"}},
 			"aepApiBaseUrl": "http://aep-api", "aeOnlyClientId": "ae-only", "runtimeClassName": "", "cilium": false,
 			"storage":      map[string]any{"sizeLimit": "3Gi", "ephemeralRequest": "1Gi", "budgetBytes": "2147483648"},
 			"resources":    map[string]any{"cpuRequest": map[string]any{"designAgent": "100m", "collab": "50m", "studioTools": "100m"}},

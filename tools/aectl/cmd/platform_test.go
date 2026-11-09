@@ -20,6 +20,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"slices"
 	"strings"
@@ -27,6 +29,8 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+
+	"github.com/wso2/aep/aectl/internal/oidc"
 )
 
 // TestPollAlterPostgresRolePassword_RetriesThroughColdStart covers the race
@@ -93,8 +97,7 @@ func TestAEStudioOverrides(t *testing.T) {
 	got := strings.Join(aeStudioOverrides("wso2-aep"), " ")
 	for _, want := range []string{"aeStudio.publicScheme=http", "aeStudio.listenerName=http", "aeStudio.publicPortSuffix=:19080",
 		"aeStudio.consoleOrigins={http://console.ae.localhost:8080,http://localhost:8090}", "aeStudio.gatewayHost=openchoreoapis.localhost",
-		"aeStudio.idp.issuer=http://thunder.openchoreo.localhost:8080", "aeStudio.idp.jwksUrl=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks",
-		"aeStudio.idp.tokenUrl=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/token", "--set-json aeStudio.extraEgress=[", `"kubernetes.io/metadata.name":"wso2-thunder"`, `"port":8090`} {
+		"--set-json aeStudio.extraEgress=[", `"kubernetes.io/metadata.name":"wso2-thunder"`, `"port":8090`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %s in %s", want, got)
 		}
@@ -106,16 +109,95 @@ func TestAEStudioOverrides(t *testing.T) {
 	}
 }
 
-func TestAEStudioOverrides_NoThunderURLOmitsIdPURLs(t *testing.T) {
-	t.Cleanup(viper.Reset)
-	viper.Set("thunder.url", "")
-	got := strings.Join(aeStudioOverrides("wso2-aep"), " ")
-	for _, bad := range []string{"idp.jwksUrl", "idp.tokenUrl", "idp.issuer"} {
-		if strings.Contains(got, bad) {
-			t.Errorf("%s must be absent when thunder.url is empty: %s", bad, got)
+// testPlatformIDP is the local ThunderID as discovery names it, with the
+// in-cluster endpoints on thunder.url: the values every install so far wrote
+// by appending the paths by hand.
+var testPlatformIDP = platformIDP{
+	Kind: "thunder",
+	Public: oidc.Endpoints{
+		Issuer:   "http://thunder.openchoreo.localhost:8080",
+		JWKSURL:  "http://thunder.openchoreo.localhost:8080/oauth2/jwks",
+		TokenURL: "http://thunder.openchoreo.localhost:8080/oauth2/token",
+	},
+	InCluster: oidc.Endpoints{
+		Issuer:   "http://thunder.openchoreo.localhost:8080",
+		JWKSURL:  "http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks",
+		TokenURL: "http://thunder-service.thunder.svc.cluster.local:8090/oauth2/token",
+	},
+}
+
+// The IdP values the chart gets are the discovered endpoints: the issuer as
+// named, the JWKS and token endpoints at the in-cluster address, and the
+// kind every reader is told. The strings equal what the install wrote before
+// discovery, which is the no-behaviour-change proof.
+func TestPlatformIDPOverrides(t *testing.T) {
+	got := strings.Join(platformIDPOverrides(testPlatformIDP), " ")
+	for _, want := range []string{
+		"--set idp.kind=thunder",
+		"--set thunder.jwksURL=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks",
+		"--set thunder.tokenURL=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/token",
+		"--set aeStudio.idp.issuer=http://thunder.openchoreo.localhost:8080",
+		"--set aeStudio.idp.jwksUrl=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks",
+		"--set aeStudio.idp.tokenUrl=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/token",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %s in %s", want, got)
 		}
 	}
+	if strings.Contains(strings.Join(aeStudioOverrides("wso2-aep"), " "), "idp.") {
+		t.Error("the IdP values belong to platformIDPOverrides alone")
+	}
 }
+
+// Undiscovered endpoints set no IdP value: the chart keeps what it has rather
+// than taking half-built URLs.
+func TestPlatformIDPOverrides_UndiscoveredSetsNothing(t *testing.T) {
+	if got := platformIDPOverrides(platformIDP{Kind: "thunder"}); len(got) != 0 {
+		t.Errorf("want nothing, got %v", got)
+	}
+}
+
+// discoverPlatformIDP reads the document over thunder.public_url and puts the
+// same paths on thunder.url for the in-cluster endpoints; a document that
+// cannot be had is an error, never hand-built URLs.
+func TestDiscoverPlatformIDP(t *testing.T) {
+	t.Cleanup(viper.Reset)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/.well-known/openid-configuration" {
+			http.NotFound(w, r)
+			return
+		}
+		fmt.Fprintf(w, `{"issuer":%q,"jwks_uri":%q,"token_endpoint":%q}`, srvURL(r), srvURL(r)+"/oauth2/jwks", srvURL(r)+"/oauth2/token")
+	}))
+	t.Cleanup(srv.Close)
+	viper.Set("thunder.public_url", srv.URL)
+	viper.Set("thunder.url", "http://thunder-service.thunder.svc.cluster.local:8090")
+	viper.Set("idp.kind", "thunder")
+	idp, err := discoverPlatformIDP(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if idp.Kind != "thunder" || idp.Public.Issuer != srv.URL || idp.Public.JWKSURL != srv.URL+"/oauth2/jwks" {
+		t.Fatalf("public: %+v", idp)
+	}
+	if idp.InCluster.JWKSURL != "http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks" ||
+		idp.InCluster.TokenURL != "http://thunder-service.thunder.svc.cluster.local:8090/oauth2/token" {
+		t.Fatalf("in-cluster: %+v", idp.InCluster)
+	}
+	viper.Set("thunder.url", "")
+	idp, err = discoverPlatformIDP(context.Background())
+	if err != nil || idp.InCluster != idp.Public {
+		t.Fatalf("without thunder.url the in-cluster endpoints are the public ones: %+v, %v", idp, err)
+	}
+	srv.Close()
+	if _, err := discoverPlatformIDP(context.Background()); err == nil {
+		t.Fatal("an unreachable IdP must be an error")
+	}
+}
+
+// srvURL is the request's own server address, so the served document names
+// the issuer it is fetched from.
+func srvURL(r *http.Request) string { return "http://" + r.Host }
 
 // A store seeded before ae-studio-internal existed is topped up with only the
 // missing generated key; existing generated keys are never rewritten.
@@ -205,18 +287,20 @@ func setValidUpdateConfig(t *testing.T) {
 func TestHelmUpgradeArgs_CarriesAEStudioValues(t *testing.T) {
 	setValidUpdateConfig(t)
 
-	got, err := helmUpgradeArgs(updateConfigFromFlags())
+	cfg := updateConfigFromFlags()
+	cfg.IDP = testPlatformIDP
+	got, err := helmUpgradeArgs(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	joined := strings.Join(got, "\x00")
-	want := aeStudioOverrides("wso2-aep")
+	want := append(aeStudioOverrides("wso2-aep"), platformIDPOverrides(testPlatformIDP)...)
 	for i := 0; i+1 < len(want); i += 2 {
 		if !strings.Contains(joined, want[i]+"\x00"+want[i+1]) {
 			t.Errorf("update args lack %s %s", want[i], want[i+1])
 		}
 	}
-	for _, key := range []string{"aeStudio.gatewayHost=", "aeStudio.idp.issuer=", "aeStudio.idp.jwksUrl=", "aeStudio.idp.tokenUrl=", "aeStudio.consoleOrigins=", "aeStudio.extraEgress="} {
+	for _, key := range []string{"aeStudio.gatewayHost=", "aeStudio.idp.issuer=", "aeStudio.idp.jwksUrl=", "aeStudio.idp.tokenUrl=", "idp.kind=", "thunder.tokenURL=", "aeStudio.consoleOrigins=", "aeStudio.extraEgress="} {
 		if !strings.Contains(joined, key) {
 			t.Errorf("update args lack %s", key)
 		}

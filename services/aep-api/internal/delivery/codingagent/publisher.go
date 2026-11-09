@@ -37,17 +37,9 @@ type PublisherCredentialResolver interface {
 	SecretRefName(ctx context.Context, orgID string) (secretRefName string, err error)
 }
 
-func PublisherTokenURLFromJWKS(jwksURL string) string {
-	u := strings.TrimRight(strings.TrimSpace(jwksURL), "/")
-	const suffix = "/oauth2/jwks"
-	if !strings.HasSuffix(strings.ToLower(u), suffix) {
-		return ""
-	}
-	return u[:len(u)-len(suffix)] + "/oauth2/token"
-}
-
-// WithPublisherCredentials wires the Thunder publisher SecretReference
-// resolver and the already-derived token URL used on every dispatch.
+// WithPublisherCredentials wires the publisher SecretReference resolver and
+// the platform IdP's token endpoint (PLATFORM_IDP_TOKEN_URL, from the IdP's
+// discovery document at install) every dispatch mints against.
 func (e *CodingExecutor) WithPublisherCredentials(r PublisherCredentialResolver, tokenURL string) *CodingExecutor {
 	e.publisher = r
 	e.publisherTokenURL = tokenURL
@@ -83,7 +75,7 @@ func (r *idpPublisherResolver) SecretRefName(ctx context.Context, orgID string) 
 func (e *CodingExecutor) publisherSecretEnv(ctx context.Context, orgID string) ([]SecretEnvRef, string, error) {
 	tokenURL := strings.TrimSpace(e.publisherTokenURL)
 	if tokenURL == "" {
-		return nil, "", fmt.Errorf("publisher credentials require PLATFORM_IDP_JWKS_URL ending in /oauth2/jwks (publisher token URL)")
+		return nil, "", fmt.Errorf("publisher credentials require PLATFORM_IDP_TOKEN_URL (the platform IdP's token endpoint)")
 	}
 	if e.publisher == nil {
 		return nil, "", fmt.Errorf("publisher credentials required")

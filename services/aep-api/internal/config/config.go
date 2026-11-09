@@ -329,6 +329,10 @@ type KubeAPIConfig struct {
 type PlatformIDPDefaults struct {
 	Issuer  string
 	JWKSURL string
+	// TokenURL is the IdP's token endpoint (PLATFORM_IDP_TOKEN_URL), from
+	// its discovery document at install; the coding-agent dispatch mints
+	// the org's publisher token against it. Empty refuses every dispatch.
+	TokenURL string
 	// Kind names the token dialect the verifiers read the IdP's claims by
 	// (PLATFORM_IDP_KIND; dialect.ParseKind). Empty is thunder.
 	Kind string
@@ -347,7 +351,10 @@ type AEStudioConfig struct {
 
 	IDP struct {
 		Issuer, JWKSURL, TokenURL string
-		UserAudiences             []string
+		// Kind is the token dialect the pod reads the IdP's claims by
+		// (AE_STUDIO_IDP_KIND; thunder when unset), shipped to it as AE_IDP_KIND.
+		Kind          string
+		UserAudiences []string
 	}
 
 	AEPAPIBaseURL string

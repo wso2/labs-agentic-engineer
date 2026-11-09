@@ -25,7 +25,16 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+
+	"github.com/wso2/aep/aectl/internal/oidc"
 )
+
+// platformIDPFixture is the local ThunderID as its discovery document names it.
+var platformIDPFixture = oidc.Endpoints{
+	Issuer:   "http://thunder.openchoreo.localhost:8080",
+	JWKSURL:  "http://thunder.openchoreo.localhost:8080/oauth2/jwks",
+	TokenURL: "http://thunder.openchoreo.localhost:8080/oauth2/token",
+}
 
 func TestReleaseNameAndURLs(t *testing.T) {
 	if got, want := releaseName("acme", "prod"), "thunder-acme-prod"; got != want {
@@ -145,7 +154,7 @@ func TestThunderChartSpec(t *testing.T) {
 		Namespace: "thunder-default-default",
 		PublicURL: "http://default-idp.openchoreo.localhost:8080",
 	}
-	trust := platformTrustFrom("http://thunder.openchoreo.localhost:8080")
+	trust := platformTrustFrom(platformIDPFixture)
 	spec, err := thunderChartSpec(inst, "thunder-default-default-bootstrap", []string{"13-fix.yaml", "80-client.yaml", "84-role.yaml"}, trust)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -223,7 +232,7 @@ func TestThunderChartSpec_OmitsTrustedIssuerWhenPlatformURLUnset(t *testing.T) {
 		Namespace: "thunder-default-default",
 		PublicURL: "http://default-idp.openchoreo.localhost:8080",
 	}
-	spec, err := thunderChartSpec(inst, "cm", []string{"13-fix.yaml"}, platformTrustFrom(""))
+	spec, err := thunderChartSpec(inst, "cm", []string{"13-fix.yaml"}, platformTrustFrom(oidc.Endpoints{}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
