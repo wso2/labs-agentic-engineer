@@ -37,16 +37,14 @@ export interface TokenKind {
 
 /**
  * The claims of a verified Platform IdP access token that the pod reads.
- * `sub` is optional here: a machine token need not carry one. `org` and
- * `machine` are the dialect's reading; `machine` is `undefined` when the
- * token says nothing about being a user's or a machine's, and no kind admits
- * such a token.
+ * `sub` is optional here: a machine token need not carry one. `org` is the
+ * dialect's reading of the IdP's org claims. Whether the token is a user's
+ * or a machine's is settled by `verify` and shows as the result's `kind`.
  */
 export interface PlatformClaims {
   sub?: string;
   client_id?: string;
   org: OrgIdentity;
-  machine?: boolean;
   name?: string;
   given_name?: string;
   family_name?: string;
@@ -145,14 +143,15 @@ export function createVerifier(opts: {
     if (!kind) throw new UnauthenticatedError("token kind not accepted here");
     const claims = toPlatformClaims(payload, dialect);
     // A token the dialect cannot place is refused, never taken for a user's.
-    if (claims.machine === undefined) throw new UnauthenticatedError("token says nothing about its grant");
+    const machine = dialect.machine(payload);
+    if (machine === undefined) throw new UnauthenticatedError("token says nothing about its grant");
     if (kind.name === "user") {
-      if (claims.machine) throw new UnauthenticatedError("client token on a user route");
+      if (machine) throw new UnauthenticatedError("client token on a user route");
       const { sub } = claims;
       if (!sub) throw new UnauthenticatedError("user token without a subject");
       return { kind: "user", claims: { ...claims, sub } };
     }
-    if (!claims.machine || !claims.client_id || !kind.audiences.includes(claims.client_id)) {
+    if (!machine || !claims.client_id || !kind.audiences.includes(claims.client_id)) {
       throw new UnauthenticatedError("not this kind's client");
     }
     return { kind: "ae-studio", claims };
@@ -167,13 +166,12 @@ function assertKinds(kinds: TokenKind[]): void {
 }
 
 /**
- * jwtVerify has checked exp; the IdP's own claims are read through the
- * dialect, and only string-valued optional claims are carried.
+ * jwtVerify has checked exp; the org is read through the dialect, and only
+ * string-valued optional claims are carried.
  */
 function toPlatformClaims(payload: JWTPayload, dialect: Dialect): PlatformClaims {
   if (typeof payload.exp !== "number") throw new UnauthenticatedError("invalid token");
-  const machine = dialect.machine(payload);
-  const claims: PlatformClaims = { exp: payload.exp, org: dialect.org(payload), ...(machine === undefined ? {} : { machine }) };
+  const claims: PlatformClaims = { exp: payload.exp, org: dialect.org(payload) };
   for (const key of OPTIONAL_STRING_CLAIMS) {
     const value = payload[key];
     if (typeof value === "string") claims[key] = value;

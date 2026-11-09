@@ -59,7 +59,6 @@ test("user token resolves to kind user (RS256 and ES256), its org read through t
     assert.equal(v.kind, "user");
     assert.equal(v.claims.sub, "u1");
     assert.deepEqual(v.claims.org, { handle: "default", id: "ou-1", name: "", handleDeclared: true });
-    assert.equal(v.claims.machine, false);
   }
 });
 
@@ -120,7 +119,6 @@ test("the ae-studio kind is only its own client_credentials client", async () =>
   await assert.rejects(verify(notCC, [AGENT]), UnauthenticatedError);
   const noGrant = await sign({ aud: "ae-studio-default", client_id: "ae-studio-default", ouId: "ou-1", ouHandle: "default" });
   await assert.rejects(verify(noGrant, [AGENT]), UnauthenticatedError);
-  await assert.rejects(verify(notCC, [AGENT]), UnauthenticatedError);
   const otherClient = await sign({ aud: "ae-studio-default", client_id: "someone-else", grant_type: "client_credentials" });
   await assert.rejects(verify(otherClient, [AGENT]), UnauthenticatedError);
   const noClient = await sign({ aud: "ae-studio-default", grant_type: "client_credentials" });

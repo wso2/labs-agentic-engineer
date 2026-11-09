@@ -63,8 +63,8 @@ export class AuthError extends Error {
 export interface IdpAuthConfig {
   issuer: string;
   jwksUrl: string;
-  /** The platform IdP's token dialect; thunder when unset. */
-  kind?: DialectKind;
+  /** The platform IdP's token dialect (the pod's `AE_IDP_KIND`). */
+  kind: DialectKind;
   userAudiences: string[];
   orgId: string;
   orgHandle: string;
@@ -79,7 +79,7 @@ export function idpAuthenticate(cfg: IdpAuthConfig): Authenticate {
   const verify = createVerifier({
     issuer: cfg.issuer,
     jwksUrl: cfg.jwksUrl,
-    ...(cfg.kind ? { kind: cfg.kind } : {}),
+    kind: cfg.kind,
     ...(cfg.jwks ? { jwks: cfg.jwks } : {}),
   });
   const kinds = [{ name: "user" as const, audiences: cfg.userAudiences }];

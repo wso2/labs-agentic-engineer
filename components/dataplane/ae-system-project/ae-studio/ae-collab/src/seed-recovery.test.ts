@@ -73,7 +73,6 @@ const verify: Verify = () =>
     claims: {
       sub: "u-jo",
       org: { handle: "acme", id: "ou-acme", name: "", handleDeclared: true },
-      machine: false,
       name: "Jo",
       email: "jo@example.com",
       exp: Math.floor(Date.now() / 1000) + 3600,
