@@ -82,8 +82,8 @@ func TestIdPUnavailable_IsRetryNotDenied(t *testing.T) {
 	kp := newKeyPair(t)
 	srv, down := switchableJWKS(t, kp)
 	down.Store(true)
-	v := NewVerifier("http://idp", NewJWKSCache(srv.URL))
-	user := kp.sign(t, jwt.MapClaims{"iss": "http://idp", "aud": "aep-console-client", "sub": "u1",
+	v := NewVerifier("http://idp", NewJWKSCache(srv.URL), thunderDialect)
+	user := kp.sign(t, jwt.MapClaims{"iss": "http://idp", "aud": "aep-console-client", "sub": "u1", "grant_type": "authorization_code",
 		"ouId": "ou-1", "ouHandle": "default", "exp": time.Now().Add(time.Hour).Unix()})
 	m2m := kp.sign(t, jwt.MapClaims{"iss": "http://idp", "aud": "ae-studio-internal-client", "client_id": "ae-studio-internal-client",
 		"grant_type": "client_credentials", "exp": time.Now().Add(time.Hour).Unix()})
@@ -130,9 +130,9 @@ func TestIdPUnavailable_IsRetryNotDenied(t *testing.T) {
 func TestIdPUnavailable_NotReachableByTheToken(t *testing.T) {
 	kp := newKeyPair(t)
 	srv, down := switchableJWKS(t, kp)
-	v := NewVerifier("http://idp", NewJWKSCache(srv.URL))
+	v := NewVerifier("http://idp", NewJWKSCache(srv.URL), thunderDialect)
 	gate := UserGate(v, []string{"aep-console-client"}, "ou-1", "default")
-	claims := jwt.MapClaims{"iss": "http://idp", "aud": "aep-console-client", "sub": "u1",
+	claims := jwt.MapClaims{"iss": "http://idp", "aud": "aep-console-client", "sub": "u1", "grant_type": "authorization_code",
 		"ouId": "ou-1", "ouHandle": "default", "exp": time.Now().Add(time.Hour).Unix()}
 	good := kp.sign(t, claims)
 	// Warm the cache while the IdP is up.
@@ -172,7 +172,7 @@ func TestIdPUnavailable_NotReachableByTheToken(t *testing.T) {
 
 	// A cold cache with the IdP down: even a malformed token stays 401 (it
 	// never reaches the key lookup).
-	cold := UserGate(NewVerifier("http://idp", NewJWKSCache(srv.URL)), []string{"aep-console-client"}, "ou-1", "default")
+	cold := UserGate(NewVerifier("http://idp", NewJWKSCache(srv.URL), thunderDialect), []string{"aep-console-client"}, "ou-1", "default")
 	if rec := serve(cold, "not.a.jwt", ""); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("malformed on a cold cache: %d", rec.Code)
 	}

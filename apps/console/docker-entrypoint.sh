@@ -27,6 +27,8 @@ VITE_API_BASE_URL_VAL="${VITE_API_BASE_URL:-/aep-api-service}"
 THUNDER_URL="${VITE_THUNDER_URL:-}"
 THUNDER_CLIENT_ID="${VITE_THUNDER_CLIENT_ID:-aep-console-client}"
 THUNDER_SCOPES="${VITE_THUNDER_SCOPES:-openid profile email}"
+# The platform IdP's token dialect (src/auth/claims.ts); thunder when unset.
+IDP_KIND="${VITE_IDP_KIND:-thunder}"
 TRY_IT_URL="${VITE_TRY_IT_URL:-http://tryit.aep.localhost:8095}"
 # WSO2 Cloud only — set by the ReleaseBinding. Empty locally so the SPA skips
 # the first-login billing activation call.
@@ -44,6 +46,7 @@ window._env_ = {
   VITE_THUNDER_URL: "${THUNDER_URL}",
   VITE_THUNDER_CLIENT_ID: "${THUNDER_CLIENT_ID}",
   VITE_THUNDER_SCOPES: "${THUNDER_SCOPES}",
+  VITE_IDP_KIND: "${IDP_KIND}",
   VITE_TRY_IT_URL: "${TRY_IT_URL}",
   BILLING_API_BASE_URL: "${BILLING_API_BASE_URL_VAL}",
 };

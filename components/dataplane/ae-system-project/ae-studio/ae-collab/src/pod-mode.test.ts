@@ -72,7 +72,8 @@ async function testKeys(): Promise<TestKeys> {
   return {
     jwksUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/oauth2/jwks`,
     sign: (claims) => signJwt(privateKey, claims),
-    user: (ouHandle, ouId) => signJwt(privateKey, { aud: USER_AUDIENCE, sub: `user-${ouHandle}`, ouId, ouHandle }),
+    user: (ouHandle, ouId) =>
+      signJwt(privateKey, { aud: USER_AUDIENCE, sub: `user-${ouHandle}`, grant_type: "authorization_code", ouId, ouHandle }),
     m2m: (client) =>
       client === "publisher"
         ? signJwt(privateKey, { ...cc, aud: "aep-publisher-default", client_id: "aep-publisher-default", ouId: "ou-1", ouHandle: "default" })
@@ -188,7 +189,14 @@ test("pod: HTTP under /v1 is gated; room upgrades pass the origin rule and the p
 
     // The pod's issuer, exactly: a user token of the pod's org signed by the
     // same key under another issuer is refused.
-    const foreignIssuer = keys.sign({ iss: "http://other-idp.test", aud: USER_AUDIENCE, sub: "u", ouId: "ou-1", ouHandle: "default" });
+    const foreignIssuer = keys.sign({
+      iss: "http://other-idp.test",
+      aud: USER_AUDIENCE,
+      sub: "u",
+      grant_type: "authorization_code",
+      ouId: "ou-1",
+      ouHandle: "default",
+    });
     const foreign401 = await v1("/v1/rooms", foreignIssuer);
     assert.equal(foreign401.status, 401);
     assert.equal(foreign401.headers.get("www-authenticate"), 'Bearer error="invalid_token"');
@@ -343,6 +351,7 @@ test("pod config: defaults and lists", () => {
     orgHandle: "default",
     issuer: ISSUER,
     jwksUrl: "http://unused",
+    idpKind: "thunder",
     userAudiences: ["aep-console-client", "other"],
     allowedOrigins: ["http://localhost:8090"],
     filesSocket: "/run/ae/files/files.sock",
@@ -350,6 +359,11 @@ test("pod config: defaults and lists", () => {
     listenPort: 8081,
     healthPort: 9081,
   });
+});
+
+test("pod config: the platform IdP kind is optional, and an unknown one is a boot error", () => {
+  assert.equal(loadPodConfig(podEnv({ AE_IDP_KIND: "thunder" }))?.idpKind, "thunder");
+  assert.throws(() => loadPodConfig(podEnv({ AE_IDP_KIND: "asgardeo" })), /invalid AE_IDP_KIND/);
 });
 
 test("pod config: AE_ORG_ID without the rest fails, naming every missing key and no value", () => {

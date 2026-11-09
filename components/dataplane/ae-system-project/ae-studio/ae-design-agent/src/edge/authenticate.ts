@@ -31,6 +31,7 @@ import {
   IdpUnavailableError,
   UnauthenticatedError,
   userRule,
+  type DialectKind,
   type UserClaims,
 } from "@aep/platform-idp-auth";
 
@@ -62,6 +63,8 @@ export class AuthError extends Error {
 export interface IdpAuthConfig {
   issuer: string;
   jwksUrl: string;
+  /** The platform IdP's token dialect; thunder when unset. */
+  kind?: DialectKind;
   userAudiences: string[];
   orgId: string;
   orgHandle: string;
@@ -73,7 +76,12 @@ const BEARER = /^Bearer ([^\s]+)$/i;
 
 /** The pod's adapter: a Platform IdP user token whose org claims are the pod's. */
 export function idpAuthenticate(cfg: IdpAuthConfig): Authenticate {
-  const verify = createVerifier({ issuer: cfg.issuer, jwksUrl: cfg.jwksUrl, ...(cfg.jwks ? { jwks: cfg.jwks } : {}) });
+  const verify = createVerifier({
+    issuer: cfg.issuer,
+    jwksUrl: cfg.jwksUrl,
+    ...(cfg.kind ? { kind: cfg.kind } : {}),
+    ...(cfg.jwks ? { jwks: cfg.jwks } : {}),
+  });
   const kinds = [{ name: "user" as const, audiences: cfg.userAudiences }];
   const pod = { orgId: cfg.orgId, orgHandle: cfg.orgHandle };
   return async (req) => {

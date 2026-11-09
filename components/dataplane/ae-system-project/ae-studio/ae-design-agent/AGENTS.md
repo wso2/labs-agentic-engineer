@@ -137,8 +137,9 @@ names its thread, whose chat the book knows. Only the main chat rotates.
 - **Listeners** (`src/pod/listeners.ts`): the public port (`AE_LISTEN_PORT`,
   8080) serves `/v1` (`src/edge/`) behind the `authenticate` gate
   (`edge/authenticate.ts`, `@aep/platform-idp-auth`): a Platform IdP user token
-  of `AE_IDP_ISSUER` with an `AE_USER_AUDIENCES` audience and `ouId`/`ouHandle`
-  equal to `AE_ORG_ID`/`AE_ORG_HANDLE`. M2M → 401, another org → 403, IdP keys
+  of `AE_IDP_ISSUER` with an `AE_USER_AUDIENCES` audience whose org, read by
+  the IdP's token dialect (`AE_IDP_KIND`, thunder when unset: `ouId` and the
+  declared `ouHandle`), is `AE_ORG_ID`/`AE_ORG_HANDLE`. M2M → 401, another org → 403, IdP keys
   unreachable → 503 `idp_unavailable` (`Retry-After: 5`), all before route
   matching. The Turn socket (`AE_TURN_SOCKET`, mode 0660; a stale socket file
   is replaced, any other file refuses the start) serves `edge/turn-socket.ts`

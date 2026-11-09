@@ -44,6 +44,7 @@ import (
 	"time"
 
 	"github.com/wso2/aep/ae-studio-tools/internal/auth"
+	"github.com/wso2/aep/ae-studio-tools/internal/auth/dialect"
 	"github.com/wso2/aep/ae-studio-tools/internal/config"
 	"github.com/wso2/aep/ae-studio-tools/internal/edge"
 	"github.com/wso2/aep/ae-studio-tools/internal/files"
@@ -171,8 +172,8 @@ func run() error {
 		// The Issues and issue chats' issue tools, forwarded to aep-api's
 		// surface of the route's project (and issue).
 		IssuesUpstreams: mcp.NewIssuesUpstreams(aepAPI),
-		Snapshots: reader,
-		Usage:     usageOutbox.sender,
+		Snapshots:       reader,
+		Usage:           usageOutbox.sender,
 	}
 	// The GitHub client over the gitpat: commit identity and aep-api's
 	// GitHub ops; the hooks it registers deliver to AE_WEBHOOK_URL signed
@@ -203,7 +204,7 @@ func run() error {
 		Addr: fmt.Sprintf(":%d", cfg.ListenPort),
 		Handler: edge.Routes(edge.Deps{
 			Cfg:      cfg,
-			Verifier: auth.NewVerifier(cfg.IDPIssuer, auth.NewJWKSCache(cfg.IDPJWKSURL)),
+			Verifier: auth.NewVerifier(cfg.IDPIssuer, auth.NewJWKSCache(cfg.IDPJWKSURL), dialect.ForKind(cfg.IDPKind)),
 			GitHub:   gh,
 			// Verified GitHub deliveries go to aep-api's ingest-webhook-event
 			// as the org's ae-studio client.

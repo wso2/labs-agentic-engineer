@@ -26,5 +26,6 @@ export {
   type VerifiedToken,
 } from "./verify.js";
 export { orgRule, userRule, type PodOrg } from "./user-rule.js";
+export { parseDialectKind, type DialectKind } from "./dialect.js";
 export { displayIdentity, type DisplayIdentity } from "./display-identity.js";
 export { problem, type ProblemBody } from "./problem.js";

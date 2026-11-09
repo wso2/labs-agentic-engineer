@@ -41,13 +41,25 @@ function str(value: unknown): string | undefined {
   return typeof value === "string" && value !== "" ? value : undefined;
 }
 
-// Mirrors the BFF's auth.ResolveOuHandle precedence exactly (jwt.go):
-// ouHandle > ouName > ouId. The console must agree with the server on
-// which org a token addresses.
-export function resolveOrgHandle(claims: TokenClaims): string | null {
-  return (
-    str(claims["ouHandle"]) ?? str(claims["ouName"]) ?? str(claims["ouId"]) ?? null
-  );
+// The claims that name a token's org, per platform IdP kind (the kind is
+// env.idpKind), in the order the server reads them. Thunder's is the Thunder
+// token dialect of aep-api (internal/platform/auth/dialect/dialect.go):
+// ouHandle, else ouName, else ouId. The console must agree with the server
+// on which org a token addresses, so a change here lands on both sides at
+// once.
+const ORG_HANDLE_CLAIMS: Readonly<Record<string, readonly string[]>> = {
+  thunder: ["ouHandle", "ouName", "ouId"],
+};
+
+// The org a token addresses under the given IdP kind; null when it names
+// none. A kind this build does not know names no org either: this is display
+// and routing only, and the BFF decides, so nothing here guesses.
+export function resolveOrgHandle(claims: TokenClaims, kind: string): string | null {
+  for (const name of ORG_HANDLE_CLAIMS[kind] ?? []) {
+    const value = str(claims[name]);
+    if (value) return value;
+  }
+  return null;
 }
 
 export interface SessionIdentity {
@@ -57,9 +69,10 @@ export interface SessionIdentity {
 }
 
 // Builds the display identity from token claim sets in precedence order
-// (ID token first, access token as fallback — Thunder puts the ou* claims
-// on the access token).
-export function identityFromClaims(...sources: TokenClaims[]): SessionIdentity {
+// (ID token first, access token as fallback — Thunder puts the org claims
+// on the access token). `kind` is the platform IdP's token dialect
+// (env.idpKind), which says which claims name the org.
+export function identityFromClaims(kind: string, ...sources: TokenClaims[]): SessionIdentity {
   const first = (pick: (c: TokenClaims) => string | undefined) => {
     for (const claims of sources) {
       const value = pick(claims);
@@ -84,7 +97,7 @@ export function identityFromClaims(...sources: TokenClaims[]): SessionIdentity {
 
   let orgHandle: string | null = null;
   for (const claims of sources) {
-    orgHandle = resolveOrgHandle(claims);
+    orgHandle = resolveOrgHandle(claims, kind);
     if (orgHandle) break;
   }
 

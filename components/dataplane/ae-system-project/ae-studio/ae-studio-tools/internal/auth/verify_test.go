@@ -29,7 +29,12 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/wso2/aep/ae-studio-tools/internal/auth/dialect"
 )
+
+// thunderDialect reads the Thunder claims every signed test token here carries.
+var thunderDialect = dialect.ForKind(dialect.KindThunder)
 
 type keyPair struct {
 	key *rsa.PrivateKey
@@ -73,17 +78,26 @@ func (kp keyPair) sign(t *testing.T, claims jwt.MapClaims) string {
 func TestGate_Table(t *testing.T) {
 	kp := newKeyPair(t)
 	srv := kp.serveJWKS(t)
-	v := NewVerifier("http://idp", NewJWKSCache(srv.URL))
+	v := NewVerifier("http://idp", NewJWKSCache(srv.URL), thunderDialect)
 	user := func(h, id string) string {
-		return kp.sign(t, jwt.MapClaims{"iss": "http://idp", "aud": "aep-console-client", "sub": "u1",
+		return kp.sign(t, jwt.MapClaims{"iss": "http://idp", "aud": "aep-console-client", "sub": "u1", "grant_type": "authorization_code",
 			"ouId": id, "ouHandle": h, "exp": time.Now().Add(time.Hour).Unix()})
 	}
+	// A user-audience token that says nothing about its grant: the dialect
+	// cannot place it as a user's or a machine's, so the gate refuses it
+	// rather than take it for a user's.
+	userNoGrant := kp.sign(t, jwt.MapClaims{"iss": "http://idp", "aud": "aep-console-client", "sub": "u1",
+		"ouId": "ou-1", "ouHandle": "default", "exp": time.Now().Add(time.Hour).Unix()})
+	// The org's name where its handle should be: the pod requires the
+	// declared handle, so this is another org's user as far as it can tell.
+	userNameOnly := kp.sign(t, jwt.MapClaims{"iss": "http://idp", "aud": "aep-console-client", "sub": "u1", "grant_type": "authorization_code",
+		"ouId": "ou-1", "ouName": "default", "exp": time.Now().Add(time.Hour).Unix()})
 	m2m := kp.sign(t, jwt.MapClaims{"iss": "http://idp", "aud": "ae-studio-internal-client", "client_id": "ae-studio-internal-client",
 		"grant_type": "client_credentials", "sub": "app-1", "exp": time.Now().Add(time.Hour).Unix()})
 	pub := kp.sign(t, jwt.MapClaims{"iss": "http://idp", "aud": "aep-publisher-default", "client_id": "aep-publisher-default",
 		"grant_type": "client_credentials", "ouId": "ou-1", "ouHandle": "default", "exp": time.Now().Add(time.Hour).Unix()})
-	expired := kp.sign(t, jwt.MapClaims{"iss": "http://idp", "aud": "aep-console-client", "ouId": "ou-1", "ouHandle": "default", "exp": time.Now().Add(-time.Minute).Unix()})
-	otherIss := kp.sign(t, jwt.MapClaims{"iss": "http://evil", "aud": "aep-console-client", "ouId": "ou-1", "ouHandle": "default", "exp": time.Now().Add(time.Hour).Unix()})
+	expired := kp.sign(t, jwt.MapClaims{"iss": "http://idp", "aud": "aep-console-client", "grant_type": "authorization_code", "ouId": "ou-1", "ouHandle": "default", "exp": time.Now().Add(-time.Minute).Unix()})
+	otherIss := kp.sign(t, jwt.MapClaims{"iss": "http://evil", "aud": "aep-console-client", "grant_type": "authorization_code", "ouId": "ou-1", "ouHandle": "default", "exp": time.Now().Add(time.Hour).Unix()})
 	// Hardening rows beyond the plan's table: a user-audience token minted by
 	// client_credentials, an M2M token whose aud matches but whose client_id
 	// does not, one carrying an org claim, a token with no exp, and an
@@ -95,20 +109,20 @@ func TestGate_Table(t *testing.T) {
 	m2mWithOrg := kp.sign(t, jwt.MapClaims{"iss": "http://idp", "aud": "ae-studio-internal-client", "client_id": "ae-studio-internal-client",
 		"grant_type": "client_credentials", "ouId": "ou-1", "exp": time.Now().Add(time.Hour).Unix()})
 	noExp := kp.sign(t, jwt.MapClaims{"iss": "http://idp", "aud": "aep-console-client", "ouId": "ou-1", "ouHandle": "default"})
-	unsigned, err := jwt.NewWithClaims(jwt.SigningMethodNone, jwt.MapClaims{"iss": "http://idp", "aud": "aep-console-client",
+	unsigned, err := jwt.NewWithClaims(jwt.SigningMethodNone, jwt.MapClaims{"iss": "http://idp", "aud": "aep-console-client", "grant_type": "authorization_code",
 		"ouId": "ou-1", "ouHandle": "default", "exp": time.Now().Add(time.Hour).Unix()}).SignedString(jwt.UnsafeAllowNoneSignatureType)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Algorithm confusion: HS256 keyed with the RSA public key bytes.
-	hs256, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{"iss": "http://idp", "aud": "aep-console-client",
+	hs256, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{"iss": "http://idp", "aud": "aep-console-client", "grant_type": "authorization_code",
 		"ouId": "ou-1", "ouHandle": "default", "exp": time.Now().Add(time.Hour).Unix()}).SignedString(x509.MarshalPKCS1PublicKey(&kp.key.PublicKey))
 	if err != nil {
 		t.Fatal(err)
 	}
-	noSub := kp.sign(t, jwt.MapClaims{"iss": "http://idp", "aud": "aep-console-client", "ouId": "ou-1", "ouHandle": "default",
+	noSub := kp.sign(t, jwt.MapClaims{"iss": "http://idp", "aud": "aep-console-client", "grant_type": "authorization_code", "ouId": "ou-1", "ouHandle": "default",
 		"exp": time.Now().Add(time.Hour).Unix()})
-	futureNbf := kp.sign(t, jwt.MapClaims{"iss": "http://idp", "aud": "aep-console-client", "ouId": "ou-1", "ouHandle": "default",
+	futureNbf := kp.sign(t, jwt.MapClaims{"iss": "http://idp", "aud": "aep-console-client", "grant_type": "authorization_code", "ouId": "ou-1", "ouHandle": "default",
 		"nbf": time.Now().Add(time.Hour).Unix(), "exp": time.Now().Add(2 * time.Hour).Unix()})
 
 	userGate := UserGate(v, []string{"aep-console-client"}, "ou-1", "default")
@@ -136,6 +150,8 @@ func TestGate_Table(t *testing.T) {
 		{"HS256 keyed with RSA public key on v1", userGate, hs256, "", 401},
 		{"future nbf on v1", userGate, futureNbf, "", 401},
 		{"user without sub on v1", userGate, noSub, "", 401},
+		{"user without grant_type on v1", userGate, userNoGrant, "", 401},
+		{"user with ouName but no ouHandle", userGate, userNameOnly, "", 403},
 		{"m2m ok", m2mGate, m2m, "ou-1", 204},
 		{"m2m no impersonation", m2mGate, m2m, "", 403},
 		{"m2m foreign impersonation", m2mGate, m2m, "ou-2", 403},
@@ -171,13 +187,13 @@ func TestGate_Table(t *testing.T) {
 
 func TestConstructors_PanicOnEmptySecurityParams(t *testing.T) {
 	jwks := NewJWKSCache("http://idp/jwks")
-	v := NewVerifier("http://idp", jwks)
+	v := NewVerifier("http://idp", jwks, thunderDialect)
 	cases := []struct {
 		name string
 		fn   func()
 	}{
-		{"verifier empty issuer", func() { NewVerifier("", jwks) }},
-		{"verifier nil jwks", func() { NewVerifier("http://idp", nil) }},
+		{"verifier empty issuer", func() { NewVerifier("", jwks, thunderDialect) }},
+		{"verifier nil jwks", func() { NewVerifier("http://idp", nil, thunderDialect) }},
 		{"user gate nil verifier", func() { UserGate(nil, []string{"a"}, "ou-1", "default") }},
 		{"user gate no audiences", func() { UserGate(v, nil, "ou-1", "default") }},
 		{"user gate empty audience entry", func() { UserGate(v, []string{""}, "ou-1", "default") }},

@@ -35,6 +35,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/wso2/aep/ae-studio-tools/internal/auth"
+	"github.com/wso2/aep/ae-studio-tools/internal/auth/dialect"
 	"github.com/wso2/aep/ae-studio-tools/internal/config"
 	"github.com/wso2/aep/ae-studio-tools/internal/files"
 	"github.com/wso2/aep/ae-studio-tools/internal/github"
@@ -194,7 +195,7 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 	h.logBuf = captureLogs(t)
 	h.handler = Routes(Deps{
 		Cfg:        cfg,
-		Verifier:   auth.NewVerifier(cfg.IDPIssuer, auth.NewJWKSCache(cfg.IDPJWKSURL)),
+		Verifier:   auth.NewVerifier(cfg.IDPIssuer, auth.NewJWKSCache(cfg.IDPJWKSURL), dialect.ForKind(dialect.KindThunder)),
 		GitHub:     deps.gh,
 		Webhook:    WebhookHandler(testWebhookSecret, &fakeForwarder{err: webhook.ErrUpstreamUnavailable}),
 		Files:      files.Reader{Engine: engine, Projects: h.projects},
@@ -228,7 +229,7 @@ func (h *harness) sign(claims jwt.MapClaims) string {
 }
 
 func (h *harness) user(handle, ouID string) string {
-	return h.sign(jwt.MapClaims{"aud": "aep-console-client", "sub": "u1", "ouId": ouID, "ouHandle": handle})
+	return h.sign(jwt.MapClaims{"aud": "aep-console-client", "sub": "u1", "grant_type": "authorization_code", "ouId": ouID, "ouHandle": handle})
 }
 
 func (h *harness) m2m() string {

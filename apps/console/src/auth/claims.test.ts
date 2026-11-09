@@ -57,36 +57,40 @@ describe("decodeJwtClaims", () => {
 });
 
 describe("resolveOrgHandle", () => {
-  it("mirrors the BFF precedence: ouHandle > ouName > ouId", () => {
+  it("thunder: mirrors the BFF's Thunder dialect, ouHandle > ouName > ouId", () => {
     expect(
-      resolveOrgHandle({ ouHandle: "h", ouName: "n", ouId: "i" }),
+      resolveOrgHandle({ ouHandle: "h", ouName: "n", ouId: "i" }, "thunder"),
     ).toBe("h");
-    expect(resolveOrgHandle({ ouName: "n", ouId: "i" })).toBe("n");
-    expect(resolveOrgHandle({ ouId: "i" })).toBe("i");
+    expect(resolveOrgHandle({ ouName: "n", ouId: "i" }, "thunder")).toBe("n");
+    expect(resolveOrgHandle({ ouId: "i" }, "thunder")).toBe("i");
   });
 
   it("skips empty and non-string values", () => {
-    expect(resolveOrgHandle({ ouHandle: "", ouName: "n" })).toBe("n");
-    expect(resolveOrgHandle({ ouHandle: 42, ouName: "n" })).toBe("n");
-    expect(resolveOrgHandle({})).toBeNull();
+    expect(resolveOrgHandle({ ouHandle: "", ouName: "n" }, "thunder")).toBe("n");
+    expect(resolveOrgHandle({ ouHandle: 42, ouName: "n" }, "thunder")).toBe("n");
+    expect(resolveOrgHandle({}, "thunder")).toBeNull();
+  });
+
+  it("an IdP kind this build does not know names no org", () => {
+    expect(resolveOrgHandle({ ouHandle: "h", org_handle: "h" }, "asgardeo")).toBeNull();
   });
 });
 
 describe("identityFromClaims", () => {
   it("prefers name, then given/family, then username, email, sub", () => {
-    expect(identityFromClaims({ name: "N", given_name: "G" }).name).toBe("N");
+    expect(identityFromClaims("thunder", { name: "N", given_name: "G" }).name).toBe("N");
     expect(
-      identityFromClaims({ given_name: "G", family_name: "F", username: "u" })
+      identityFromClaims("thunder", { given_name: "G", family_name: "F", username: "u" })
         .name,
     ).toBe("G F");
-    expect(identityFromClaims({ username: "u", email: "e@x" }).name).toBe("u");
-    expect(identityFromClaims({ email: "e@x" }).name).toBe("e@x");
-    expect(identityFromClaims({ sub: "s" }).name).toBe("s");
-    expect(identityFromClaims({}).name).toBe("User");
+    expect(identityFromClaims("thunder", { username: "u", email: "e@x" }).name).toBe("u");
+    expect(identityFromClaims("thunder", { email: "e@x" }).name).toBe("e@x");
+    expect(identityFromClaims("thunder", { sub: "s" }).name).toBe("s");
+    expect(identityFromClaims("thunder", {}).name).toBe("User");
   });
 
   it("takes the first source that has a value (ID token before access token)", () => {
-    const identity = identityFromClaims(
+    const identity = identityFromClaims("thunder",
       { name: "From ID" },
       { name: "From access", ouHandle: "acme" },
     );
@@ -99,12 +103,12 @@ describe("identityFromClaims", () => {
     // ID token has ouName only; access token has ouHandle. The first source
     // with any org claim wins (ouName), matching a BFF that reads one token.
     expect(
-      identityFromClaims({ ouName: "n" }, { ouHandle: "h" }).orgHandle,
+      identityFromClaims("thunder", { ouName: "n" }, { ouHandle: "h" }).orgHandle,
     ).toBe("n");
   });
 
   it("returns empty email when no source has one", () => {
-    expect(identityFromClaims({ name: "N" }).email).toBe("");
+    expect(identityFromClaims("thunder", { name: "N" }).email).toBe("");
   });
 });
 

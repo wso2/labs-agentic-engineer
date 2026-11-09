@@ -23,6 +23,7 @@ interface RuntimeEnv {
   VITE_THUNDER_URL?: string;
   VITE_THUNDER_CLIENT_ID?: string;
   VITE_THUNDER_SCOPES?: string;
+  VITE_IDP_KIND?: string;
   VITE_TRY_IT_URL?: string;
   BILLING_API_BASE_URL?: string;
 }
@@ -65,6 +66,9 @@ export const env = {
   // added to its redirect URIs by hand; see README.
   thunderClientId: getEnv("VITE_THUNDER_CLIENT_ID") || "aep-console-client",
   thunderScopes: getEnv("VITE_THUNDER_SCOPES") || "openid profile email",
+  // The platform IdP's token dialect: which claims name a token's org
+  // (auth/claims.ts). Thunder when unset, as on every install today.
+  idpKind: getEnv("VITE_IDP_KIND") || "thunder",
   // The platform's test app (apps/tryit), which Try it opens an agent in; same
   // origin as aep-api's TRY_IT_CALLBACK_URL. The default is the dev cluster's.
   tryItUrl: getEnv("VITE_TRY_IT_URL") || "http://tryit.aep.localhost:8095",

@@ -29,7 +29,7 @@ reaper: [`design/clone-storage.md`](design/clone-storage.md).
 |---|---|
 | `cmd/ae-studio-tools` | wiring and shutdown order |
 | `internal/config` | `Load(getenv)` reads the pod env; `CheckSecretRev` refuses to start when `AE_SECRET_REV` is not `AE_EXPECTED_SECRET_REV` |
-| `internal/auth` | JWT verifier over the IdP JWKS; `UserGate` (`/v1`), `M2MGate` (`/internal/v1`) |
+| `internal/auth` | JWT verifier over the IdP JWKS; `UserGate` (`/v1`), `M2MGate` (`/internal/v1`). `auth/dialect` is the platform IdP's token dialect: the claim names and rules one IdP kind uses to say who the caller is (`AE_IDP_KIND`; thunder only), the twin of aep-api's `internal/platform/auth/dialect` |
 | `internal/problem` | the `application/problem+json` body (a leaf, shared by gates and edge) |
 | `internal/edge` | the mount tables (`routes.go`), the `/internal/v1` group (`internal*.go`; `internal_threads.go` is aep-api's `remove-issue-thread`), the owner guard, the Files and MCP socket mounts |
 | `internal/gen` | generated, never edited; one sub-package per contract |
@@ -80,7 +80,9 @@ in [`../design/README.md`](../design/README.md). Two behaviours to know:
 `AE_GITHUB_OWNER` may be empty (it refuses every remote-git call), and
 `AE_WEBHOOK_URL` is the org's relay channel when the Resource's
 `webhookRelayUrl` is set, else the ResourceType's `webhookUrl` output.
-Optional: `AE_LISTEN_PORT` (8082), `AE_HEALTH_PORT` (9082, not routed).
+Optional: `AE_LISTEN_PORT` (8082), `AE_HEALTH_PORT` (9082, not routed),
+`AE_IDP_KIND` (the platform IdP's token dialect; `thunder` when unset, and
+a kind this build does not know fails `Load`).
 
 ## Dead code
 

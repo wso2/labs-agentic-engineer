@@ -70,7 +70,14 @@ const PRD = "# PRD\n\nA paragraph of body text.\n";
 const verify: Verify = () =>
   Promise.resolve({
     kind: "user",
-    claims: { sub: "u-jo", ouId: "ou-acme", ouHandle: "acme", name: "Jo", email: "jo@example.com", exp: Math.floor(Date.now() / 1000) + 3600 },
+    claims: {
+      sub: "u-jo",
+      org: { handle: "acme", id: "ou-acme", name: "", handleDeclared: true },
+      machine: false,
+      name: "Jo",
+      email: "jo@example.com",
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    },
   });
 
 async function startRoom(files: FakeFilesSocket): Promise<PodListeners> {
@@ -79,6 +86,7 @@ async function startRoom(files: FakeFilesSocket): Promise<PodListeners> {
     orgHandle: "acme",
     issuer: "http://thunder.test",
     jwksUrl: "http://thunder.test/oauth2/jwks",
+    idpKind: "thunder",
     userAudiences: ["aep-console-client"],
     allowedOrigins: [CONSOLE_ORIGIN],
     filesSocket: files.path,
