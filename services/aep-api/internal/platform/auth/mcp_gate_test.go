@@ -30,6 +30,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/wso2/aep/aep-api/internal/platform/auth/dialect"
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 )
 
@@ -71,8 +72,8 @@ func newMCPGateStack(t *testing.T, clients StudioClientLookup) mcpGateStack {
 	t.Cleanup(srv.Close)
 	jwks := jwtassertion.NewJWKSCache(srv.URL)
 	s := mcpGateStack{
-		publisher: NewPublisherTokenVerifier(jwks, pubIssuer, pubAudPrefix),
-		studio:    NewStudioClientVerifier(jwks, pubIssuer, clients),
+		publisher: NewPublisherTokenVerifier(jwks, pubIssuer, pubAudPrefix, thunderDialect),
+		studio:    NewStudioClientVerifier(jwks, pubIssuer, thunderDialect, clients),
 	}
 	if s.publisher == nil || s.studio == nil {
 		t.Fatal("a verifier is nil")
@@ -84,7 +85,7 @@ func newMCPGateStack(t *testing.T, clients StudioClientLookup) mcpGateStack {
 				Audience:  jwt.ClaimStrings{aud},
 				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 			},
-			OuHandle: ouHandle,
+			Raw: dialect.Raw{OuHandle: ouHandle},
 		})
 		tok.Header["kid"] = kid
 		signed, err := tok.SignedString(priv)

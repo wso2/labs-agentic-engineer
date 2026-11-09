@@ -23,16 +23,17 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/wso2/aep/aep-api/internal/platform/auth/dialect"
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 )
 
-// PublisherTokenVerifier validates Thunder-issued client_credentials
+// PublisherTokenVerifier validates the platform IdP's client_credentials
 // access tokens whose audience identifies a per-org publisher OAuth app
 // ("aep-publisher-{orgHandle}"). Mirrors agent-manager's
 // PublisherClientAuthMiddleware at
 // agent-manager-service/middleware/jwtassertion/auth.go:106 — same
-// regex shape, same cross-org defense (subject's embedded org handle
-// MUST match the ouHandle claim).
+// regex shape, same cross-org defense (the org handle embedded in the
+// audience MUST match the org the dialect reads from the token).
 //
 // Used by the runner-callback handler (validation context) and the internal
 // MCP gate to accept per-org publisher cc tokens, and over the ae-studio- prefix by
@@ -42,26 +43,26 @@ type PublisherTokenVerifier struct {
 	expectedIssuer string
 	audiencePrefix string
 	subjectPattern *regexp.Regexp
+	dialect        dialect.Dialect
 }
 
 // PublisherClaims is the projection of a verified publisher cc token.
-// OrgHandle is the canonical OC org handle (extracted from subject +
-// cross-checked against the ouHandle claim).
+// OrgHandle is the canonical OC org handle: the one embedded in the
+// audience, cross-checked against the org the dialect reads.
 type PublisherClaims struct {
 	jwt.RegisteredClaims
-	OuId      string `json:"ouId"`
-	OuName    string `json:"ouName"`
-	OuHandle  string `json:"ouHandle"`
+	dialect.Raw
 	OrgHandle string `json:"-"`
 }
 
 // NewPublisherTokenVerifier returns a verifier. audiencePrefix is the
 // shared prefix on every per-org publisher client (e.g. "aep-publisher-").
 // jwks must be a populated cache pointed at the platform IDP's JWKS
-// endpoint; expectedIssuer is the iss claim Thunder stamps (e.g.
-// "platform-idp"). Returns nil when any input is empty — composition root
-// uses this to disable cc verification cleanly in dev.
-func NewPublisherTokenVerifier(jwks *jwtassertion.JWKSCache, expectedIssuer, audiencePrefix string) *PublisherTokenVerifier {
+// endpoint; expectedIssuer is the iss claim the IdP stamps (e.g.
+// "platform-idp"); d reads the IdP's org claims. Returns nil when any
+// input is empty — composition root uses this to disable cc verification
+// cleanly in dev.
+func NewPublisherTokenVerifier(jwks *jwtassertion.JWKSCache, expectedIssuer, audiencePrefix string, d dialect.Dialect) *PublisherTokenVerifier {
 	if jwks == nil || strings.TrimSpace(expectedIssuer) == "" || strings.TrimSpace(audiencePrefix) == "" {
 		return nil
 	}
@@ -72,6 +73,7 @@ func NewPublisherTokenVerifier(jwks *jwtassertion.JWKSCache, expectedIssuer, aud
 		expectedIssuer: expectedIssuer,
 		audiencePrefix: audiencePrefix,
 		subjectPattern: pat,
+		dialect:        d,
 	}
 }
 
@@ -110,10 +112,12 @@ func (v *PublisherTokenVerifier) Verify(tokenString string) (*PublisherClaims, e
 		return nil, fmt.Errorf("unexpected issuer %q", claims.Issuer)
 	}
 
-	// Identify the publisher app via the audience claim (Thunder stamps
-	// the cc client_id as aud per the agent-manager pattern at
+	// Identify the publisher app via the audience claim: every platform IdP
+	// AE supports stamps a machine token's client id as aud (the
+	// agent-manager pattern at
 	// agent-manager/agent-manager-service/middleware/jwtassertion/auth.go:93).
-	// Subject is a Thunder-generated UUID, not the client_id.
+	// Subject is not the client id on Thunder (an entity UUID), so it is
+	// never read.
 	var publisherAud string
 	for _, a := range claims.Audience {
 		if v.subjectPattern.MatchString(a) {
@@ -127,15 +131,21 @@ func (v *PublisherTokenVerifier) Verify(tokenString string) (*PublisherClaims, e
 	orgHandle := strings.TrimPrefix(publisherAud, v.audiencePrefix)
 
 	// Cross-org defense: the org handle embedded in the audience MUST
-	// match the ouHandle claim. Defends against an attacker who steals
-	// org A's publisher cc token and tries to act on org B's data by
-	// hand-rolling a token with a mismatched ouHandle (which would fail
-	// signature verification, but layered defense).
-	if claims.OuHandle == "" {
-		return nil, fmt.Errorf("ouHandle claim missing")
+	// match the org the dialect reads from the token. Defends against an
+	// attacker who steals org A's publisher cc token and tries to act on
+	// org B's data by hand-rolling a token with a mismatched org (which
+	// would fail signature verification, but layered defense).
+	//
+	// A machine token must declare its org handle outright: aep-api
+	// registers every publisher and studio client itself and stamps the
+	// handle on it, so the user path's fallback to a name or id for legacy
+	// tokens would only widen what is accepted here.
+	org := v.dialect.Org(claims.Raw)
+	if !org.HandleDeclared {
+		return nil, fmt.Errorf("org handle claim missing")
 	}
-	if claims.OuHandle != orgHandle {
-		return nil, fmt.Errorf("ouHandle %q does not match audience org %q", claims.OuHandle, orgHandle)
+	if org.Handle != orgHandle {
+		return nil, fmt.Errorf("org %q does not match audience org %q", org.Handle, orgHandle)
 	}
 	claims.OrgHandle = orgHandle
 	return claims, nil

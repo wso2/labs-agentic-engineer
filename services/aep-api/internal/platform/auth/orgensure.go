@@ -16,17 +16,16 @@
 
 // EnsureOrgMiddleware is the verify-and-cache seam for tenant identity. On
 // every authenticated request that reaches an org-scoped route, the
-// middleware resolves the OC org handle from the JWT claims (via
-// ResolveOuHandle) and verifies the corresponding OC
-// namespace exists, caching the local Organization row's UUID for FK
-// use. It does NOT create namespaces — that is the platform's job
+// middleware takes the OC org handle the dialect read from the JWT
+// (Claims.OrgHandle) and verifies the corresponding OC namespace exists,
+// caching the local Organization row's UUID for FK use. It does NOT create namespaces — that is the platform's job
 // (`platform-api-service` in hosted, `seed-admin-org.sh` in local).
 //
 // Behaviour:
 //   - No claims in context (request did not pass through the JWT verifier
 //     — e.g. /webhooks) → pass through.
-//   - Claims present but no ouHandle/ouName/ouId → pass through. Route
-//     handlers that need an org context surface their own 4xx.
+//   - Claims present but no org → pass through. Route handlers that need an
+//     org context surface their own 4xx.
 //   - Namespace not yet provisioned → log and pass through so the
 //     downstream controller can render a user-meaningful error rather
 //     than 5xx the request.
@@ -59,18 +58,13 @@ func EnsureOrgMiddleware(svc OrgEnsurer) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			claims := ClaimsFromContext(r.Context())
-			ouHandle := ResolveOuHandle(claims)
-			if ouHandle == "" {
+			if claims == nil || claims.OrgHandle == "" {
 				next.ServeHTTP(w, r)
 				return
 			}
-			thunderOrgUUID := ""
-			if claims != nil {
-				thunderOrgUUID = claims.OuId
-			}
-			err := svc.EnsureForOuHandle(r.Context(), ouHandle, thunderOrgUUID)
+			err := svc.EnsureForOuHandle(r.Context(), claims.OrgHandle, claims.OrgID)
 			if err != nil {
-				slog.WarnContext(r.Context(), "org-ensure verify failed; continuing", "ouHandle", ouHandle, "error", err)
+				slog.WarnContext(r.Context(), "org-ensure verify failed; continuing", "org", claims.OrgHandle, "error", err)
 			}
 			next.ServeHTTP(w, r)
 		})

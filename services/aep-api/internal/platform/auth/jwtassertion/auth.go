@@ -28,34 +28,79 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/wso2/aep/aep-api/internal/platform/auth/dialect"
 	"github.com/wso2/aep/aep-api/internal/platform/httpkit"
 )
 
-// TokenClaims holds the verified claims extracted from a JWT.
-type TokenClaims struct {
+// WireClaims is a token as signed: the platform IdP's own claims by their
+// wire names (dialect.Raw) beside the claims every IdP shares. Authenticator
+// decodes a token into it and reads it through the dialect into TokenClaims;
+// a test signer builds one to mint a token the verifier accepts.
+//
+// Sub shadows the embedded RegisteredClaims.Subject on purpose (same tag,
+// shallower), so consumers read Sub; see TestWireClaims_SubShadowsEmbeddedSubject.
+type WireClaims struct {
+	dialect.Raw
 	Sub      string `json:"sub"`
 	Scope    string `json:"scope"`
-	OuId     string `json:"ouId"`
-	OuName   string `json:"ouName"`
-	OuHandle string `json:"ouHandle"`
 	ClientID string `json:"client_id"`
-	// GrantType is the OAuth grant the token was issued under. Thunder stamps
-	// it on every token it issues; a client_credentials token is a machine's.
-	GrantType string `json:"grant_type"`
 	// Display claims (OIDC standard), read for crediting a user's work.
 	Name       string `json:"name,omitempty"`
 	Email      string `json:"email,omitempty"`
 	GivenName  string `json:"given_name,omitempty"`
 	FamilyName string `json:"family_name,omitempty"`
-	// Custom claims a token may carry beyond the standard set. Thunder user and
-	// client_credentials tokens leave them empty.
+	// Custom claims a token may carry beyond the standard set. Platform IdP
+	// user and machine tokens leave them empty.
 	OcOrgID   string `json:"ocOrgId,omitempty"`
 	TaskID    string `json:"taskId,omitempty"`
 	ProjectID string `json:"projectId,omitempty"`
 	jwt.RegisteredClaims
 }
 
-const grantClientCredentials = "client_credentials"
+// TokenClaims holds the verified claims of a JWT, with the caller's org read
+// through the platform IdP's dialect: nothing downstream knows which claim
+// named it.
+type TokenClaims struct {
+	Sub      string
+	Scope    string
+	ClientID string
+	// OrgHandle is the name the platform knows the caller's org by; OrgID is
+	// the IdP's own id for it; OrgName a display name. Empty when the token
+	// carries no org.
+	OrgHandle string
+	OrgID     string
+	OrgName   string
+	// Display claims (OIDC standard), read for crediting a user's work.
+	Name       string
+	Email      string
+	GivenName  string
+	FamilyName string
+	// Custom claims a token may carry beyond the standard set.
+	OcOrgID   string
+	TaskID    string
+	ProjectID string
+	jwt.RegisteredClaims
+}
+
+// tokenClaims is the verified form of a wire token, its org read by d.
+func (w *WireClaims) tokenClaims(org dialect.Org) *TokenClaims {
+	return &TokenClaims{
+		Sub:              w.Sub,
+		Scope:            w.Scope,
+		ClientID:         w.ClientID,
+		OrgHandle:        org.Handle,
+		OrgID:            org.ID,
+		OrgName:          org.Name,
+		Name:             w.Name,
+		Email:            w.Email,
+		GivenName:        w.GivenName,
+		FamilyName:       w.FamilyName,
+		OcOrgID:          w.OcOrgID,
+		TaskID:           w.TaskID,
+		ProjectID:        w.ProjectID,
+		RegisteredClaims: w.RegisteredClaims,
+	}
+}
 
 type tokenClaimsCtxKey struct{}
 type scopesCtxKey struct{}
@@ -77,9 +122,13 @@ type Config struct {
 	// ResourceMetadataURL is included in the WWW-Authenticate challenge per
 	// RFC 9728 (OAuth Protected Resource Metadata). Empty disables the hint.
 	ResourceMetadataURL string
-	// UserTokensOnly refuses a client_credentials token, so the route accepts
-	// only tokens issued to a signed-in user. It keys on grant_type, not on a
-	// missing sub: Thunder sets sub to the client's entity id on M2M tokens.
+	// Dialect reads the platform IdP's own claims: the caller's org and
+	// whether the token is a machine's.
+	Dialect dialect.Dialect
+	// UserTokensOnly admits only tokens issued to a signed-in user. It asks
+	// the dialect, never a missing sub (Thunder sets sub to the client's
+	// entity id on M2M tokens), and a token the dialect cannot place as a
+	// user's or a machine's is refused rather than taken for a user's.
 	UserTokensOnly bool
 }
 
@@ -162,7 +211,7 @@ func validateJWT(tokenString string, cfg Config, issuers compiledIssuers, audien
 		return nil, fmt.Errorf("JWKS not configured")
 	}
 
-	token, err := jwt.ParseWithClaims(tokenString, &TokenClaims{}, func(tok *jwt.Token) (any, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &WireClaims{}, func(tok *jwt.Token) (any, error) {
 		if _, ok := tok.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", tok.Header["alg"])
 		}
@@ -178,21 +227,27 @@ func validateJWT(tokenString string, cfg Config, issuers compiledIssuers, audien
 	if !token.Valid {
 		return nil, fmt.Errorf("token is not valid")
 	}
-	claims, ok := token.Claims.(*TokenClaims)
+	wire, ok := token.Claims.(*WireClaims)
 	if !ok {
 		return nil, fmt.Errorf("failed to extract claims")
 	}
 
-	if err := issuers.match(claims.Issuer); err != nil {
+	if err := issuers.match(wire.Issuer); err != nil {
 		return nil, err
 	}
-	if err := audiences.match(claims.Audience); err != nil {
+	if err := audiences.match(wire.Audience); err != nil {
 		return nil, err
 	}
-	if cfg.UserTokensOnly && claims.GrantType == grantClientCredentials {
-		return nil, fmt.Errorf("client_credentials token on a user-only route (client %s)", claims.ClientID)
+	if cfg.UserTokensOnly {
+		machine, err := cfg.Dialect.Machine(wire.Raw)
+		if err != nil {
+			return nil, fmt.Errorf("%w on a user-only route (client %s)", err, wire.ClientID)
+		}
+		if machine {
+			return nil, fmt.Errorf("machine token on a user-only route (client %s)", wire.ClientID)
+		}
 	}
-	return claims, nil
+	return wire.tokenClaims(cfg.Dialect.Org(wire.Raw)), nil
 }
 
 // compiledIssuers is the per-request-friendly form of cfg.AllowedIssuers —

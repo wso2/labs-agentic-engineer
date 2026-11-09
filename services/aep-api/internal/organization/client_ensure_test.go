@@ -200,7 +200,7 @@ var ensureOU = uuid.MustParse("1b4e28ba-2fa1-11d2-883f-0016d3cca427")
 
 // ensureCtx is a request whose ouId is the org's OU.
 func ensureCtx() context.Context {
-	return jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: ensureOU.String()})
+	return jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OrgID: ensureOU.String()})
 }
 
 type ensureFixture struct {
@@ -403,7 +403,7 @@ func TestEnsureClient_UnknownOUTouchesNothing(t *testing.T) {
 
 func TestEnsureClient_OUMismatchTouchesNothing(t *testing.T) {
 	f := newEnsureFixture(t, false, false)
-	other := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: uuid.NewString()})
+	other := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OrgID: uuid.NewString()})
 	for _, kind := range []ClientKind{ClientPublisher, ClientStudio} {
 		if err := f.svc.EnsureClient(other, "default", kind); !errors.Is(err, errOrgOUMismatch) {
 			t.Fatalf("%s: err = %v, want errOrgOUMismatch", kind, err)
@@ -418,7 +418,7 @@ func TestEnsureClient_OUMismatchTouchesNothing(t *testing.T) {
 // form: one OU, so the ensure goes ahead.
 func TestEnsureClient_OUComparedAsUUIDs(t *testing.T) {
 	f := newEnsureFixture(t, false, false)
-	upper := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: strings.ToUpper(ensureOU.String())})
+	upper := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OrgID: strings.ToUpper(ensureOU.String())})
 	for _, kind := range []ClientKind{ClientPublisher, ClientStudio} {
 		if err := f.svc.EnsureClient(upper, "default", kind); err != nil {
 			t.Fatalf("%s: %v, want the uppercase ouId to match the org's OU", kind, err)

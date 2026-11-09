@@ -32,6 +32,7 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/organization/aestudio"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
+	"github.com/wso2/aep/aep-api/internal/platform/auth/dialect"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
@@ -87,7 +88,7 @@ func TestInternalGate_AEStudio(t *testing.T) {
 				Audience:  jwt.ClaimStrings{aud},
 				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 			},
-			OuHandle: ouHandle,
+			Raw: dialect.Raw{OuHandle: ouHandle},
 		})
 	}
 	studio := "Bearer " + stack.mintStudio("acme")
@@ -271,7 +272,7 @@ func TestInternalGate_AEStudioDependencyCompletions(t *testing.T) {
 				Audience:  jwt.ClaimStrings{aud},
 				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 			},
-			OuHandle: ouHandle,
+			Raw: dialect.Raw{OuHandle: ouHandle},
 		})
 	}
 	studio := "Bearer " + stack.mintStudio("acme")
@@ -498,7 +499,7 @@ func TestInternalRoutes_AEStudioSkillsRepository(t *testing.T) {
 			Audience:  jwt.ClaimStrings{"aep-console"},
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		},
-		OuHandle: "acme",
+		Raw: dialect.Raw{OuHandle: "acme"},
 	})
 	cases := []struct {
 		name, bearer string

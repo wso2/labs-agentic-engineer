@@ -70,28 +70,33 @@ func ClaimsFromContext(ctx context.Context) *Claims {
 	if c == nil {
 		return nil
 	}
+	// The field names are this package's public contract; the values are the
+	// org as the platform IdP's dialect read it, so OuHandle already is the
+	// resolved handle.
 	return &Claims{
 		Subject:  c.Subject,
 		ClientID: c.ClientID,
-		OuHandle: c.OuHandle,
-		OuName:   c.OuName,
-		OuId:     c.OuId,
+		OuHandle: c.OrgHandle,
+		OuName:   c.OrgName,
+		OuId:     c.OrgID,
 	}
 }
 
 // ResolveOuHandle returns the canonical OC org handle from verified claims,
 // preferring ouHandle over ouName over ouId. Returns "" when none are set.
+// Claims from ClaimsFromContext carry the resolved handle in OuHandle
+// already; the fallback serves values an overlay builds itself.
 //
 //deadcode:keep public overlay seam — private PAS impersonation resolver imports this; OSS main does not call it.
 func ResolveOuHandle(c *Claims) string {
 	if c == nil {
 		return ""
 	}
-	return auth.ResolveOuHandle(&auth.Claims{
-		Subject:  c.Subject,
-		ClientID: c.ClientID,
-		OuHandle: c.OuHandle,
-		OuName:   c.OuName,
-		OuId:     c.OuId,
-	})
+	if c.OuHandle != "" {
+		return c.OuHandle
+	}
+	if c.OuName != "" {
+		return c.OuName
+	}
+	return c.OuId
 }

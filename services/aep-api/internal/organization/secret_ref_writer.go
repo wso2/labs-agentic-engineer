@@ -534,13 +534,13 @@ func (w *SecretRefWriter) OrgCatalogVaultKey(ctx context.Context, ocOrgID, entit
 // two namespaces depending on how a token spelled it.
 func orgUUIDForSecretLocation(ctx context.Context) (string, error) {
 	claims := jwtassertion.GetTokenClaims(ctx)
-	if claims == nil || strings.TrimSpace(claims.OuId) == "" {
-		return "", errors.New("no ouId claim in JWT context")
+	if claims == nil || strings.TrimSpace(claims.OrgID) == "" {
+		return "", errors.New("no org id claim in JWT context")
 	}
-	if id, err := uuid.Parse(claims.OuId); err == nil {
+	if id, err := uuid.Parse(claims.OrgID); err == nil {
 		return id.String(), nil
 	}
-	return claims.OuId, nil
+	return claims.OrgID, nil
 }
 
 // resolveVaultKey reconstructs the actual Vault KV key from the

@@ -63,7 +63,9 @@ datastore · `(["/prefix"])` = an inbound route group.
 
 ## The kernel, the edge, and the rest
 
-- **`platform/`** — the shared **kernel**: `auth`, `secrets`, `tenant`,
+- **`platform/`** — the shared **kernel**: `auth` (the inbound verifiers and
+  gates, reading the platform IdP's claims through `auth/dialect`;
+  [README](internal/platform/auth/README.md)), `secrets`, `tenant`,
   `database`, `designspec`, `orgconfig`, `modelconn`, `netguard`, `patch`, `validate`, `httpkit`, `k8sname`, `obs`,
   plus the test kits (`componenttest`, `dbtest`, …). It carries no business logic and
   **imports no domain** — the dependency arrow only ever points *into* it.

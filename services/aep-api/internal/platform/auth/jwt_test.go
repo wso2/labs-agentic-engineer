@@ -27,11 +27,11 @@ import (
 // than re-parsing the raw header unverified.
 func TestClaimsOf_ProjectsTheVerifiedDisplayClaims(t *testing.T) {
 	got := claimsOf(&jwtassertion.TokenClaims{
-		Sub: "u-1", ClientID: "console", OuHandle: "acme", OuName: "Acme", OuId: "ou-1",
+		Sub: "u-1", ClientID: "console", OrgHandle: "acme", OrgName: "Acme", OrgID: "ou-1",
 		Name: "Ada Lovelace", Email: "ada@acme.io", GivenName: "Ada", FamilyName: "Lovelace",
 	})
 	want := Claims{
-		Subject: "u-1", ClientID: "console", OuHandle: "acme", OuName: "Acme", OuId: "ou-1",
+		Subject: "u-1", ClientID: "console", OrgHandle: "acme", OrgName: "Acme", OrgID: "ou-1",
 		Name: "Ada Lovelace", Email: "ada@acme.io", GivenName: "Ada", FamilyName: "Lovelace",
 	}
 	if *got != want {

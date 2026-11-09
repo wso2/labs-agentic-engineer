@@ -199,16 +199,16 @@ func TestSecretRefWriter_WriteModelKey(t *testing.T) {
 		}
 	})
 
-	t.Run("no ouId claim fails before any write", func(t *testing.T) {
+	t.Run("no org id claim fails before any write", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeSMClient{}
 		w := withOrgSecrets(organization.NewSecretRefWriter(fake, nil), fake)
 		_, err := w.WriteModelKey(context.Background(), "acme", "sk-ant-key", noRepoint)
-		if err == nil || !strings.Contains(err.Error(), "default-key upload") || !strings.Contains(err.Error(), "no ouId claim") {
-			t.Fatalf("want a wrapped no-ouId error, got %v", err)
+		if err == nil || !strings.Contains(err.Error(), "default-key upload") || !strings.Contains(err.Error(), "no org id claim") {
+			t.Fatalf("want a wrapped no-org-id error, got %v", err)
 		}
 		if len(fake.createCalls) != 0 {
-			t.Fatalf("no reference may be written without ouId, got %d", len(fake.createCalls))
+			t.Fatalf("no reference may be written without an org id, got %d", len(fake.createCalls))
 		}
 	})
 
@@ -481,8 +481,8 @@ func TestSecretRefWriter_ResolveVaultKey_NoClaimsInContext(t *testing.T) {
 	if err == nil {
 		t.Fatalf("want an error when ctx carries no JWT claims")
 	}
-	if !strings.HasSuffix(err.Error(), "no ouId claim in JWT context") {
-		t.Fatalf("resolveVaultKey error = %q; want it to end with the exact no-ouId-claim message", err.Error())
+	if !strings.HasSuffix(err.Error(), "no org id claim in JWT context") {
+		t.Fatalf("resolveVaultKey error = %q; want it to end with the exact no-org-id-claim message", err.Error())
 	}
 }
 
@@ -527,7 +527,7 @@ func seedUserPATRow(t testing.TB, db *gorm.DB, ocOrgID string) {
 }
 
 func claimsCtx(ouID string) context.Context {
-	return jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: ouID})
+	return jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OrgID: ouID})
 }
 
 // The github-pat row (here the fake repository) is the only record of the

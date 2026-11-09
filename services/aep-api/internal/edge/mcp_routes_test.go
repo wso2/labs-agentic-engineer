@@ -99,8 +99,8 @@ func newMCPIdP(t *testing.T) *mcpIdP {
 	}))
 	t.Cleanup(jwksSrv.Close)
 	jwks := jwtassertion.NewJWKSCache(jwksSrv.URL)
-	v := auth.NewPublisherTokenVerifier(jwks, mcpTestIssuer, "aep-publisher-")
-	studio := auth.NewStudioClientVerifier(jwks, mcpTestIssuer, recordedStudioClients{})
+	v := auth.NewPublisherTokenVerifier(jwks, mcpTestIssuer, "aep-publisher-", thunderDialect())
+	studio := auth.NewStudioClientVerifier(jwks, mcpTestIssuer, thunderDialect(), recordedStudioClients{})
 	if v == nil || studio == nil {
 		t.Fatal("a verifier is nil")
 	}

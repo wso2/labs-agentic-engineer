@@ -85,12 +85,13 @@ type Req struct {
 }
 
 // AsOrg returns a request builder authenticated as a verified token for org.
-// The claims mirror what Thunder would issue (OuHandle drives ResolveOuHandle).
+// The claims are the verified projection, the org already read through the
+// platform IdP's dialect (OrgHandle is what the tenant gate binds).
 func (h *Harness) AsOrg(org string) *Req {
 	return &Req{h: h, claims: &auth.Claims{
-		OuHandle: org,
-		OuId:     org + "-ouid",
-		Subject:  "componenttest-user",
+		OrgHandle: org,
+		OrgID:     org + "-ouid",
+		Subject:   "componenttest-user",
 	}}
 }
 
@@ -104,7 +105,7 @@ func (h *Harness) NoAuth() *Req { return &Req{h: h, claims: nil} }
 // instead of the recorder. Mirrors AsOrg's claims exactly.
 func ClaimsHeader(t testing.TB, org string) (key, value string) {
 	t.Helper()
-	raw, err := json.Marshal(&auth.Claims{OuHandle: org, OuId: org + "-ouid", Subject: "componenttest-user"})
+	raw, err := json.Marshal(&auth.Claims{OrgHandle: org, OrgID: org + "-ouid", Subject: "componenttest-user"})
 	if err != nil {
 		t.Fatalf("componenttest: marshal claims: %v", err)
 	}

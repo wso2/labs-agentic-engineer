@@ -182,16 +182,21 @@ func TestValidateIssuer(t *testing.T) {
 // projecting tc.Subject instead of tc.Sub lost the user identity on every
 // authenticated request (turn commits fell back to the credential identity;
 // found in e2e 2026-07-06). This pins the decode shape.
-func TestTokenClaims_SubShadowsEmbeddedSubject(t *testing.T) {
-	var tc TokenClaims
-	if err := json.Unmarshal([]byte(`{"sub":"user-123"}`), &tc); err != nil {
+func TestWireClaims_SubShadowsEmbeddedSubject(t *testing.T) {
+	var w WireClaims
+	if err := json.Unmarshal([]byte(`{"sub":"user-123","ouHandle":"acme","grant_type":"authorization_code"}`), &w); err != nil {
 		t.Fatal(err)
 	}
-	if tc.Sub != "user-123" {
-		t.Fatalf("tc.Sub = %q, want %q", tc.Sub, "user-123")
+	if w.Sub != "user-123" {
+		t.Fatalf("w.Sub = %q, want %q", w.Sub, "user-123")
 	}
-	if tc.Subject != "" {
-		t.Fatalf("tc.Subject = %q — the shadowing assumption changed; re-audit every tc.Sub consumer", tc.Subject)
+	if w.Subject != "" {
+		t.Fatalf("w.Subject = %q — the shadowing assumption changed; re-audit every Sub consumer", w.Subject)
+	}
+	// The embedded dialect.Raw decodes beside the registered claims: a
+	// duplicate tag at that depth would drop both fields silently.
+	if w.OuHandle != "acme" || w.GrantType != "authorization_code" {
+		t.Fatalf("dialect claims not decoded: %+v", w.Raw)
 	}
 }
 

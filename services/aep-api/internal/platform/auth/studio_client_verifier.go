@@ -21,12 +21,14 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/wso2/aep/aep-api/internal/platform/auth/dialect"
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 )
 
 // studioClientPrefix names every org's AE Studio client: ae-studio-<org>
-// (thundersvc.StudioAppName), registered in the org's Thunder OU, so its
-// client_credentials token carries aud ae-studio-<org> and ouHandle <org>.
+// (thundersvc.StudioAppName), registered under the org on the platform IdP,
+// so its client_credentials token carries aud ae-studio-<org> and the org's
+// claims.
 const studioClientPrefix = "ae-studio-"
 
 // StudioClientLookup answers the AE Studio client id aep-api recorded for an
@@ -40,8 +42,8 @@ type StudioClientLookup interface {
 // Studio client (ae-studio-<org>), the credential the org's AE Studio tools
 // pod presents on aep-api's ae-studio/ internal operations and on MCP
 // (MCPGate). The token must be
-// Thunder-signed with the expected issuer, name the client in its audience
-// with a matching ouHandle (PublisherTokenVerifier's checks over the
+// signed by the platform IdP with the expected issuer, name the client in its
+// audience with a matching org (PublisherTokenVerifier's checks over the
 // ae-studio- prefix), AND the client must be the one recorded for that org:
 // the org is bound from that stored client id, and an org with none, or a
 // client other than the recorded one, fails closed. An org's publisher token
@@ -53,8 +55,8 @@ type StudioClientVerifier struct {
 
 // NewStudioClientVerifier returns a verifier, or nil when any input is
 // missing (the gate then refuses every ae-studio/ call).
-func NewStudioClientVerifier(jwks *jwtassertion.JWKSCache, expectedIssuer string, clients StudioClientLookup) *StudioClientVerifier {
-	tokens := NewPublisherTokenVerifier(jwks, expectedIssuer, studioClientPrefix)
+func NewStudioClientVerifier(jwks *jwtassertion.JWKSCache, expectedIssuer string, d dialect.Dialect, clients StudioClientLookup) *StudioClientVerifier {
+	tokens := NewPublisherTokenVerifier(jwks, expectedIssuer, studioClientPrefix, d)
 	if tokens == nil || clients == nil {
 		return nil
 	}

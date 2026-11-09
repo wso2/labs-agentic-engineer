@@ -343,7 +343,7 @@ func (f *submitFixture) row(t *testing.T, s organization.OrgSecret) string {
 }
 
 func userCtx(ou string) context.Context {
-	return jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: ou})
+	return jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OrgID: ou})
 }
 
 func gitProviderPatch(login, pat string) orgconfig.ConfigPatch {

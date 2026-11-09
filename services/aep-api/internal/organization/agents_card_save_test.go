@@ -211,7 +211,7 @@ func newSaveFixture(t *testing.T) *saveFixture {
 		WithModelProvider(&loggingProvider{log: log})
 	conns := NewModelConnectionService(card.connRepo(), card.subRepo(), refs, memNoRates{}).WithSecretRefWriter(writer)
 	svc := NewAgentSettingsService(card.settingsRepo(), nil, creds, conns, card, everyRuntime)
-	ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "3f0c5d1e-0000-4000-8000-000000000001"})
+	ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OrgID: "3f0c5d1e-0000-4000-8000-000000000001"})
 	return &saveFixture{t: t, log: log, card: card, refs: refs, vault: vault, svc: svc, ctx: ctx}
 }
 

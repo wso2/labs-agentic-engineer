@@ -58,7 +58,7 @@ var removedRoutes = []removedRoute{
 func TestRemovedRoutes(t *testing.T) {
 	asUser := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			next.ServeHTTP(w, r.WithContext(auth.WithClaims(r.Context(), &auth.Claims{Subject: "u", OuHandle: "acme"})))
+			next.ServeHTTP(w, r.WithContext(auth.WithClaims(r.Context(), &auth.Claims{Subject: "u", OrgHandle: "acme"})))
 		})
 	}
 	h := NewHandlerForTest(Deps{}, asUser)
