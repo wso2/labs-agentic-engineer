@@ -629,13 +629,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// RequirePublisherForBuild reads. Coding dispatch mounts
 	// PUBLISHER_CLIENT_ID and PUBLISHER_CLIENT_SECRET from the reference the
 	// ae-publisher-client row names.
-	// The admin client is the org-clients port's one implementation; a nil
-	// client (admin credentials unset) stays nil behind the port, and the
-	// service answers ErrIDPThunderUnavailable.
-	var orgClients organization.OrgClients
-	if thunderAdminClient != nil {
-		orgClients = thunderAdminClient
-	}
+	// The admin client is the org-clients port's one implementation (the
+	// assignment is the compile-time check); unset admin credentials leave it
+	// a nil interface, and the service answers ErrIDPThunderUnavailable.
+	var orgClients organization.OrgClients = thunderAdminClient
 	idpService := organization.NewIDPService(idpRepo, orgRepo, orgClients, organization.PlatformIDPConfig{
 		Issuer:  cfg.PlatformIDP.Issuer,
 		JWKSURL: cfg.PlatformIDP.JWKSURL,

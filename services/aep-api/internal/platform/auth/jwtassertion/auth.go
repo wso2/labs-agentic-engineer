@@ -82,7 +82,8 @@ type TokenClaims struct {
 	jwt.RegisteredClaims
 }
 
-// tokenClaims is the verified form of a wire token, its org read by d.
+// tokenClaims is the verified form of a wire token, with the org the dialect
+// read from it.
 func (w *WireClaims) tokenClaims(org dialect.Org) *TokenClaims {
 	return &TokenClaims{
 		Sub:              w.Sub,
