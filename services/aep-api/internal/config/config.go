@@ -141,9 +141,10 @@ type Config struct {
 	// differently wants.
 	APIGatewayHost string
 
-	// Platform IDP defaults seeded into organization_idp_profiles rows
-	// on first access. Loaded from PLATFORM_IDP_ISSUER /
-	// PLATFORM_IDP_JWKS_URL.
+	// The platform IdP: its issuer and JWKS (seeded into
+	// organization_idp_profiles rows on first access), its token endpoint,
+	// and its token dialect kind. Loaded from PLATFORM_IDP_ISSUER,
+	// PLATFORM_IDP_JWKS_URL, PLATFORM_IDP_TOKEN_URL and PLATFORM_IDP_KIND.
 	PlatformIDP PlatformIDPDefaults
 
 	// AEStudio configures the per-org AE Studio data-plane Resource. Every

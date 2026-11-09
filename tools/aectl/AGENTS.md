@@ -17,7 +17,7 @@ go build -o aectl .  # build CLI
 | `internal/thunder/` | Thunder admin client (OAuth app registration over HTTP), port-forward |
 | `internal/kubernetes/` | k8s client helpers (Job runner, port-forward) |
 | `internal/config/` | Viper config defaults and init |
-| `internal/oidc/` | The platform IdP's endpoints from its OIDC discovery document (`Discover`), and the same paths on another address (`Endpoints.OnBase`: Thunder's in-cluster Service, the HTTPS gateway the environment Thunders fetch its keys through) |
+| `internal/oidc/` | Reads the platform IdP's endpoints from its OIDC discovery document (`Discover`). `Endpoints.OnBase` puts the same paths on another address: Thunder's in-cluster Service, or the HTTPS gateway through which the environment Thunders fetch its keys |
 | `internal/envidp/` | Installs the environment-tier Thunder + its binding record + the environment's API Platform gateway — see deployments/design/two-tier-thunder.md. Org/env come from oc.default_org_namespace/oc.pipeline_source_environment (cmd.ocOrgNamespace/ocPipelineSourceEnvironment); no runtime dependency on Agent Manager |
 
 ## Config
@@ -46,16 +46,20 @@ in-process `platform update`).
   listener and port suffix come from `tls.enabled` alone (`http`/`http`/`:19080`
   or `https`/`https`/`:19443`); `consoleOrigins` is `[console public URL,
   http://localhost:8090]`.
-- `discoverPlatformIDP` (`cmd/platform_idp.go`) fetches
-  `<thunder.public_url>/.well-known/openid-configuration` once per
-  `platform install`, `platform update` and `sre install`, from the
-  operator's machine; a document that cannot be had, or that names another
-  issuer, stops the command. No installer code appends an IdP path.
-  `platformIDPOverrides` turns it into the chart's `idp.kind` (from the
-  optional config key `idp.kind`, `thunder` when unset), `thunder.jwksURL`
-  and `thunder.tokenURL` (the document's paths on `thunder.url`, the address
-  pods reach the IdP at), and `aeStudio.idp.{issuer,jwksUrl,tokenUrl}`;
-  `envidp` derives the environment Thunders' trust of the platform IdP from
+- `discoverPlatformIDP` (`cmd/platform_idp.go`) reads the platform IdP's
+  endpoints from `<thunder.public_url>/.well-known/openid-configuration`.
+  `platform install`, `platform update` and `sre install` each fetch the
+  document once, from the operator's machine. `platform install` fetches it
+  before it changes anything in the cluster. If the document cannot be
+  fetched, or names another issuer, the command stops. No installer code
+  builds the platform IdP's issuer, JWKS or token URL by appending a path.
+  The Thunder admin client (`internal/thunder`) and the environment Thunders
+  (`internal/envidp`) still name the paths of Thunder's own API.
+  `platformIDPOverrides` writes the chart values: `idp.kind` (the optional
+  config key `idp.kind`; `thunder` when unset), `thunder.jwksURL` and
+  `thunder.tokenURL` (the document's paths on `thunder.url`, the address at
+  which pods reach the IdP), and `aeStudio.idp.{issuer,jwksUrl,tokenUrl}`.
+  `envidp` builds the environment Thunders' trust of the platform IdP from
   the same endpoints on `https://<host>:8443`.
 - `platform install` overwrites (plain PUT) every OpenBao seed it owns: the
   `aep/thunder-clients/<vaultName>` secrets, `aep/thunder-clients/system-client-id`,

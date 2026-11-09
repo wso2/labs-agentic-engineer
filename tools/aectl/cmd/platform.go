@@ -338,6 +338,15 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	}
 	ui.Success("Config loaded")
 
+	// The IdP's endpoints come from its discovery document, fetched once here
+	// and written into the chart. First, before anything touches the cluster:
+	// an IdP that cannot be reached stops the install with nothing changed.
+	idp, err := discoverPlatformIDP(ctx)
+	if err != nil {
+		return err
+	}
+	ui.Success(fmt.Sprintf("Platform IdP %s (token dialect %s)", idp.Public.Issuer, idp.Kind))
+
 	if _, err := exec.LookPath("helm"); err != nil {
 		return fmt.Errorf("helm not found in PATH — install from https://helm.sh/docs/intro/install/")
 	}
@@ -433,15 +442,9 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("clean up legacy resources: %w", err)
 	}
 
-	// The IdP's endpoints come from its discovery document, fetched once here
-	// and written into the chart; the in-cluster admin URL is thunder.url
-	// itself.
-	idp, err := discoverPlatformIDP(ctx)
-	if err != nil {
-		return err
-	}
-	ui.Success(fmt.Sprintf("Platform IdP %s (token dialect %s)", idp.Public.Issuer, idp.Kind))
-
+	// The in-cluster admin URL is thunder.url itself; the issuer is the one
+	// string the IdP's document names, so every `iss` check in the chart
+	// compares against exactly what the IdP stamps.
 	thunderURL := viper.GetString("thunder.url")
 	consoleURL := consolePublicURL()
 	helmArgs := []string{
@@ -449,7 +452,7 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		"-n", initPlatformNamespace,
 		"--create-namespace",
 		"--set", "console.publicURL=" + consoleURL,
-		"--set", "console.thunderPublicURL=" + viper.GetString("thunder.public_url"),
+		"--set", "console.thunderPublicURL=" + idp.Public.Issuer,
 		"--set", "thunder.adminURL=" + thunderURL,
 		"--set", "platformAPI.baseURL=" + viper.GetString("oc.api_url"),
 		"--set", fmt.Sprintf("dataPlaneGateway.tls=%t", viper.GetBool("oc.data_plane_gateway_tls")),

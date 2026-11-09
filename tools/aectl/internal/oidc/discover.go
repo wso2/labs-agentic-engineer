@@ -49,10 +49,10 @@ func (e Endpoints) Configured() bool {
 }
 
 // OnBase returns the same endpoints reached through another scheme, host
-// and port: each keeps its path and query, and takes base's scheme and
-// authority. The issuer is unchanged, since it names the IdP rather than an
-// address. A base that is not an absolute URL, or endpoints that are not,
-// return the endpoints as they are.
+// and port: each keeps its path and query, and takes base's scheme, host
+// and port, nothing else of it. The issuer is unchanged, since it names the
+// IdP rather than an address. A base that is not an absolute URL, or
+// endpoints that are not, return the endpoints as they are.
 func (e Endpoints) OnBase(base string) Endpoints {
 	b, err := url.Parse(strings.TrimRight(strings.TrimSpace(base), "/"))
 	if err != nil || b.Scheme == "" || b.Host == "" {
@@ -64,7 +64,6 @@ func (e Endpoints) OnBase(base string) Endpoints {
 			return raw
 		}
 		u.Scheme, u.Host = b.Scheme, b.Host
-		u.User = b.User
 		return u.String()
 	}
 	return Endpoints{Issuer: e.Issuer, JWKSURL: rebase(e.JWKSURL), TokenURL: rebase(e.TokenURL)}
