@@ -273,6 +273,13 @@ idp:
   # that org and any other token as no org (PLATFORM_IDP_ORG_HANDLE,
   # PLATFORM_IDP_ORG_NAMESPACE), and gives the org's pod orgHandle as its org
   # handle. Leave both empty under thunder, whose handle is the namespace.
+  #
+  # Under asgardeo the chart also reads the secrets of that org's two
+  # pre-created clients, aep-publisher-<orgNamespace> and
+  # ae-studio-<orgNamespace>, from the vault paths
+  # aep/thunder-clients/org-publisher and aep/thunder-clients/org-studio
+  # (ExternalSecret aep-org-client-secrets), which the tenant's admin imports
+  # with `aectl platform secret import`. aep-api cannot create clients there.
   orgHandle: ""
   orgNamespace: ""
 

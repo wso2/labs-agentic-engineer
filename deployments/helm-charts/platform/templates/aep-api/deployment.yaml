@@ -172,6 +172,24 @@ spec:
             - name: PLATFORM_IDP_ORG_NAMESPACE
               value: {{ . | quote }}
             {{- end }}
+            {{- if eq (default "thunder" .Values.idp.kind) "asgardeo" }}
+            # The secrets of that org's two pre-created clients, imported by
+            # the tenant's admin (ExternalSecret aep-org-client-secrets).
+            # Optional here so a missing import is aep-api's boot error naming
+            # it, not a container that cannot be created.
+            - name: PLATFORM_IDP_ORG_PUBLISHER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: aep-org-client-secrets
+                  key: PLATFORM_IDP_ORG_PUBLISHER_SECRET
+                  optional: true
+            - name: PLATFORM_IDP_ORG_STUDIO_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: aep-org-client-secrets
+                  key: PLATFORM_IDP_ORG_STUDIO_SECRET
+                  optional: true
+            {{- end }}
 
             - name: THUNDER_ADMIN_URL
               valueFrom:

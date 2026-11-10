@@ -517,6 +517,14 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	deploymentService := projects.NewDeploymentService(componentClient, artifactStore)
 	deploymentService.SetWriteTargets(writeTargets)
 
+	// The platform IdP's kind decides how it is administered and how its
+	// tokens are read. Validate accepted the kind at load; parsing again keeps
+	// this seam honest if a caller builds the config by hand.
+	idpKind, err := dialect.ParseKind(cfg.PlatformIDP.Kind)
+	if err != nil {
+		return nil, fmt.Errorf("platform IdP: %w", err)
+	}
+
 	// Thunder admin client + IDP service. Reads
 	// aep-system-client credentials from env (THUNDER_*); the IDP service's
 	// EnsureClient (the gitpat submit) is the per-org publisher / studio
@@ -543,7 +551,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	if systemRS == "" {
 		systemRS = thundersvc.SystemResourceIdentifier(cfg.PlatformIDP.Issuer)
 	}
-	if cfg.ThunderAdmin.ClientID != "" && cfg.ThunderAdmin.ClientSecret != "" && thunderBase != "" {
+	switch {
+	case !usesThunderAdmin(idpKind):
+		slog.Info("Thunder admin client not built: the platform IdP is not Thunder; the org's clients are pre-created", "kind", idpKind)
+	case cfg.ThunderAdmin.ClientID != "" && cfg.ThunderAdmin.ClientSecret != "" && thunderBase != "":
 		thunderAdminClient = thundersvc.New(thundersvc.Config{
 			BaseURL:                  thunderBase,
 			ClientID:                 cfg.ThunderAdmin.ClientID,
@@ -552,7 +563,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		})
 		slog.Info("Thunder admin client", "baseURL", thunderBase, "clientID", cfg.ThunderAdmin.ClientID,
 			"systemResource", systemRS)
-	} else {
+	default:
 		slog.Warn("Thunder admin client disabled — set THUNDER_ADMIN_URL + THUNDER_SYSTEM_CLIENT_ID + THUNDER_SYSTEM_CLIENT_SECRET")
 	}
 
@@ -629,10 +640,11 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// RequirePublisherForBuild reads. Coding dispatch mounts
 	// PUBLISHER_CLIENT_ID and PUBLISHER_CLIENT_SECRET from the reference the
 	// ae-publisher-client row names.
-	// The admin client is the org-clients port's one implementation (the
-	// assignment is the compile-time check); unset admin credentials leave it
-	// a nil interface, and the service answers ErrIDPThunderUnavailable.
-	var orgClients organization.OrgClients = thunderAdminClient
+	// The org-clients port by IdP kind (orgClientsFor): Thunder's admin
+	// client, or the static registry of an Asgardeo install's pre-created
+	// clients. Unset Thunder admin credentials leave it a nil interface, and
+	// the service answers ErrIDPThunderUnavailable.
+	orgClients := orgClientsFor(idpKind, cfg.PlatformIDP, thunderAdminClient)
 	idpService := organization.NewIDPService(idpRepo, orgRepo, orgClients, organization.PlatformIDPConfig{
 		Issuer:  cfg.PlatformIDP.Issuer,
 		JWKSURL: cfg.PlatformIDP.JWKSURL,
@@ -835,12 +847,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// runner identity there is; an execution id named in a path fails closed.
 	// The platform IdP's token dialect: every verifier reads the caller's org
 	// through it, and the user edge tells a user's token from a machine's by
-	// it. Validate accepted the kind at load; parsing again keeps this seam
-	// honest if a caller builds the config by hand.
-	idpKind, err := dialect.ParseKind(cfg.PlatformIDP.Kind)
-	if err != nil {
-		return nil, fmt.Errorf("platform IdP: %w", err)
-	}
+	// it.
 	idpDialect := dialect.ForKind(idpKind)
 	if cfg.PlatformIDP.OrgHandle != "" {
 		// The IdP serves one org under a handle of its own; the dialect maps
@@ -1699,7 +1706,10 @@ func computeDegradations(cfg config.Config, secretsDelivery bool) []Degradation 
 	if thunderBase == "" {
 		thunderBase = cfg.ServiceAuth.TokenURL
 	}
-	if cfg.ThunderAdmin.ClientID == "" || cfg.ThunderAdmin.ClientSecret == "" || thunderBase == "" {
+	// Only Thunder is administered through its admin client; an unparsable
+	// kind is Validate's to report.
+	idpKind, _ := dialect.ParseKind(cfg.PlatformIDP.Kind)
+	if usesThunderAdmin(idpKind) && (cfg.ThunderAdmin.ClientID == "" || cfg.ThunderAdmin.ClientSecret == "" || thunderBase == "") {
 		off("idp-mutations", "THUNDER_ADMIN_URL / THUNDER_SYSTEM_CLIENT_ID / THUNDER_SYSTEM_CLIENT_SECRET not set — per-org publisher IDP mutations 503")
 	}
 	// Working dispatch is the OpenChoreo component path: the BFF creates the run

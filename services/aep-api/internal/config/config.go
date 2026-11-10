@@ -285,7 +285,7 @@ func (c Config) Validate() error {
 		// fails here, not in each pod at its next start.
 		errs = append(errs, "AE_STUDIO_IDP_KIND: "+err.Error())
 	}
-	errs = append(errs, c.PlatformIDP.orgMappingErrors()...)
+	errs = append(errs, c.PlatformIDP.singleOrgErrors()...)
 	if len(errs) > 0 {
 		return fmt.Errorf("configuration errors:\n%s", strings.Join(errs, "\n"))
 	}
@@ -353,27 +353,41 @@ type PlatformIDPDefaults struct {
 	// under thunder, whose handle is the namespace already.
 	OrgHandle    string
 	OrgNamespace string
+	// OrgPublisherSecret and OrgStudioSecret are the client secrets of that
+	// one org's two pre-created clients, aep-publisher-<org> and
+	// ae-studio-<org> (PLATFORM_IDP_ORG_PUBLISHER_SECRET,
+	// PLATFORM_IDP_ORG_STUDIO_SECRET), imported into the vault by the IdP's
+	// admin. aep-api stores them in the org's references on GitHub connect
+	// (organization.StaticOrgClients). Required under asgardeo and refused
+	// under thunder, where aep-api creates the clients itself.
+	OrgPublisherSecret string
+	OrgStudioSecret    string
 }
 
-// orgMappingErrors checks OrgHandle and OrgNamespace against the kind. An
-// Asgardeo install serves one org, so both are required: without them every
-// user would resolve to a namespace named after the tenant. Thunder's handle
-// is the namespace, so a value set there would be read by nothing while
-// looking as if it took effect. An unknown kind is reported by its own check.
-func (p PlatformIDPDefaults) orgMappingErrors() []string {
+// singleOrgErrors checks the settings of an IdP that serves one org against
+// the kind. An Asgardeo install needs all four: without the handle and the
+// namespace every user would resolve to a namespace named after the tenant,
+// and without the two imported client secrets the org's coding runs and pod
+// have no identity. Under thunder the handle is the namespace and aep-api
+// creates the clients, so a value set there would be read by nothing while
+// looking as if it took effect. The messages name the setting and never its
+// value. An unknown kind is reported by its own check.
+func (p PlatformIDPDefaults) singleOrgErrors() []string {
 	kind, err := dialect.ParseKind(p.Kind)
 	if err != nil {
 		return nil
 	}
-	settings := []struct{ name, value string }{
-		{"PLATFORM_IDP_ORG_HANDLE", p.OrgHandle},
-		{"PLATFORM_IDP_ORG_NAMESPACE", p.OrgNamespace},
+	settings := []struct{ name, value, why string }{
+		{"PLATFORM_IDP_ORG_HANDLE", p.OrgHandle, "the tenant's handle in the tokens maps to the org's namespace"},
+		{"PLATFORM_IDP_ORG_NAMESPACE", p.OrgNamespace, "the tenant's handle in the tokens maps to the org's namespace"},
+		{"PLATFORM_IDP_ORG_PUBLISHER_SECRET", p.OrgPublisherSecret, "import the secret of the org's pre-created publisher client (vault path aep/thunder-clients/org-publisher)"},
+		{"PLATFORM_IDP_ORG_STUDIO_SECRET", p.OrgStudioSecret, "import the secret of the org's pre-created AE Studio client (vault path aep/thunder-clients/org-studio)"},
 	}
 	var errs []string
 	for _, s := range settings {
 		switch {
 		case kind == dialect.KindAsgardeo && s.value == "":
-			errs = append(errs, s.name+" is required when PLATFORM_IDP_KIND is asgardeo: the tenant's handle in the tokens maps to the org's namespace")
+			errs = append(errs, s.name+" is required when PLATFORM_IDP_KIND is asgardeo: "+s.why)
 		case kind != dialect.KindAsgardeo && s.value != "":
 			errs = append(errs, s.name+" is read only when PLATFORM_IDP_KIND is asgardeo; unset it")
 		}

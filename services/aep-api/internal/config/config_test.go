@@ -90,6 +90,8 @@ func TestConfigValidate_RequiredFields(t *testing.T) {
 		c.AEStudio.IDP.Kind = "asgardeo"
 		c.PlatformIDP.OrgHandle = "acmecorp"
 		c.PlatformIDP.OrgNamespace = "default"
+		c.PlatformIDP.OrgPublisherSecret = "p"
+		c.PlatformIDP.OrgStudioSecret = "s"
 		if err := c.Validate(); err != nil {
 			t.Fatalf("kind asgardeo with its org: Validate() = %v, want nil", err)
 		}
@@ -129,6 +131,11 @@ func TestConfigValidate_RequiredFields(t *testing.T) {
 				c.PlatformIDP.Kind = tc.kind
 				c.PlatformIDP.OrgHandle = tc.handle
 				c.PlatformIDP.OrgNamespace = tc.namespace
+				if tc.kind == "asgardeo" {
+					// The org's client secrets have their own cases below.
+					c.PlatformIDP.OrgPublisherSecret = "p"
+					c.PlatformIDP.OrgStudioSecret = "s"
+				}
 				err := c.Validate()
 				if tc.wantErr == "" {
 					if err != nil {
@@ -138,6 +145,47 @@ func TestConfigValidate_RequiredFields(t *testing.T) {
 				}
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("Validate() = %v, want an error naming %s", err, tc.wantErr)
+				}
+			})
+		}
+	})
+	// The one org's two clients are pre-created on an Asgardeo tenant and
+	// their secrets imported: both are required there, so a missing import
+	// is a boot error naming it, and neither is read under thunder, where
+	// aep-api creates the clients itself.
+	t.Run("PLATFORM_IDP_ORG_PUBLISHER_SECRET and PLATFORM_IDP_ORG_STUDIO_SECRET", func(t *testing.T) {
+		for name, tc := range map[string]struct {
+			kind, publisher, studio string
+			wantErr                 string
+		}{
+			"asgardeo with both":         {kind: "asgardeo", publisher: "p", studio: "s"},
+			"asgardeo without publisher": {kind: "asgardeo", studio: "s", wantErr: "PLATFORM_IDP_ORG_PUBLISHER_SECRET"},
+			"asgardeo without studio":    {kind: "asgardeo", publisher: "p", wantErr: "PLATFORM_IDP_ORG_STUDIO_SECRET"},
+			"thunder with neither":       {kind: "thunder"},
+			"thunder with a publisher":   {kind: "thunder", publisher: "p", wantErr: "PLATFORM_IDP_ORG_PUBLISHER_SECRET"},
+			"thunder with a studio":      {kind: "thunder", studio: "s", wantErr: "PLATFORM_IDP_ORG_STUDIO_SECRET"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				c := validConfig()
+				c.PlatformIDP.Kind = tc.kind
+				if tc.kind == "asgardeo" {
+					c.PlatformIDP.OrgHandle = "acmecorp"
+					c.PlatformIDP.OrgNamespace = "default"
+				}
+				c.PlatformIDP.OrgPublisherSecret = tc.publisher
+				c.PlatformIDP.OrgStudioSecret = tc.studio
+				err := c.Validate()
+				if tc.wantErr == "" {
+					if err != nil {
+						t.Fatalf("Validate() = %v, want nil", err)
+					}
+					return
+				}
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("Validate() = %v, want an error naming %s", err, tc.wantErr)
+				}
+				if strings.Contains(err.Error(), `"p"`) || strings.Contains(err.Error(), `"s"`) {
+					t.Fatalf("the error quotes a secret: %v", err)
 				}
 			})
 		}

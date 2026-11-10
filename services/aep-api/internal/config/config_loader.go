@@ -92,6 +92,9 @@ func Load() (Config, error) {
 			// Trimmed: a stray space would make the handle match no token.
 			OrgHandle:    strings.TrimSpace(r.readOptionalString("PLATFORM_IDP_ORG_HANDLE", "")),
 			OrgNamespace: strings.TrimSpace(r.readOptionalString("PLATFORM_IDP_ORG_NAMESPACE", "")),
+			// Secrets: read as given, never trimmed or logged.
+			OrgPublisherSecret: r.readOptionalString("PLATFORM_IDP_ORG_PUBLISHER_SECRET", ""),
+			OrgStudioSecret:    r.readOptionalString("PLATFORM_IDP_ORG_STUDIO_SECRET", ""),
 		},
 		AEStudio:               r.aeStudio(),
 		JWKSURL:                r.readOptionalString("JWKS_URL", ""),
