@@ -280,6 +280,11 @@ func (c Config) Validate() error {
 		// another kind's rules.
 		errs = append(errs, "PLATFORM_IDP_KIND: "+err.Error())
 	}
+	if _, err := dialect.ParseKind(c.AEStudio.IDP.Kind); err != nil {
+		// The same rule for the kind every org's pod is told: a bad value
+		// fails here, not in each pod at its next start.
+		errs = append(errs, "AE_STUDIO_IDP_KIND: "+err.Error())
+	}
 	if len(errs) > 0 {
 		return fmt.Errorf("configuration errors:\n%s", strings.Join(errs, "\n"))
 	}

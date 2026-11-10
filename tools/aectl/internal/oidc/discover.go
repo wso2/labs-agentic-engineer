@@ -110,7 +110,7 @@ func Discover(ctx context.Context, client *http.Client, issuer string) (Endpoint
 	if err != nil {
 		return Endpoints{}, fmt.Errorf("oidc discovery: fetch %s: %w", target, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return Endpoints{}, fmt.Errorf("oidc discovery: %s answered HTTP %d", target, resp.StatusCode)
 	}

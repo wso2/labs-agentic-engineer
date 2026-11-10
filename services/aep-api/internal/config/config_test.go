@@ -89,6 +89,12 @@ func TestConfigValidate_RequiredFields(t *testing.T) {
 		if err := c.Validate(); err == nil {
 			t.Fatal("Validate() = nil, want error for a kind this build does not know")
 		}
+		// The kind shipped to every org's pod is checked by the same rule.
+		c = validConfig()
+		c.AEStudio.IDP.Kind = "asgardeo"
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "AE_STUDIO_IDP_KIND") {
+			t.Fatalf("Validate() = %v, want an error naming AE_STUDIO_IDP_KIND", err)
+		}
 	})
 }
 

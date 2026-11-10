@@ -167,7 +167,7 @@ func TestDiscoverPlatformIDP(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		fmt.Fprintf(w, `{"issuer":%q,"jwks_uri":%q,"token_endpoint":%q}`, srvURL(r), srvURL(r)+"/oauth2/jwks", srvURL(r)+"/oauth2/token")
+		_, _ = fmt.Fprintf(w, `{"issuer":%q,"jwks_uri":%q,"token_endpoint":%q}`, srvURL(r), srvURL(r)+"/oauth2/jwks", srvURL(r)+"/oauth2/token")
 	}))
 	t.Cleanup(srv.Close)
 	viper.Set("thunder.public_url", srv.URL)
