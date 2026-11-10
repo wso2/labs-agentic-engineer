@@ -224,7 +224,7 @@ its own deployment.
 | `consoleOrigins` | `AE_STUDIO_CONSOLE_ORIGINS` | the console's public URL and `http://localhost:8090` (Vite `pnpm dev`) |
 | `idp.issuer` | `AE_STUDIO_IDP_ISSUER` | aectl `thunder.public_url` |
 | `idp.jwksUrl`, `idp.tokenUrl` | `AE_STUDIO_IDP_JWKS_URL`, `AE_STUDIO_IDP_TOKEN_URL` | the IdP's OIDC discovery document (`jwks_uri`, `token_endpoint`), its paths on aectl `thunder.url` (in-cluster: the issuer's host is loopback inside a pod) |
-| `idp.kind` | `AE_STUDIO_IDP_KIND` | the chart's `idp.kind`, from aectl `idp.kind` (`thunder` when unset): the token dialect the three containers read the IdP's claims by, their `AE_IDP_KIND` |
+| `idp.kind` | `AE_STUDIO_IDP_KIND` | the chart's `idp.kind`, from aectl `idp.kind` (`thunder` when unset): the token dialect the three containers read the IdP's claims by, their `AE_IDP_KIND`. The containers read `thunder` and `asgardeo`; aectl's key accepts `thunder` |
 | `idp.userAudiences` | `AE_STUDIO_IDP_USER_AUDIENCES` | the console's client id (chart default) |
 | `aepApiBaseUrl` | `AE_STUDIO_AEP_API_BASE_URL` | the chart: `aep-api`'s in-cluster Service URL |
 | `aeOnlyClientId` | `AE_STUDIO_INTERNAL_CLIENT_ID` | `ae-studio-internal-client` |

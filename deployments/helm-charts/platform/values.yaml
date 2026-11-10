@@ -262,8 +262,9 @@ idp:
   # The platform IdP's token dialect: the claim names and rules every reader
   # of its tokens uses to say who the caller is. One value reaches aep-api
   # (PLATFORM_IDP_KIND), every org's AE Studio pod (AE_STUDIO_IDP_KIND, then
-  # AE_IDP_KIND) and the console (VITE_IDP_KIND). `thunder` is the one kind
-  # this release knows; `aectl` sets it from its idp.kind config.
+  # AE_IDP_KIND) and the console (VITE_IDP_KIND). Those readers know
+  # `thunder` and `asgardeo`; `aectl` sets this from its idp.kind config,
+  # which accepts `thunder`.
   kind: "thunder"
 
 openbao:

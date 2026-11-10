@@ -77,21 +77,22 @@ func TestConfigValidate_RequiredFields(t *testing.T) {
 	// Empty is thunder; a kind this build does not know is a boot error, never
 	// a fall-through to another kind's rules.
 	t.Run("PLATFORM_IDP_KIND", func(t *testing.T) {
-		for _, kind := range []string{"", "thunder"} {
+		for _, kind := range []string{"", "thunder", "asgardeo"} {
 			c := validConfig()
 			c.PlatformIDP.Kind = kind
+			c.AEStudio.IDP.Kind = kind
 			if err := c.Validate(); err != nil {
 				t.Fatalf("kind %q: Validate() = %v, want nil", kind, err)
 			}
 		}
 		c := validConfig()
-		c.PlatformIDP.Kind = "asgardeo"
+		c.PlatformIDP.Kind = "okta"
 		if err := c.Validate(); err == nil {
 			t.Fatal("Validate() = nil, want error for a kind this build does not know")
 		}
 		// The kind shipped to every org's pod is checked by the same rule.
 		c = validConfig()
-		c.AEStudio.IDP.Kind = "asgardeo"
+		c.AEStudio.IDP.Kind = "okta"
 		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "AE_STUDIO_IDP_KIND") {
 			t.Fatalf("Validate() = %v, want an error naming AE_STUDIO_IDP_KIND", err)
 		}

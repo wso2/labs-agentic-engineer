@@ -143,8 +143,9 @@ test("pod config: AE_ORG_ID without the rest of the pod env fails, naming every 
   assert.throws(() => loadPodConfig(podEnv({ AE_LISTEN_PORT: "http" })), /invalid AE_LISTEN_PORT/);
   assert.throws(() => loadPodConfig(podEnv({ AE_HEALTH_PORT: "70000" })), /invalid AE_HEALTH_PORT/);
   // A platform IdP kind this build does not know is a boot error, never thunder by accident.
-  assert.throws(() => loadPodConfig(podEnv({ AE_IDP_KIND: "asgardeo" })), /invalid AE_IDP_KIND/);
+  assert.throws(() => loadPodConfig(podEnv({ AE_IDP_KIND: "okta" })), /invalid AE_IDP_KIND/);
   assert.equal(loadPodConfig(podEnv({ AE_IDP_KIND: "thunder" }))?.idpKind, "thunder");
+  assert.equal(loadPodConfig(podEnv({ AE_IDP_KIND: "asgardeo" }))?.idpKind, "asgardeo");
 });
 
 test("pod mode refuses to start on a stale secret rev", async () => {

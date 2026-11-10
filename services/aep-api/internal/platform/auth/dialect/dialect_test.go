@@ -30,9 +30,10 @@ func TestParseKind(t *testing.T) {
 		{"", KindThunder, true},
 		{"thunder", KindThunder, true},
 		{" Thunder ", KindThunder, true},
-		// Step 2 adds asgardeo; until then an install naming it must not boot
-		// on the Thunder rules by accident.
-		{"asgardeo", "", false},
+		{"asgardeo", KindAsgardeo, true},
+		{" Asgardeo ", KindAsgardeo, true},
+		// A kind this build does not know must not boot on another kind's
+		// rules by accident.
 		{"okta", "", false},
 	} {
 		got, err := ParseKind(tc.in)
@@ -102,8 +103,100 @@ func TestThunder_Machine(t *testing.T) {
 	}
 }
 
+// Asgardeo names the org in org_handle / org_id / org_name on every token.
+// There is no fallback: a token without org_handle names no handle.
+func TestAsgardeo_Org(t *testing.T) {
+	d := ForKind(KindAsgardeo)
+	for name, tc := range map[string]struct {
+		raw  Raw
+		want Org
+	}{
+		"the three org claims": {
+			raw:  Raw{OrgHandle: "acme", OrgName: "Acme Inc", OrgID: "22222222-2222-2222-2222-222222222222"},
+			want: Org{Handle: "acme", Name: "Acme Inc", ID: "22222222-2222-2222-2222-222222222222", HandleDeclared: true},
+		},
+		"no handle, no fallback to the name or the id": {
+			raw:  Raw{OrgName: "Acme Inc", OrgID: "22222222-2222-2222-2222-222222222222"},
+			want: Org{Name: "Acme Inc", ID: "22222222-2222-2222-2222-222222222222"},
+		},
+		"Thunder's claims name no org here": {
+			raw:  Raw{OuHandle: "acme", OuName: "Acme Inc", OuID: "11111111-1111-1111-1111-111111111111", Aut: "APPLICATION_USER"},
+			want: Org{},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := d.Org(tc.raw); got != tc.want {
+				t.Fatalf("Org(%+v) = %+v, want %+v", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
+// Asgardeo says who a token was issued to in aut, which has two values. A
+// token without the claim, or with a value that is neither, answers neither.
+func TestAsgardeo_Machine(t *testing.T) {
+	d := ForKind(KindAsgardeo)
+	for name, tc := range map[string]struct {
+		raw     Raw
+		machine bool
+		err     error
+	}{
+		"APPLICATION is a machine":              {raw: Raw{Aut: "APPLICATION"}, machine: true},
+		"APPLICATION_USER is a user":            {raw: Raw{Aut: "APPLICATION_USER"}, machine: false},
+		"no claim is an error":                  {raw: Raw{OrgHandle: "acme"}, err: ErrNoMachineClaim},
+		"an unknown value is an error":          {raw: Raw{Aut: "DEVICE"}, err: ErrUnknownMachineClaim},
+		"Thunder's grant_type is not read":      {raw: Raw{GrantType: "authorization_code"}, err: ErrNoMachineClaim},
+		"the value is matched case-sensitively": {raw: Raw{Aut: "application"}, err: ErrUnknownMachineClaim},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := d.Machine(tc.raw)
+			if !errors.Is(err, tc.err) {
+				t.Fatalf("Machine(%+v): err=%v, want %v", tc.raw, err, tc.err)
+			}
+			if got != tc.machine {
+				t.Fatalf("Machine(%+v) = %v, want %v", tc.raw, got, tc.machine)
+			}
+		})
+	}
+}
+
+// Thunder does not read Asgardeo's claims either: a token of the other kind
+// names no org and cannot be placed.
+func TestThunder_DoesNotReadAsgardeoClaims(t *testing.T) {
+	d := ForKind(KindThunder)
+	raw := Raw{OrgHandle: "acme", OrgID: "22222222-2222-2222-2222-222222222222", OrgName: "Acme Inc", Aut: "APPLICATION_USER"}
+	if got := d.Org(raw); got != (Org{}) {
+		t.Fatalf("Org = %+v, want none", got)
+	}
+	if _, err := d.Machine(raw); !errors.Is(err, ErrNoMachineClaim) {
+		t.Fatalf("Machine: err=%v, want %v", err, ErrNoMachineClaim)
+	}
+}
+
+// A Dialect nobody gave a kind (the zero value, a wiring mistake) and a kind
+// this build does not know read nothing: no org, and no token placed as a
+// user's or a machine's, so every gate that asks refuses.
+func TestUnknownKind_ReadsNothing(t *testing.T) {
+	raw := Raw{
+		OuHandle: "acme", OuID: "11111111-1111-1111-1111-111111111111", GrantType: "authorization_code",
+		OrgHandle: "acme", OrgID: "22222222-2222-2222-2222-222222222222", Aut: "APPLICATION_USER",
+	}
+	for name, d := range map[string]Dialect{"zero value": {}, "unknown kind": ForKind(Kind("okta"))} {
+		t.Run(name, func(t *testing.T) {
+			if got := d.Org(raw); got != (Org{}) {
+				t.Fatalf("Org = %+v, want none", got)
+			}
+			if machine, err := d.Machine(raw); machine || !errors.Is(err, ErrNoMachineClaim) {
+				t.Fatalf("Machine = %v, %v; want false, %v", machine, err, ErrNoMachineClaim)
+			}
+		})
+	}
+}
+
 func TestDialect_Kind(t *testing.T) {
-	if got := ForKind(KindThunder).Kind(); got != KindThunder {
-		t.Fatalf("Kind() = %q", got)
+	for _, k := range []Kind{KindThunder, KindAsgardeo} {
+		if got := ForKind(k).Kind(); got != k {
+			t.Fatalf("Kind() = %q, want %q", got, k)
+		}
 	}
 }

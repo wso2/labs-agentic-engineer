@@ -88,6 +88,7 @@ func newVerifiedStudioStack(t *testing.T) (http.Handler, func(studioTokenClaims)
 		},
 		Deps:        Deps{Organization: orgs},
 		ThunderJWKS: jwtassertion.NewJWKSCache(jwks.URL),
+		Dialect:     thunderDialect(),
 	})
 
 	sign := func(c studioTokenClaims) string {

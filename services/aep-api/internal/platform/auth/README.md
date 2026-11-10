@@ -22,24 +22,29 @@ outside this package reads a claim by the platform IdP's own name for it.
 A **token dialect** is the claim names and rules one IdP kind uses to say who
 the caller is. The kind is a setting, `PLATFORM_IDP_KIND` (empty is
 `thunder`; an unknown value fails `config.Validate` at boot), and every
-verifier reads the IdP's claims through `dialect.ForKind(kind)`. One kind
-exists:
+verifier reads the IdP's claims through `dialect.ForKind(kind)`. Two kinds
+exist:
 
-| Question | `thunder` |
-|---|---|
-| the org's handle (the OpenChoreo namespace) | `ouHandle`, else `ouName`, else `ouId` — the console mirrors this precedence. The fallback serves legacy user tokens only: the publisher and studio verifiers require the declared `ouHandle` (`Org.HandleDeclared`) |
-| the org's id | `ouId` |
-| the org's display name | `ouName` |
-| is the token a machine's? | `grant_type == client_credentials`; a token without `grant_type` answers neither |
-| which client minted a machine token | `aud` (the same on every kind, so the verifiers read it directly) |
+| Question | `thunder` | `asgardeo` |
+|---|---|---|
+| the org's handle (the OpenChoreo namespace) | `ouHandle`, else `ouName`, else `ouId` — the console mirrors this precedence. The fallback serves legacy user tokens only: the publisher and studio verifiers require the declared `ouHandle` (`Org.HandleDeclared`) | `org_handle`, with no fallback (every token carries it); declared when present |
+| the org's id | `ouId` | `org_id` |
+| the org's display name | `ouName` | `org_name` |
+| is the token a machine's? | `grant_type == client_credentials`, any other grant a user's; a token without `grant_type` answers neither | `aut == APPLICATION` a machine's, `aut == APPLICATION_USER` a user's; a token without `aut`, or with any other value, answers neither |
+| which client minted a machine token | `aud` (the same on every kind, so the verifiers read it directly) | `aud` (a single string; `sub`, `azp` and `client_id` hold it too) |
 
-`dialect.Raw` holds the IdP-specific claims as decoded; it is embedded in a
-verifier's wire struct beside `jwt.RegisteredClaims`, so it never tags a
-registered claim name (a duplicate tag at one depth makes encoding/json drop
-both fields). `dialect.Org` and `dialect.Machine` are the two questions.
+`dialect.Raw` holds the IdP-specific claims as decoded, every kind's side by
+side, so one wire struct decodes a token of any kind and the dialect reads
+only its own kind's. It is embedded in a verifier's wire struct beside
+`jwt.RegisteredClaims`, so it never tags a registered claim name (a duplicate
+tag at one depth makes encoding/json drop both fields). `dialect.Org` and
+`dialect.Machine` are the two questions.
 
 Fail closed: a user-only route refuses a token the dialect cannot place as a
-user's or a machine's, rather than taking it for a user's.
+user's or a machine's, rather than taking it for a user's. A `Dialect` of a
+kind the build does not know (the zero value included) reads no org and
+places no token, and a token of one kind read by the other's dialect names no
+org.
 
 ## Invariants
 

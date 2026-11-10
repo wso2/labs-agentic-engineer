@@ -20,8 +20,8 @@
 // caller's org and whether the token is a machine's; nothing outside this
 // package reads a claim by its IdP-specific name.
 //
-// One kind exists, thunder. The kind is a setting (PLATFORM_IDP_KIND), read
-// once at boot.
+// Two kinds exist, thunder and asgardeo. The kind is a setting
+// (PLATFORM_IDP_KIND), read once at boot.
 package dialect
 
 import (
@@ -33,9 +33,15 @@ import (
 // Kind names a platform IdP's token dialect.
 type Kind string
 
-// KindThunder is ThunderID: the org is an organization unit carried as
-// ouHandle/ouName/ouId, and every token says its grant in grant_type.
-const KindThunder Kind = "thunder"
+const (
+	// KindThunder is ThunderID: the org is an organization unit carried as
+	// ouHandle/ouName/ouId, and every token says its grant in grant_type.
+	KindThunder Kind = "thunder"
+	// KindAsgardeo is Asgardeo: the org is the tenant's organization carried
+	// as org_handle/org_id/org_name, and every token says who it was issued
+	// to in aut.
+	KindAsgardeo Kind = "asgardeo"
+)
 
 // ParseKind reads the configured kind. Empty is thunder, the default a
 // Thunder install never has to set; an unknown value is an error, so an
@@ -45,20 +51,30 @@ func ParseKind(s string) (Kind, error) {
 	switch k := Kind(strings.ToLower(strings.TrimSpace(s))); k {
 	case "", KindThunder:
 		return KindThunder, nil
+	case KindAsgardeo:
+		return KindAsgardeo, nil
 	default:
-		return "", fmt.Errorf("unknown platform IdP kind %q (supported: %s)", s, KindThunder)
+		return "", fmt.Errorf("unknown platform IdP kind %q (supported: %s, %s)", s, KindThunder, KindAsgardeo)
 	}
 }
 
-// Raw is the IdP-specific claims a token may carry, as decoded. It is meant
-// to be embedded in a verifier's wire struct beside jwt.RegisteredClaims, so
-// it must never tag a registered claim name (sub, aud, iss, exp, ...): two
-// fields with one tag at the same depth make encoding/json drop both.
+// Raw is the IdP-specific claims a token may carry, as decoded: every kind's
+// claims side by side, so one wire struct decodes a token of any kind and the
+// Dialect reads only its own. It is meant to be embedded in a verifier's wire
+// struct beside jwt.RegisteredClaims, so it must never tag a registered claim
+// name (sub, aud, iss, exp, ...): two fields with one tag at the same depth
+// make encoding/json drop both.
 type Raw struct {
+	// Thunder.
 	OuID      string `json:"ouId,omitempty"`
 	OuName    string `json:"ouName,omitempty"`
 	OuHandle  string `json:"ouHandle,omitempty"`
 	GrantType string `json:"grant_type,omitempty"`
+	// Asgardeo.
+	OrgID     string `json:"org_id,omitempty"`
+	OrgName   string `json:"org_name,omitempty"`
+	OrgHandle string `json:"org_handle,omitempty"`
+	Aut       string `json:"aut,omitempty"`
 }
 
 // Org is the caller's organization as the dialect reads it. Handle is the
@@ -66,10 +82,11 @@ type Raw struct {
 // a display name. Any may be empty when the token carries no org.
 //
 // HandleDeclared is true when Handle came from the handle claim itself
-// (Thunder: ouHandle), false when it was filled from a fallback (ouName,
-// ouId) or is empty. The fallback serves legacy user tokens; a machine
-// token, minted for a client the platform registered itself, is expected to
-// declare its handle outright, and its verifiers check this flag.
+// (Thunder: ouHandle; Asgardeo: org_handle), false when it was filled from a
+// fallback (Thunder's ouName, ouId) or is empty. The fallback serves legacy
+// user tokens; a machine token, minted for a client the platform registered
+// itself, is expected to declare its handle outright, and its verifiers
+// check this flag.
 type Org struct {
 	Handle         string
 	ID             string
@@ -77,13 +94,24 @@ type Org struct {
 	HandleDeclared bool
 }
 
-// ErrNoMachineClaim is a token that says nothing about whether it is a
-// user's or a machine's. A user-only route refuses it.
-var ErrNoMachineClaim = errors.New("token carries no machine-token claim")
+var (
+	// ErrNoMachineClaim is a token that says nothing about whether it is a
+	// user's or a machine's. A user-only route refuses it.
+	ErrNoMachineClaim = errors.New("token carries no machine-token claim")
+	// ErrUnknownMachineClaim is a token whose machine-token claim holds a
+	// value the dialect does not know. It is refused like a missing one.
+	ErrUnknownMachineClaim = errors.New("token's machine-token claim has an unknown value")
+)
 
-const thunderGrantClientCredentials = "client_credentials"
+const (
+	thunderGrantClientCredentials = "client_credentials"
+	asgardeoAutApplication        = "APPLICATION"
+	asgardeoAutApplicationUser    = "APPLICATION_USER"
+)
 
-// Dialect answers the dialect questions for one kind.
+// Dialect answers the dialect questions for one kind. A Dialect of a kind
+// this build does not know, the zero value included, reads nothing: no org,
+// and no token placed as a user's or a machine's.
 type Dialect struct {
 	kind Kind
 }
@@ -98,26 +126,61 @@ func (d Dialect) Kind() Kind {
 	return d.kind
 }
 
-// Org reads the caller's org. Thunder: ouHandle, else ouName, else ouId is
-// the handle (the console mirrors this precedence; a change lands on both
-// sides at once), ouId is the ID and ouName the name.
+// Org reads the caller's org.
+//
+// Thunder: ouHandle, else ouName, else ouId is the handle (the console
+// mirrors this precedence; a change lands on both sides at once), ouId is
+// the ID and ouName the name.
+//
+// Asgardeo: org_handle is the handle, with no fallback (every token carries
+// it), org_id the ID and org_name the name.
 func (d Dialect) Org(r Raw) Org {
-	handle := r.OuHandle
-	if handle == "" {
-		handle = r.OuName
+	switch d.kind {
+	case KindThunder:
+		handle := r.OuHandle
+		if handle == "" {
+			handle = r.OuName
+		}
+		if handle == "" {
+			handle = r.OuID
+		}
+		return Org{Handle: handle, ID: r.OuID, Name: r.OuName, HandleDeclared: r.OuHandle != ""}
+	case KindAsgardeo:
+		return Org{Handle: r.OrgHandle, ID: r.OrgID, Name: r.OrgName, HandleDeclared: r.OrgHandle != ""}
+	default:
+		return Org{}
 	}
-	if handle == "" {
-		handle = r.OuID
-	}
-	return Org{Handle: handle, ID: r.OuID, Name: r.OuName, HandleDeclared: r.OuHandle != ""}
 }
 
-// Machine reports whether the token was issued to a machine. Thunder stamps
-// grant_type on every token; client_credentials is a machine's, any other
-// grant a user's. A token without the claim is ErrNoMachineClaim.
+// Machine reports whether the token was issued to a machine.
+//
+// Thunder stamps grant_type on every token; client_credentials is a
+// machine's, any other grant a user's. A token without the claim is
+// ErrNoMachineClaim.
+//
+// Asgardeo stamps aut on every token, with two values: APPLICATION is a
+// machine's, APPLICATION_USER a user's. A token without the claim is
+// ErrNoMachineClaim and any other value ErrUnknownMachineClaim: with only two
+// values to know, a third is refused rather than taken for a user's.
 func (d Dialect) Machine(r Raw) (bool, error) {
-	if r.GrantType == "" {
+	switch d.kind {
+	case KindThunder:
+		if r.GrantType == "" {
+			return false, ErrNoMachineClaim
+		}
+		return r.GrantType == thunderGrantClientCredentials, nil
+	case KindAsgardeo:
+		switch r.Aut {
+		case "":
+			return false, ErrNoMachineClaim
+		case asgardeoAutApplication:
+			return true, nil
+		case asgardeoAutApplicationUser:
+			return false, nil
+		default:
+			return false, ErrUnknownMachineClaim
+		}
+	default:
 		return false, ErrNoMachineClaim
 	}
-	return r.GrantType == thunderGrantClientCredentials, nil
 }
