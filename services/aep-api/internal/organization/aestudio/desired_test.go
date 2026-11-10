@@ -135,6 +135,22 @@ func TestDesired_OrgAndEnvConfigs(t *testing.T) {
 	}
 }
 
+// Where the IdP names the org by a handle of its own (an Asgardeo tenant's),
+// the pod is told that handle: its gates compare it with the token's, and
+// the Room names it builds must match the ones the console builds from the
+// same token. The org's namespace still names everything aep-api owns.
+func TestDesired_OrgHandleIsTheIdPsWhenConfigured(t *testing.T) {
+	f := newFixture(t).withAllRefs()
+	f.svc.cfg.IDP.OrgHandle = "acmecorp"
+	d, err := f.svc.desired(ctx, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Params.Org.ID != testOU || d.Params.Org.Handle != "acmecorp" {
+		t.Fatalf("org %+v, want the IdP's handle", d.Params.Org)
+	}
+}
+
 // The pod must never be configured into a legacy mode.
 func TestDesired_NoLegacyModeInputs(t *testing.T) {
 	f := newFixture(t).withAllRefs().withConnection(anthropicConn("claude-x"))

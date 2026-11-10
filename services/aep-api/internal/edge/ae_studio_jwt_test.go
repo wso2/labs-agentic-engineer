@@ -31,6 +31,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/config"
 	"github.com/wso2/aep/aep-api/internal/organization"
 	orghttpapi "github.com/wso2/aep/aep-api/internal/organization/httpapi"
+	"github.com/wso2/aep/aep-api/internal/platform/auth/dialect"
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 )
 
@@ -56,12 +57,22 @@ type studioTokenClaims struct {
 	ClientID  string `json:"client_id,omitempty"`
 	GrantType string `json:"grant_type,omitempty"`
 	OuHandle  string `json:"ouHandle,omitempty"`
+	// Asgardeo's claims, for the single-org cases.
+	Aut       string `json:"aut,omitempty"`
+	OrgHandle string `json:"org_handle,omitempty"`
+	OrgID     string `json:"org_id,omitempty"`
 	jwt.RegisteredClaims
 }
 
 // newVerifiedStudioStack builds the real /api/v1 chain (NewHandler with a
 // ThunderJWKS and no InboundAuth) and a signer for tokens it trusts.
 func newVerifiedStudioStack(t *testing.T) (http.Handler, func(studioTokenClaims) string) {
+	t.Helper()
+	return newVerifiedStudioStackWith(t, thunderDialect())
+}
+
+// newVerifiedStudioStackWith is newVerifiedStudioStack reading tokens by d.
+func newVerifiedStudioStackWith(t *testing.T, d dialect.Dialect) (http.Handler, func(studioTokenClaims) string) {
 	t.Helper()
 	priv := newTestRSAKey(t)
 	jwks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -88,7 +99,7 @@ func newVerifiedStudioStack(t *testing.T) (http.Handler, func(studioTokenClaims)
 		},
 		Deps:        Deps{Organization: orgs},
 		ThunderJWKS: jwtassertion.NewJWKSCache(jwks.URL),
-		Dialect:     thunderDialect(),
+		Dialect:     d,
 	})
 
 	sign := func(c studioTokenClaims) string {
@@ -201,5 +212,36 @@ func TestGetAeStudio_CCTokenWithOrgForBFFAudienceIsRefused(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), "acme-d") {
 		t.Fatalf("leaked acme's AE Studio: %s", w.Body)
+	}
+}
+
+// An Asgardeo install serves one org: the tenant's handle in the token maps
+// to the org's namespace. The tenant's user reads that org's AE Studio; a
+// verified user of another org of the same IdP carries no org, so the tenant
+// gate refuses it and it reads nothing.
+func TestGetAeStudio_AsgardeoSingleOrg(t *testing.T) {
+	h, sign := newVerifiedStudioStackWith(t, dialect.ForKind(dialect.KindAsgardeo).WithSingleOrg("acmecorp", "acme"))
+	user := func(sub, orgHandle string) string {
+		return sign(studioTokenClaims{
+			Sub: sub, ClientID: consoleClient, Aut: "APPLICATION_USER",
+			OrgHandle: orgHandle, OrgID: "22222222-2222-2222-2222-222222222222",
+			RegisteredClaims: jwt.RegisteredClaims{Audience: jwt.ClaimStrings{consoleClient}},
+		})
+	}
+
+	own := getAEStudioAs(h, user("alice", "acmecorp"))
+	if own.Code != http.StatusOK || !strings.Contains(own.Body.String(), "http://acme-d") {
+		t.Fatalf("the tenant's user: %d %s", own.Code, own.Body)
+	}
+
+	for name, handle := range map[string]string{
+		"another org of the IdP":            "globexcorp",
+		"the namespace's name in the token": "acme",
+		"a namespace that exists":           "globex",
+	} {
+		w := getAEStudioAs(h, user("bob", handle))
+		if w.Code != http.StatusUnauthorized || verifierRejected(w) || !strings.Contains(w.Body.String(), "authentication required") {
+			t.Errorf("%s: status = %d challenge = %q, want the tenant gate's 401 (%s)", name, w.Code, w.Header().Get("WWW-Authenticate"), w.Body)
+		}
 	}
 }

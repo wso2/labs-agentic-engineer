@@ -162,6 +162,16 @@ spec:
             # token it verifies (values.yaml idp.kind).
             - name: PLATFORM_IDP_KIND
               value: {{ .Values.idp.kind | quote }}
+            # The one org of an IdP that names it by a handle of its own
+            # (values.yaml idp.orgHandle, idp.orgNamespace).
+            {{- with .Values.idp.orgHandle }}
+            - name: PLATFORM_IDP_ORG_HANDLE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.idp.orgNamespace }}
+            - name: PLATFORM_IDP_ORG_NAMESPACE
+              value: {{ . | quote }}
+            {{- end }}
 
             - name: THUNDER_ADMIN_URL
               valueFrom:

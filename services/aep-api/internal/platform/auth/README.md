@@ -46,6 +46,24 @@ kind the build does not know (the zero value included) reads no org and
 places no token, and a token of one kind read by the other's dialect names no
 org.
 
+### One org under the IdP's own handle
+
+An Asgardeo tenant names its org by the tenant's handle, which is not the
+org's OpenChoreo namespace. `Dialect.WithSingleOrg(idpHandle, platformHandle)`
+(wired from `PLATFORM_IDP_ORG_HANDLE` and `PLATFORM_IDP_ORG_NAMESPACE`) maps
+it: a token declaring exactly `idpHandle` reads as the org `platformHandle`,
+and any other token (another org of the IdP, no handle claim) reads as no
+org, so the tenant gate and the machine-token verifiers refuse it. Both
+settings are required under `asgardeo` and refused under `thunder`
+(`config.Validate`). The mapping is in the dialect because every consumer of
+the handle goes through it: the user edge, the org lookup, and the publisher
+and studio verifiers, whose clients are named after the namespace.
+
+Only aep-api maps. The org's pod is given the IdP's handle as its
+`AE_ORG_HANDLE` (`aestudio` `Params.Org.Handle`), so its dialect twins
+compare a token's handle as it is, and its Room names match the ones the
+console builds from the same token.
+
 ## Invariants
 
 - Consumers read `Claims.OrgHandle` / `OrgID` / `OrgName` and

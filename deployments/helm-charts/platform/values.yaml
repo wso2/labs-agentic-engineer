@@ -266,6 +266,15 @@ idp:
   # `thunder` and `asgardeo`; `aectl` sets this from its idp.kind config,
   # which accepts `thunder`.
   kind: "thunder"
+  # Set both on an IdP that serves one org under a handle of its own (kind
+  # asgardeo, where they are required): orgHandle is the handle the IdP's
+  # tokens name the org by (the Asgardeo tenant's handle), orgNamespace the
+  # org's OpenChoreo namespace. aep-api reads a token declaring orgHandle as
+  # that org and any other token as no org (PLATFORM_IDP_ORG_HANDLE,
+  # PLATFORM_IDP_ORG_NAMESPACE), and gives the org's pod orgHandle as its org
+  # handle. Leave both empty under thunder, whose handle is the namespace.
+  orgHandle: ""
+  orgNamespace: ""
 
 openbao:
   # Address of OpenChoreo's built-in OpenBao service.

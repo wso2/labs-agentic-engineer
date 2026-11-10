@@ -234,3 +234,79 @@ func TestStudioClientVerifier_Asgardeo(t *testing.T) {
 		}
 	}
 }
+
+// An Asgardeo install serves one org: the tenant's handle in the token maps
+// to the org's OpenChoreo namespace, which is the name every consumer of the
+// claims and every per-org client is known by.
+var asgardeoSingleOrg = dialect.ForKind(dialect.KindAsgardeo).WithSingleOrg("acme", "default")
+
+// The user edge binds the namespace, never the tenant's handle; a user of
+// another org of the same IdP verifies but carries no org.
+func TestJWTMiddleware_AsgardeoSingleOrg(t *testing.T) {
+	jwks, sign := asgardeoSigner(t)
+	var got *Claims
+	h := JWTMiddleware(JWTConfig{
+		JWKS: jwks, AllowedIssuers: []string{asgIssuer}, AllowedAudiences: []string{asgConsoleApp},
+		Dialect: asgardeoSingleOrg,
+	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = ClaimsFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+	call := func(claims jwt.MapClaims) int {
+		got = nil
+		r := httptest.NewRequest(http.MethodGet, "/api/v1/x", nil)
+		r.Header.Set("Authorization", "Bearer "+sign(claims))
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+
+	if code := call(asgardeoUserClaims()); code != http.StatusOK {
+		t.Fatalf("the tenant's user: status %d, want 200", code)
+	}
+	if got == nil || got.OrgHandle != "default" || got.OrgID != asgOrgID || got.OrgName != "Acme Inc" {
+		t.Fatalf("claims = %+v, want the namespace as the handle", got)
+	}
+
+	other := with(asgardeoUserClaims(), map[string]any{"org_handle": "globex", "org_id": "33333333-3333-3333-3333-333333333333", "org_name": "Globex"})
+	if code := call(other); code != http.StatusOK {
+		t.Fatalf("another org's user: status %d, want 200 (the tenant gate refuses it, not the verifier)", code)
+	}
+	if got == nil || got.OrgHandle != "" || got.OrgID != "" || got.OrgName != "" {
+		t.Fatalf("another org's user: claims = %+v, want no org", got)
+	}
+}
+
+// The per-org clients are named after the namespace (aep-publisher-default,
+// ae-studio-default); their tokens carry the tenant's handle, which the
+// dialect maps before the verifiers compare.
+func TestMachineVerifiers_AsgardeoSingleOrg(t *testing.T) {
+	jwks, sign := asgardeoSigner(t)
+	pub := NewPublisherTokenVerifier(jwks, asgIssuer, pubAudPrefix, asgardeoSingleOrg)
+	studio := NewStudioClientVerifier(jwks, asgIssuer, asgardeoSingleOrg, storedStudioClients{"default": "ae-studio-default"})
+	if pub == nil || studio == nil {
+		t.Fatal("verifier constructor returned nil")
+	}
+
+	claims, err := pub.Verify(sign(asgardeoMachineClaims(pubAudPrefix + "default")))
+	if err != nil || claims.OrgHandle != "default" {
+		t.Fatalf("publisher of the namespace: org=%v err=%v, want default", claims, err)
+	}
+	if org, err := studio.Verify(context.Background(), sign(asgardeoMachineClaims("ae-studio-default"))); err != nil || org != "default" {
+		t.Fatalf("studio client of the namespace: org=%q err=%v, want default", org, err)
+	}
+
+	// A client named after the tenant's handle is not the org's client, and
+	// a client of another org of the IdP has no org to match.
+	if _, err := pub.Verify(sign(asgardeoMachineClaims(pubAudPrefix + "acme"))); err == nil {
+		t.Error("publisher named after the tenant handle verified, want refused")
+	}
+	foreign := with(asgardeoMachineClaims(pubAudPrefix+"default"), map[string]any{"org_handle": "globex"})
+	if _, err := pub.Verify(sign(foreign)); err == nil || !strings.Contains(err.Error(), "org handle claim missing") {
+		t.Errorf("another org's publisher: err=%v, want refused for no org", err)
+	}
+	foreignStudio := with(asgardeoMachineClaims("ae-studio-default"), map[string]any{"org_handle": "globex"})
+	if org, err := studio.Verify(context.Background(), sign(foreignStudio)); err == nil {
+		t.Errorf("another org's studio client verified as %q, want refused", org)
+	}
+}

@@ -193,6 +193,72 @@ func TestUnknownKind_ReadsNothing(t *testing.T) {
 	}
 }
 
+// An IdP that serves one org names it by its own handle (Asgardeo: the
+// tenant's), not by the platform's name for it (the OpenChoreo namespace).
+// WithSingleOrg maps the one to the other: a token declaring the IdP handle
+// reads as the platform's org, and any other token reads as no org at all.
+func TestWithSingleOrg(t *testing.T) {
+	const orgID = "22222222-2222-2222-2222-222222222222"
+	d := ForKind(KindAsgardeo).WithSingleOrg("acmecorp", "default")
+	for name, tc := range map[string]struct {
+		raw  Raw
+		want Org
+	}{
+		"the IdP's handle maps to the platform's": {
+			raw:  Raw{OrgHandle: "acmecorp", OrgName: "Acme Corp", OrgID: orgID},
+			want: Org{Handle: "default", Name: "Acme Corp", ID: orgID, HandleDeclared: true},
+		},
+		"another org of the IdP is no org": {
+			raw:  Raw{OrgHandle: "globex", OrgName: "Globex", OrgID: "33333333-3333-3333-3333-333333333333"},
+			want: Org{},
+		},
+		"the platform's own name in the token is no org": {
+			raw:  Raw{OrgHandle: "default", OrgID: orgID},
+			want: Org{},
+		},
+		"no handle is no org, whatever the id": {
+			raw:  Raw{OrgName: "Acme Corp", OrgID: orgID},
+			want: Org{},
+		},
+		"the match is exact": {
+			raw:  Raw{OrgHandle: "AcmeCorp", OrgID: orgID},
+			want: Org{},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := d.Org(tc.raw); got != tc.want {
+				t.Fatalf("Org(%+v) = %+v, want %+v", tc.raw, got, tc.want)
+			}
+		})
+	}
+
+	// The machine-token rule is not the mapping's business.
+	if machine, err := d.Machine(Raw{Aut: "APPLICATION"}); err != nil || !machine {
+		t.Fatalf("Machine = %v, %v; want true", machine, err)
+	}
+	// The kind is kept, and a dialect without the mapping reads the handle as it is.
+	if d.Kind() != KindAsgardeo {
+		t.Fatalf("Kind() = %q", d.Kind())
+	}
+	plain := ForKind(KindAsgardeo).Org(Raw{OrgHandle: "acmecorp", OrgID: orgID})
+	if plain.Handle != "acmecorp" {
+		t.Fatalf("unmapped handle = %q, want acmecorp", plain.Handle)
+	}
+}
+
+// A handle filled from a fallback claim is not the IdP's handle: only a
+// declared one maps.
+func TestWithSingleOrg_RequiresTheDeclaredHandle(t *testing.T) {
+	d := ForKind(KindThunder).WithSingleOrg("acmecorp", "default")
+	if got := d.Org(Raw{OuName: "acmecorp", OuID: "ou-1"}); got != (Org{}) {
+		t.Fatalf("Org = %+v, want none", got)
+	}
+	want := Org{Handle: "default", ID: "ou-1", HandleDeclared: true}
+	if got := d.Org(Raw{OuHandle: "acmecorp", OuID: "ou-1"}); got != want {
+		t.Fatalf("Org = %+v, want %+v", got, want)
+	}
+}
+
 func TestDialect_Kind(t *testing.T) {
 	for _, k := range []Kind{KindThunder, KindAsgardeo} {
 		if got := ForKind(k).Kind(); got != k {

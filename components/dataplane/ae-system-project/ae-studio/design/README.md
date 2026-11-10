@@ -92,7 +92,13 @@ the mirrors or the reference store. Budget and eviction:
 | `ae-collab` | `AE_ORG_ID`, `AE_ORG_HANDLE`, `AE_IDP_ISSUER`, `AE_IDP_JWKS_URL`, `AE_IDP_KIND`, `AE_USER_AUDIENCES`, `AE_ALLOWED_ORIGINS`, `AE_FILES_SOCKET`, `AE_ROOM_SOCKET`, `AE_LISTEN_PORT`, `AE_HEALTH_PORT` | none |
 | `ae-studio-tools` | `AE_ORG_ID`, `AE_ORG_HANDLE`, `AE_IDP_ISSUER`, `AE_IDP_JWKS_URL`, `AE_IDP_TOKEN_URL`, `AE_IDP_KIND`, `AE_USER_AUDIENCES`, `AE_M2M_CLIENT_ID`, `AEP_API_BASE_URL`, `AE_FILES_SOCKET`, `AE_MCP_SOCKET`, `AE_TURN_SOCKET`, `AE_STUDIO_DATA_DIR`, `AE_STORAGE_BUDGET_BYTES`, `AE_EXPECTED_SECRET_REV`, `AE_LISTEN_PORT`, `AE_HEALTH_PORT`, `AE_GITHUB_OWNER`, `AE_WEBHOOK_URL` | `GITHUB_PAT`, `GITHUB_WEBHOOK_SECRET`, `AE_STUDIO_CLIENT_ID`, `AE_STUDIO_CLIENT_SECRET`, `AE_SECRET_REV` |
 
-`AE_ORG_ID` is the org's Platform IdP OU id; `AE_ORG_HANDLE` the org name.
+`AE_ORG_ID` is the org's id on the platform IdP (a Thunder OU id, an
+Asgardeo organization id). `AE_ORG_HANDLE` is the org's handle as that IdP's
+tokens carry it: the gates compare it with a token's, and it names the Rooms
+(`spec-<handle>-<project>`, which the console builds from the same token). On
+Thunder it is the org's name; where the IdP names its one org by a handle of
+its own (aep-api's `PLATFORM_IDP_ORG_HANDLE`, an Asgardeo tenant's handle),
+it is that handle.
 `AE_USER_AUDIENCES` and `AE_ALLOWED_ORIGINS` are comma lists. `ae-collab`
 checks `Origin` itself, because a WebSocket upgrade carries no CORS.
 `AE_WEBHOOK_URL` is the relay channel when `webhookRelayUrl` is set, else the

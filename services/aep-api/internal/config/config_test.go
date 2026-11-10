@@ -77,7 +77,7 @@ func TestConfigValidate_RequiredFields(t *testing.T) {
 	// Empty is thunder; a kind this build does not know is a boot error, never
 	// a fall-through to another kind's rules.
 	t.Run("PLATFORM_IDP_KIND", func(t *testing.T) {
-		for _, kind := range []string{"", "thunder", "asgardeo"} {
+		for _, kind := range []string{"", "thunder"} {
 			c := validConfig()
 			c.PlatformIDP.Kind = kind
 			c.AEStudio.IDP.Kind = kind
@@ -86,6 +86,14 @@ func TestConfigValidate_RequiredFields(t *testing.T) {
 			}
 		}
 		c := validConfig()
+		c.PlatformIDP.Kind = "asgardeo"
+		c.AEStudio.IDP.Kind = "asgardeo"
+		c.PlatformIDP.OrgHandle = "acmecorp"
+		c.PlatformIDP.OrgNamespace = "default"
+		if err := c.Validate(); err != nil {
+			t.Fatalf("kind asgardeo with its org: Validate() = %v, want nil", err)
+		}
+		c = validConfig()
 		c.PlatformIDP.Kind = "okta"
 		if err := c.Validate(); err == nil {
 			t.Fatal("Validate() = nil, want error for a kind this build does not know")
@@ -95,6 +103,43 @@ func TestConfigValidate_RequiredFields(t *testing.T) {
 		c.AEStudio.IDP.Kind = "okta"
 		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "AE_STUDIO_IDP_KIND") {
 			t.Fatalf("Validate() = %v, want an error naming AE_STUDIO_IDP_KIND", err)
+		}
+	})
+	// An Asgardeo install serves one org: the tenant's handle in the tokens
+	// and the namespace it maps to are both required, so an unmapped install
+	// fails at boot instead of resolving every user to a namespace named
+	// after the tenant. Thunder's handle is the namespace already, so there
+	// neither may be set.
+	t.Run("PLATFORM_IDP_ORG_HANDLE and PLATFORM_IDP_ORG_NAMESPACE", func(t *testing.T) {
+		for name, tc := range map[string]struct {
+			kind, handle, namespace string
+			wantErr                 string
+		}{
+			"asgardeo with both":           {kind: "asgardeo", handle: "acmecorp", namespace: "default"},
+			"asgardeo with neither":        {kind: "asgardeo", wantErr: "PLATFORM_IDP_ORG_HANDLE"},
+			"asgardeo without a namespace": {kind: "asgardeo", handle: "acmecorp", wantErr: "PLATFORM_IDP_ORG_NAMESPACE"},
+			"asgardeo without a handle":    {kind: "asgardeo", namespace: "default", wantErr: "PLATFORM_IDP_ORG_HANDLE"},
+			"thunder with neither":         {kind: "thunder"},
+			"thunder with a handle":        {kind: "thunder", handle: "acmecorp", wantErr: "PLATFORM_IDP_ORG_HANDLE"},
+			"thunder with a namespace":     {kind: "thunder", namespace: "default", wantErr: "PLATFORM_IDP_ORG_NAMESPACE"},
+			"unset kind with a handle":     {kind: "", handle: "acmecorp", wantErr: "PLATFORM_IDP_ORG_HANDLE"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				c := validConfig()
+				c.PlatformIDP.Kind = tc.kind
+				c.PlatformIDP.OrgHandle = tc.handle
+				c.PlatformIDP.OrgNamespace = tc.namespace
+				err := c.Validate()
+				if tc.wantErr == "" {
+					if err != nil {
+						t.Fatalf("Validate() = %v, want nil", err)
+					}
+					return
+				}
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("Validate() = %v, want an error naming %s", err, tc.wantErr)
+				}
+			})
 		}
 	})
 }

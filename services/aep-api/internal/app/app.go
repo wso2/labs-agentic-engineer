@@ -842,7 +842,13 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		return nil, fmt.Errorf("platform IdP: %w", err)
 	}
 	idpDialect := dialect.ForKind(idpKind)
-	slog.Info("Platform IdP token dialect", "kind", idpKind)
+	if cfg.PlatformIDP.OrgHandle != "" {
+		// The IdP serves one org under a handle of its own; the dialect maps
+		// it to the org's namespace, the name everything here knows it by.
+		idpDialect = idpDialect.WithSingleOrg(cfg.PlatformIDP.OrgHandle, cfg.PlatformIDP.OrgNamespace)
+	}
+	slog.Info("Platform IdP token dialect", "kind", idpKind,
+		"idpOrgHandle", cfg.PlatformIDP.OrgHandle, "orgNamespace", cfg.PlatformIDP.OrgNamespace)
 
 	publisherVerifier := authn.NewPublisherTokenVerifier(thunderJWKS, cfg.PlatformIDP.Issuer, "aep-publisher-", idpDialect)
 	runnerAuth := authn.NewRunnerAuthorizer(publisherVerifier, cycleRunnerLookup(db))

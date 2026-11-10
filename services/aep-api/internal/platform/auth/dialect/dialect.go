@@ -114,11 +114,34 @@ const (
 // and no token placed as a user's or a machine's.
 type Dialect struct {
 	kind Kind
+	// single is set by WithSingleOrg: the IdP serves one org, named
+	// idpHandle in its tokens and platformHandle by the platform.
+	single         bool
+	idpHandle      string
+	platformHandle string
 }
 
 // ForKind returns the dialect of a parsed kind.
 func ForKind(k Kind) Dialect {
 	return Dialect{kind: k}
+}
+
+// WithSingleOrg returns d for an IdP that serves one org under a handle that
+// is not the platform's name for it: an Asgardeo tenant names its org by the
+// tenant's handle, while the platform knows the org by its OpenChoreo
+// namespace. Org then reads a token that declares exactly idpHandle as the
+// org platformHandle, and any other token as no org at all: another org of
+// the same IdP, a token without the handle claim, or one whose handle came
+// from a fallback claim.
+//
+// Only aep-api maps: it is the reader that names namespaces. The org's pod
+// is told the IdP's handle as its own (AE_ORG_HANDLE), so its dialect twins
+// compare the token's handle as it is.
+func (d Dialect) WithSingleOrg(idpHandle, platformHandle string) Dialect {
+	d.single = true
+	d.idpHandle = idpHandle
+	d.platformHandle = platformHandle
+	return d
 }
 
 // Kind is the kind this dialect reads.
@@ -134,7 +157,23 @@ func (d Dialect) Kind() Kind {
 //
 // Asgardeo: org_handle is the handle, with no fallback (every token carries
 // it), org_id the ID and org_name the name.
+//
+// Under WithSingleOrg the handle read this way is the IdP's; it is replaced
+// by the platform's, and a token of any other org reads as no org.
 func (d Dialect) Org(r Raw) Org {
+	org := d.claimedOrg(r)
+	if !d.single {
+		return org
+	}
+	if !org.HandleDeclared || d.idpHandle == "" || org.Handle != d.idpHandle {
+		return Org{}
+	}
+	org.Handle = d.platformHandle
+	return org
+}
+
+// claimedOrg is the org as the token's own claims name it, by kind.
+func (d Dialect) claimedOrg(r Raw) Org {
 	switch d.kind {
 	case KindThunder:
 		handle := r.OuHandle

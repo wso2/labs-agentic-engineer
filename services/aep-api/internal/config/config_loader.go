@@ -89,6 +89,9 @@ func Load() (Config, error) {
 			JWKSURL:  r.readOptionalString("PLATFORM_IDP_JWKS_URL", "http://platform-idp-service.platform-idp.svc.cluster.local:8090/oauth2/jwks"),
 			TokenURL: r.readOptionalString("PLATFORM_IDP_TOKEN_URL", ""),
 			Kind:     r.readOptionalString("PLATFORM_IDP_KIND", string(dialect.KindThunder)),
+			// Trimmed: a stray space would make the handle match no token.
+			OrgHandle:    strings.TrimSpace(r.readOptionalString("PLATFORM_IDP_ORG_HANDLE", "")),
+			OrgNamespace: strings.TrimSpace(r.readOptionalString("PLATFORM_IDP_ORG_NAMESPACE", "")),
 		},
 		AEStudio:               r.aeStudio(),
 		JWKSURL:                r.readOptionalString("JWKS_URL", ""),
@@ -302,6 +305,7 @@ func (r *configReader) aeStudio() AEStudioConfig {
 	c.IDP.JWKSURL = r.readOptionalString("AE_STUDIO_IDP_JWKS_URL", "")
 	c.IDP.TokenURL = r.readOptionalString("AE_STUDIO_IDP_TOKEN_URL", "")
 	c.IDP.Kind = r.readOptionalString("AE_STUDIO_IDP_KIND", string(dialect.KindThunder))
+	c.IDP.OrgHandle = strings.TrimSpace(r.readOptionalString("PLATFORM_IDP_ORG_HANDLE", ""))
 	c.IDP.UserAudiences = splitCSV(os.Getenv("AE_STUDIO_IDP_USER_AUDIENCES"))
 	c.AEPAPIBaseURL = r.readOptionalString("AE_STUDIO_AEP_API_BASE_URL", "")
 	c.InternalClientID = r.readOptionalString("AE_STUDIO_INTERNAL_CLIENT_ID", "")

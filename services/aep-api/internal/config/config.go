@@ -285,6 +285,7 @@ func (c Config) Validate() error {
 		// fails here, not in each pod at its next start.
 		errs = append(errs, "AE_STUDIO_IDP_KIND: "+err.Error())
 	}
+	errs = append(errs, c.PlatformIDP.orgMappingErrors()...)
 	if len(errs) > 0 {
 		return fmt.Errorf("configuration errors:\n%s", strings.Join(errs, "\n"))
 	}
@@ -342,6 +343,42 @@ type PlatformIDPDefaults struct {
 	// Kind names the token dialect the verifiers read the IdP's claims by
 	// (PLATFORM_IDP_KIND; dialect.ParseKind). Empty is thunder.
 	Kind string
+	// OrgHandle and OrgNamespace are set on an IdP that serves one org under
+	// a handle of its own (kind asgardeo: the tenant's handle).
+	// OrgHandle (PLATFORM_IDP_ORG_HANDLE) is the handle its tokens carry;
+	// OrgNamespace (PLATFORM_IDP_ORG_NAMESPACE) is the org's OpenChoreo
+	// namespace, the name aep-api knows the org by. A token declaring
+	// OrgHandle is that org's and any other token is no org's
+	// (dialect.WithSingleOrg). Both are required under asgardeo and refused
+	// under thunder, whose handle is the namespace already.
+	OrgHandle    string
+	OrgNamespace string
+}
+
+// orgMappingErrors checks OrgHandle and OrgNamespace against the kind. An
+// Asgardeo install serves one org, so both are required: without them every
+// user would resolve to a namespace named after the tenant. Thunder's handle
+// is the namespace, so a value set there would be read by nothing while
+// looking as if it took effect. An unknown kind is reported by its own check.
+func (p PlatformIDPDefaults) orgMappingErrors() []string {
+	kind, err := dialect.ParseKind(p.Kind)
+	if err != nil {
+		return nil
+	}
+	settings := []struct{ name, value string }{
+		{"PLATFORM_IDP_ORG_HANDLE", p.OrgHandle},
+		{"PLATFORM_IDP_ORG_NAMESPACE", p.OrgNamespace},
+	}
+	var errs []string
+	for _, s := range settings {
+		switch {
+		case kind == dialect.KindAsgardeo && s.value == "":
+			errs = append(errs, s.name+" is required when PLATFORM_IDP_KIND is asgardeo: the tenant's handle in the tokens maps to the org's namespace")
+		case kind != dialect.KindAsgardeo && s.value != "":
+			errs = append(errs, s.name+" is read only when PLATFORM_IDP_KIND is asgardeo; unset it")
+		}
+	}
+	return errs
 }
 
 // AEStudioConfig is the deployment-supplied input of the AE Studio Resource.
@@ -359,7 +396,11 @@ type AEStudioConfig struct {
 		Issuer, JWKSURL, TokenURL string
 		// Kind is the token dialect the pod reads the IdP's claims by
 		// (AE_STUDIO_IDP_KIND; thunder when unset), shipped to it as AE_IDP_KIND.
-		Kind          string
+		Kind string
+		// OrgHandle is PlatformIDP.OrgHandle (the same PLATFORM_IDP_ORG_HANDLE):
+		// when set, the handle the IdP's tokens name the org by, which the
+		// pod is given as its org handle in place of the namespace name.
+		OrgHandle     string
 		UserAudiences []string
 	}
 
