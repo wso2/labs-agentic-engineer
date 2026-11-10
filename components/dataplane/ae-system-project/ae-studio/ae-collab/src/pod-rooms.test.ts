@@ -118,6 +118,7 @@ async function startIdp(): Promise<Idp> {
         {
           aud: USER_AUDIENCE,
           sub,
+          grant_type: "authorization_code",
           ouId: `ou-${ouHandle}`,
           ouHandle,
           exp: expIn(expiresInSec),
@@ -261,6 +262,7 @@ async function startTestCollab(
     orgHandle: "acme",
     issuer: ISSUER,
     jwksUrl: idp.jwksUrl,
+    idpKind: "thunder",
     userAudiences: [USER_AUDIENCE],
     allowedOrigins: o.allowedOrigins ?? [CONSOLE_ORIGIN],
     filesSocket: files.path,

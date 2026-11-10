@@ -23,6 +23,7 @@ interface RuntimeEnv {
   VITE_THUNDER_URL?: string;
   VITE_THUNDER_CLIENT_ID?: string;
   VITE_THUNDER_SCOPES?: string;
+  VITE_IDP_KIND?: string;
   VITE_TRY_IT_URL?: string;
   BILLING_API_BASE_URL?: string;
 }
@@ -45,6 +46,19 @@ function getEnv(key: keyof RuntimeEnv): string | undefined {
   return import.meta.env[key];
 }
 
+// The platform IdP kinds this build reads tokens of (auth/claims.ts). Read
+// as the pods read AE_IDP_KIND (trimmed, lowercased, empty is thunder); an
+// unknown kind fails at load, as the pod fails at boot, rather than sign the
+// user in with no org and nothing naming the cause.
+const IDP_KINDS = ["thunder"];
+function idpKind(): string {
+  const kind = (getEnv("VITE_IDP_KIND") ?? "").trim().toLowerCase() || "thunder";
+  if (!IDP_KINDS.includes(kind)) {
+    throw new Error(`VITE_IDP_KIND: unknown platform IdP kind "${kind}" (supported: ${IDP_KINDS.join(", ")})`);
+  }
+  return kind;
+}
+
 export const env = {
   apiBaseUrl: getEnv("VITE_API_BASE_URL") || "/aep-api-service",
   // VITE_AUTH_MODE is a dev-only switch, so it is read from build-time env
@@ -65,6 +79,8 @@ export const env = {
   // added to its redirect URIs by hand; see README.
   thunderClientId: getEnv("VITE_THUNDER_CLIENT_ID") || "aep-console-client",
   thunderScopes: getEnv("VITE_THUNDER_SCOPES") || "openid profile email",
+  // The platform IdP's token dialect: which claims name a token's org.
+  idpKind: idpKind(),
   // The platform's test app (apps/tryit), which Try it opens an agent in; same
   // origin as aep-api's TRY_IT_CALLBACK_URL. The default is the dev cluster's.
   tryItUrl: getEnv("VITE_TRY_IT_URL") || "http://tryit.aep.localhost:8095",

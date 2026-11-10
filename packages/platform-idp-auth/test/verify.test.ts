@@ -49,20 +49,41 @@ async function setup() {
   };
 }
 
-test("user token resolves to kind user (RS256 and ES256)", async () => {
+const user = { grant_type: "authorization_code" };
+
+test("user token resolves to kind user (RS256 and ES256), its org read through the dialect", async () => {
   const { verify, sign } = await setup();
   for (const alg of ["RS256", "ES256"]) {
-    const t = await sign({ aud: "aep-console-client", sub: "u1", ouId: "ou-1", ouHandle: "default" }, alg);
+    const t = await sign({ ...user, aud: "aep-console-client", sub: "u1", ouId: "ou-1", ouHandle: "default" }, alg);
     const v = await verify(t, [USER]);
     assert.equal(v.kind, "user");
     assert.equal(v.claims.sub, "u1");
-    assert.equal(v.claims.ouId, "ou-1");
+    assert.deepEqual(v.claims.org, { handle: "default", id: "ou-1", name: "", handleDeclared: true });
   }
+});
+
+test("the dialect kind is a construction option; thunder is the default", async () => {
+  const rs = await generateKeyPair("RS256");
+  const jwks = createLocalJWKSet({ keys: [{ ...(await exportJWK(rs.publicKey)), kid: "rs", alg: "RS256" }] });
+  const verify = createVerifier({ issuer: ISS, jwksUrl: "http://unused", kind: "thunder", jwks });
+  const t = await new SignJWT({ ...user, aud: "aep-console-client", sub: "u1", ouHandle: "default" })
+    .setProtectedHeader({ alg: "RS256", kid: "rs" })
+    .setIssuer(ISS)
+    .setExpirationTime("1h")
+    .sign(rs.privateKey);
+  assert.equal((await verify(t, [USER])).claims.org.handle, "default");
+});
+
+test("a user-audience token that says nothing about its grant is refused", async () => {
+  const { verify, sign } = await setup();
+  const t = await sign({ aud: "aep-console-client", sub: "u1", ouId: "ou-1", ouHandle: "default" });
+  await assert.rejects(verify(t, [USER]), UnauthenticatedError);
+  await assert.rejects(verify(t, [AGENT, USER]), UnauthenticatedError);
 });
 
 test("an aud array matches when any entry is on the kind's list", async () => {
   const { verify, sign } = await setup();
-  const t = await sign({ aud: ["other", "aep-console-client"], sub: "u1" });
+  const t = await sign({ ...user, aud: ["other", "aep-console-client"], sub: "u1" });
   assert.equal((await verify(t, [USER])).kind, "user");
 });
 
@@ -72,7 +93,7 @@ test("a token matching no kind is refused", async () => {
   await assert.rejects(verify(m2m, [USER]), UnauthenticatedError);
   const pub = await sign({ aud: "aep-publisher-default", ouId: "ou-1", ouHandle: "default", grant_type: "client_credentials" });
   await assert.rejects(verify(pub, [USER]), UnauthenticatedError);
-  const noAud = await sign({ sub: "u1", ouId: "ou-1", ouHandle: "default" });
+  const noAud = await sign({ ...user, sub: "u1", ouId: "ou-1", ouHandle: "default" });
   await assert.rejects(verify(noAud, [USER]), UnauthenticatedError);
 });
 
@@ -86,16 +107,18 @@ test("client_credentials never passes as a user", async () => {
 
 test("user token with no sub is rejected", async () => {
   const { verify, sign } = await setup();
-  const none = await sign({ aud: "aep-console-client", ouId: "ou-1", ouHandle: "default" });
+  const none = await sign({ ...user, aud: "aep-console-client", ouId: "ou-1", ouHandle: "default" });
   await assert.rejects(verify(none, [USER]), UnauthenticatedError);
-  const empty = await sign({ aud: "aep-console-client", sub: "", ouId: "ou-1", ouHandle: "default" });
+  const empty = await sign({ ...user, aud: "aep-console-client", sub: "", ouId: "ou-1", ouHandle: "default" });
   await assert.rejects(verify(empty, [USER]), UnauthenticatedError);
 });
 
 test("the ae-studio kind is only its own client_credentials client", async () => {
   const { verify, sign } = await setup();
-  const notCC = await sign({ aud: "ae-studio-default", client_id: "ae-studio-default", sub: "u1", ouId: "ou-1", ouHandle: "default" });
+  const notCC = await sign({ ...user, aud: "ae-studio-default", client_id: "ae-studio-default", sub: "u1", ouId: "ou-1", ouHandle: "default" });
   await assert.rejects(verify(notCC, [AGENT]), UnauthenticatedError);
+  const noGrant = await sign({ aud: "ae-studio-default", client_id: "ae-studio-default", ouId: "ou-1", ouHandle: "default" });
+  await assert.rejects(verify(noGrant, [AGENT]), UnauthenticatedError);
   const otherClient = await sign({ aud: "ae-studio-default", client_id: "someone-else", grant_type: "client_credentials" });
   await assert.rejects(verify(otherClient, [AGENT]), UnauthenticatedError);
   const noClient = await sign({ aud: "ae-studio-default", grant_type: "client_credentials" });
@@ -106,7 +129,7 @@ test("a token without kid is refused", async () => {
   const rs = await generateKeyPair("RS256");
   const jwks = createLocalJWKSet({ keys: [{ ...(await exportJWK(rs.publicKey)), alg: "RS256" }] });
   const verify = createVerifier({ issuer: ISS, jwksUrl: "http://unused", jwks });
-  const t = await new SignJWT({ aud: "aep-console-client", sub: "u1" })
+  const t = await new SignJWT({ ...user, aud: "aep-console-client", sub: "u1" })
     .setProtectedHeader({ alg: "RS256" })
     .setIssuer(ISS)
     .setExpirationTime("1h")
@@ -124,7 +147,7 @@ test("the ae-studio kind needs its own audience", async () => {
 test("wrong issuer and expired are refused", async () => {
   const { verify, builder, rsKey } = await setup();
   await assert.rejects(verify("not-a-jwt", [USER]), UnauthenticatedError);
-  const claims = { aud: "aep-console-client", sub: "u1", ouId: "ou-1", ouHandle: "default" };
+  const claims = { ...user, aud: "aep-console-client", sub: "u1", ouId: "ou-1", ouHandle: "default" };
   const foreign = await builder(claims).setIssuer("http://evil.example").setExpirationTime("1h").sign(rsKey);
   await assert.rejects(verify(foreign, [USER]), UnauthenticatedError);
   const prefixed = await builder(claims).setIssuer(`${ISS}/`).setExpirationTime("1h").sign(rsKey);

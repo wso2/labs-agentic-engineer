@@ -168,6 +168,7 @@ export async function startPodListeners(cfg: PodConfig, deps: PodListenerDeps): 
     authenticate: idpAuthenticate({
       issuer: cfg.issuer,
       jwksUrl: cfg.jwksUrl,
+      kind: cfg.idpKind,
       userAudiences: cfg.userAudiences,
       orgId: cfg.orgId,
       orgHandle: cfg.orgHandle,

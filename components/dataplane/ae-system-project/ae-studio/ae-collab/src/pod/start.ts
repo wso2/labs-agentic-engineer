@@ -54,7 +54,7 @@ export function startPod(cfg: PodConfig, deps: PodDeps = {}): Promise<PodListene
   const log = deps.log ?? stdoutLog;
   // Built before anything binds: a wiring error (empty issuer, JWKS URL or
   // org) fails the start instead of every request.
-  const verify: Verify = deps.verify ?? createVerifier({ issuer: cfg.issuer, jwksUrl: cfg.jwksUrl });
+  const verify: Verify = deps.verify ?? createVerifier({ issuer: cfg.issuer, jwksUrl: cfg.jwksUrl, kind: cfg.idpKind });
   const files = createFilesClient(cfg.filesSocket);
   const expiry = createExpiryGuard(deps.clock ?? systemClock, (connection) =>
     log({ msg: "room_token_expired", source: "ae-collab", listener: connection.context.listener }),

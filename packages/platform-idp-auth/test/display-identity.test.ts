@@ -25,7 +25,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { displayIdentity } from "../src/index.js";
 
-const base = { sub: "user-123", exp: 1 };
+const base = { sub: "user-123", exp: 1, org: { handle: "acme", id: "ou-1", name: "", handleDeclared: true } };
 
 test("displayIdentity: an explicit name claim wins", () => {
   assert.deepEqual(displayIdentity({ ...base, name: "Ada Lovelace", email: "ada@x.io", given_name: "A" }), {

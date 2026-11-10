@@ -56,6 +56,28 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 }
 
+// AE_IDP_KIND names the platform IdP's token dialect. Unset is thunder; a
+// kind this build does not know is named in the boot error like any other
+// bad key, never read as thunder.
+func TestLoad_IDPKind(t *testing.T) {
+	c, err := Load(env(base()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.IDPKind != "thunder" {
+		t.Fatalf("default kind = %q, want thunder", c.IDPKind)
+	}
+	m := base()
+	m["AE_IDP_KIND"] = "thunder"
+	if c, err := Load(env(m)); err != nil || c.IDPKind != "thunder" {
+		t.Fatalf("explicit thunder: %v / %q", err, c.IDPKind)
+	}
+	m["AE_IDP_KIND"] = "asgardeo"
+	if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), "AE_IDP_KIND") {
+		t.Fatalf("unknown kind: err = %v, want it named", err)
+	}
+}
+
 func TestLoad_PortOverrides(t *testing.T) {
 	m := base()
 	m["AE_LISTEN_PORT"], m["AE_HEALTH_PORT"] = "18082", "19082"

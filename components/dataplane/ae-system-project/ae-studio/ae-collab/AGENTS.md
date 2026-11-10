@@ -89,7 +89,8 @@ Pod mode (all required once `AE_ORG_ID` is set, except the ports):
 `AE_ORG_ID`, `AE_ORG_HANDLE`, `AE_IDP_ISSUER`, `AE_IDP_JWKS_URL`,
 `AE_USER_AUDIENCES` (comma list), `AE_ALLOWED_ORIGINS` (comma list of bare
 origins), `AE_FILES_SOCKET`, `AE_ROOM_SOCKET`, `AE_LISTEN_PORT` (8081),
-`AE_HEALTH_PORT` (9081); ports 1-65535. Dev mode reads `COLLAB_DEV`, the two
+`AE_HEALTH_PORT` (9081); ports 1-65535. Optional: `AE_IDP_KIND`, the platform
+IdP's token dialect (`thunder` when unset; an unknown kind fails the boot). Dev mode reads `COLLAB_DEV`, the two
 ports, an optional `AE_ALLOWED_ORIGINS` and an optional `AE_ROOM_SOCKET`
 (default `<tmpdir>/ae-collab-room.sock`).
 

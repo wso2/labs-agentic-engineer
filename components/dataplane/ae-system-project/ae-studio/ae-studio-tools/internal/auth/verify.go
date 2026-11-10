@@ -17,8 +17,9 @@
 // Package auth is ae-studio-tools' own JWT check: exact iss, aud per
 // token kind, and the org rule. It produces the two gates: UserGate
 // for /v1/* (Platform IdP user JWT of the pod's org) and M2MGate for
-// /internal/v1/* (the AE-only client_credentials client, impersonating the
-// pod's org).
+// /internal/v1/* (the AE-only machine client, impersonating the pod's org).
+// The IdP's own claims (who the org is, whether a token is a machine's) are
+// read through the platform IdP's token dialect (the dialect package).
 package auth
 
 import (
@@ -33,6 +34,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/wso2/aep/ae-studio-tools/internal/auth/dialect"
 	"github.com/wso2/aep/ae-studio-tools/internal/problem"
 )
 
@@ -49,46 +51,53 @@ var (
 )
 
 const (
-	grantClientCredentials = "client_credentials"
-	impersonateOrgHeader   = "X-Impersonate-Org"
-	bearerChallenge        = `Bearer realm="ae-studio-tools"`
-	clockLeeway            = 5 * time.Second
+	impersonateOrgHeader = "X-Impersonate-Org"
+	bearerChallenge      = `Bearer realm="ae-studio-tools"`
+	clockLeeway          = 5 * time.Second
 	// idpRetryAfter is the Retry-After (seconds) on idp_unavailable.
 	idpRetryAfter = "5"
 )
 
-// Claims is the part of a verified token the gates and handlers read.
+// Claims is the part of a verified token the gates and handlers read. Org
+// and Machine are the dialect's reading of the IdP's own claims; MachineKnown
+// is false when the token says nothing about being a user's or a machine's,
+// and every gate refuses such a token rather than guess.
 type Claims struct {
-	Sub, ClientID, GrantType, OuID, OuHandle string
-	Audience                                 []string
+	Sub, ClientID string
+	Org           dialect.Org
+	Machine       bool
+	MachineKnown  bool
+	Audience      []string
 }
 
-// tokenClaims is the wire shape of a Thunder access token.
+// tokenClaims is the wire shape of a platform IdP access token: the
+// dialect's claims by their wire names beside the ones every IdP shares.
 type tokenClaims struct {
-	ClientID  string `json:"client_id"`
-	GrantType string `json:"grant_type"`
-	OuID      string `json:"ouId"`
-	OuHandle  string `json:"ouHandle"`
+	dialect.Raw
+	ClientID string `json:"client_id"`
 	jwt.RegisteredClaims
 }
 
 // Verifier checks a token's signature against the IdP's JWKS, its exact
-// issuer, its expiry and its audience.
+// issuer, its expiry and its audience, and reads its org and token type
+// through the IdP's dialect.
 type Verifier struct {
-	jwks   *JWKSCache
-	parser *jwt.Parser
+	jwks    *JWKSCache
+	parser  *jwt.Parser
+	dialect dialect.Dialect
 }
 
 // NewVerifier returns a verifier that accepts only RS256 tokens issued by
-// exactly issuer, signed by a key in jwks, and carrying an exp claim. An
-// empty issuer would switch jwt's issuer check off, so it panics, as does a
-// nil jwks: both are wiring errors, never runtime input.
-func NewVerifier(issuer string, jwks *JWKSCache) *Verifier {
+// exactly issuer, signed by a key in jwks, and carrying an exp claim, and
+// reads them by d. An empty issuer would switch jwt's issuer check off, so
+// it panics, as does a nil jwks: both are wiring errors, never runtime input.
+func NewVerifier(issuer string, jwks *JWKSCache, d dialect.Dialect) *Verifier {
 	if issuer == "" || jwks == nil {
 		panic("auth.NewVerifier: issuer and jwks are required")
 	}
 	return &Verifier{
-		jwks: jwks,
+		jwks:    jwks,
+		dialect: d,
 		parser: jwt.NewParser(
 			jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Alg()}),
 			jwt.WithIssuer(issuer),
@@ -112,9 +121,11 @@ func (v *Verifier) Verify(raw string, audiences []string) (*Claims, error) {
 	if !slices.ContainsFunc(tc.Audience, func(a string) bool { return slices.Contains(audiences, a) }) {
 		return nil, fmt.Errorf("%w: audience not accepted", ErrUnauthenticated)
 	}
+	machine, merr := v.dialect.Machine(tc.Raw)
 	return &Claims{
-		Sub: tc.Subject, ClientID: tc.ClientID, GrantType: tc.GrantType,
-		OuID: tc.OuID, OuHandle: tc.OuHandle, Audience: tc.Audience,
+		Sub: tc.Subject, ClientID: tc.ClientID,
+		Org: v.dialect.Org(tc.Raw), Machine: machine, MachineKnown: merr == nil,
+		Audience: tc.Audience,
 	}, nil
 }
 
@@ -128,9 +139,10 @@ func (v *Verifier) keyFor(tok *jwt.Token) (any, error) {
 
 type claimsCtxKey struct{}
 
-// UserGate admits a Platform IdP user JWT for one of audiences whose org claim
-// is the pod's org (ouId and ouHandle both match). Any client_credentials token
-// is refused with 401, whatever its audience, as is a token with no sub. A
+// UserGate admits a Platform IdP user JWT for one of audiences whose org is
+// the pod's org: the dialect's org id and its declared handle both match. A
+// machine token is refused with 401, whatever its audience, as is a token the
+// dialect cannot place as a user's or a machine's, and one with no sub. A
 // user of another org gets 403. An IdP whose keys cannot be fetched is 503
 // idp_unavailable: the console retries instead of sending the user to sign in.
 // The verified *Claims ride on the request context. It panics on a nil
@@ -147,11 +159,11 @@ func UserGate(v *Verifier, audiences []string, orgID, orgHandle string) func(htt
 				writeIdPUnavailable(w, "user")
 				return
 			}
-			if err != nil || c.GrantType == grantClientCredentials || c.Sub == "" {
+			if err != nil || !c.MachineKnown || c.Machine || c.Sub == "" {
 				writeUnauthenticated(w)
 				return
 			}
-			if c.OuID != orgID || c.OuHandle != orgHandle {
+			if c.Org.ID != orgID || !c.Org.HandleDeclared || c.Org.Handle != orgHandle {
 				writeOrgMismatch(w)
 				return
 			}
@@ -160,8 +172,8 @@ func UserGate(v *Verifier, audiences []string, orgID, orgHandle string) func(htt
 	}
 }
 
-// M2MGate admits only the pinned AE-only client: a client_credentials token
-// whose aud and client_id are clientID and which carries no org claim.
+// M2MGate admits only the pinned AE-only client: a machine token (by the
+// dialect) whose aud and client_id are clientID and which carries no org id.
 // Anything else is 401, except an IdP whose keys cannot be fetched: 503
 // idp_unavailable, so aep-api retries rather than reading a credential fault.
 // The X-Impersonate-Org header must then name the pod's org, else 403. It panics on a nil verifier or an empty clientID or orgID:
@@ -178,7 +190,7 @@ func M2MGate(v *Verifier, clientID, orgID string) func(http.Handler) http.Handle
 				writeIdPUnavailable(w, "m2m")
 				return
 			}
-			if err != nil || c.ClientID != clientID || c.GrantType != grantClientCredentials || c.OuID != "" {
+			if err != nil || c.ClientID != clientID || !c.MachineKnown || !c.Machine || c.Org.ID != "" {
 				writeUnauthenticated(w)
 				return
 			}

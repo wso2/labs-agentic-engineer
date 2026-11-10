@@ -25,17 +25,19 @@ export interface PodOrg {
 }
 
 /**
- * The org rule: a verified token belongs to the pod when its `ouId`
- * and `ouHandle` both equal the pod's org. It reads no other claim, so it
- * serves every token kind, the `ae-studio-<org>` client token included. The
- * org claim is the only input; this is the one TS place PR #778's scope
- * branch lands. An empty pod org throws: it is a wiring error that could
- * match a token with empty org claims.
+ * The org rule: a verified token belongs to the pod when the org the dialect
+ * read from it has the pod's id and its declared handle (a handle filled
+ * from a fallback claim does not count). It reads nothing else, so it serves
+ * every token kind, the `ae-studio-<org>` client token included. The org is
+ * the only input; this is the one TS place PR #778's scope branch lands. An
+ * empty pod org throws: it is a wiring error that could match a token with
+ * empty org claims.
  */
 export function orgRule(claims: PlatformClaims, pod: PodOrg): boolean {
   if (!pod.orgId) throw new Error("orgRule: pod orgId is required");
   if (!pod.orgHandle) throw new Error("orgRule: pod orgHandle is required");
-  return claims.ouId === pod.orgId && claims.ouHandle === pod.orgHandle;
+  const { org } = claims;
+  return org.id === pod.orgId && org.handleDeclared && org.handle === pod.orgHandle;
 }
 
 /**
