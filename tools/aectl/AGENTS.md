@@ -31,6 +31,12 @@ via `PersistentPreRunE`. Sensitive values (Thunder admin secret) come from the E
 `aeStudio.*` values from it (`sre install` flips `sreAgent.*` through an
 in-process `platform update`).
 
+`idp.kind` selects the platform IdP: `thunder` (the default) or `asgardeo`.
+A key in `keyRegistry` (`internal/config/config.go`) can belong to one kind
+(`idpKind`). The four `thunder.*` keys are required for `thunder` and are not
+read for `asgardeo`. `idp.issuer` and `idp.org_handle` are required for
+`asgardeo` and are refused for `thunder` (`exclusive`).
+
 ## Thunder clients and seeds
 
 - `aepThunderClients` (`cmd/thunder_cli.go`) is the canonical client list; each
@@ -47,7 +53,8 @@ in-process `platform update`).
   or `https`/`https`/`:19443`); `consoleOrigins` is `[console public URL,
   http://localhost:8090]`.
 - `discoverPlatformIDP` (`cmd/platform_idp.go`) reads the platform IdP's
-  endpoints from `<thunder.public_url>/.well-known/openid-configuration`.
+  endpoints from `<issuer>/.well-known/openid-configuration`. The issuer is
+  `thunder.public_url`, or `idp.issuer` for `asgardeo`.
   `platform install`, `platform update` and `sre install` each fetch the
   document once, from the operator's machine. `platform install` fetches it
   before it changes anything in the cluster. If the document cannot be
@@ -73,3 +80,35 @@ in-process `platform update`).
   `ae_studio.webhook_relay.enabled` (or the legacy `webhook.local_smee.enabled`
   while the new key is unset) (`cmd/webhook_relay.go`). `aep/agents-jwt-secret`, `aep/task-signing-key`,
   `aep/webhook-secret` and `aep/openbao-token` are no longer seeded or required.
+
+## Asgardeo as the platform IdP
+
+With `idp.kind: asgardeo` the platform IdP is an Asgardeo organization, and
+`aectl` administers nothing on it. `onAsgardeo` (`cmd/platform_idp.go`)
+reads the kind from config. What differs from the sections above:
+
+- **Secrets.** `aectl` generates no client secret and asks for no admin
+  secret. The organization's admin creates the clients
+  (`deployments/scripts/ae-asgardeo-apps.sh`) and imports four secrets under
+  `aep/thunder-clients/`: `aep-api-client`, `ae-studio-internal`,
+  `org-publisher` and `org-studio` (`importedClientNames`,
+  `cmd/platform_secrets.go`). `requireImportedClientSecrets` restores a
+  secret that OpenBao lost from the cluster Secret that holds it. Then it
+  stops, with the import command, for each secret that is still missing.
+  `platform install` calls it before it writes its own inputs.
+  `install --reuse-secrets` and `platform sync-clients` call it too.
+  `platformInputPaths`, `requiredOpenBaoPaths` and `generatedClientSecrets`
+  leave out the Thunder admin credentials, `system-client-id` and the
+  Thunder client secrets.
+- **Helm values.** `platformIDPOverrides` adds `idp.orgHandle` (from
+  `idp.org_handle`) and `idp.orgNamespace` (from `oc.default_org_namespace`).
+  The JWKS and token URLs are the public ones. `platformIDPInstallArgs` sets
+  no `thunder.adminURL`. `aeStudioExtraEgress` has no IdP rule, because the
+  pod's NetworkPolicy already allows public HTTPS.
+- **No registration.** `platform install` and `platform sync-clients` do not
+  call `doThunderSetup`.
+- **Environment Thunders.** `envIDPPlatformTrust` gives `envidp` no platform
+  IdP to trust. Only Agent Manager uses that trust, and Agent Manager
+  installs on a Thunder platform only.
+- **`sre install`** refuses (`sreIDPSupported`, `cmd/sre.go`). It registers
+  OpenChoreo's observer and RCA clients on the platform IdP.

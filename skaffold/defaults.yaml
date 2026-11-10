@@ -167,9 +167,23 @@ thunder:
   public_url: "http://thunder.openchoreo.localhost:8080"
 
 idp:
-  # The platform IdP's token dialect: the claim names and rules every reader
-  # of its tokens uses to say who the caller is (aep-api, the AE Studio pod,
-  # the console). `thunder` is the one kind this build knows; unset means it.
-  # The IdP's endpoints are not configured: `aectl` reads them from
-  # <thunder.public_url>/.well-known/openid-configuration at install and update.
+  # Which platform IdP the install uses: `thunder` (the in-cluster ThunderID
+  # of the thunder: block above, which aectl administers; unset means it) or
+  # `asgardeo` (an Asgardeo organization, on which aectl administers nothing).
+  # It is also the token dialect: the claim names and rules every reader of
+  # the IdP's tokens uses to say who the caller is (aep-api, the AE Studio
+  # pod, the console). The IdP's endpoints are not configured: `aectl` reads
+  # them from <issuer>/.well-known/openid-configuration at install and update,
+  # where the issuer is thunder.public_url, or idp.issuer on Asgardeo.
   kind: "thunder"
+  # Asgardeo only, both required there and refused under thunder; the four
+  # thunder.* keys above are then not read and may be left out.
+  #   issuer:     the organization's issuer,
+  #               https://api.asgardeo.io/t/<handle>/oauth2/token
+  #   org_handle: the organization's handle. Its tokens name the one org by
+  #               it; aep-api maps it to oc.default_org_namespace.
+  # The organization's admin first creates AE's applications with
+  # deployments/scripts/ae-asgardeo-apps.sh and imports their four secrets;
+  # see "Install with Asgardeo as the platform IdP" in deployments/README.md.
+  # issuer: ""
+  # org_handle: ""

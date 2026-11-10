@@ -330,6 +330,69 @@ it are genuinely still load-bearing and the risk of deleting the wrong file
 (breaking CI or the release pipeline) outweighed doing it in the same pass as
 the Compose-chain removal.
 
+## Install with Asgardeo as the platform IdP
+
+`idp.kind: asgardeo` makes an Asgardeo organization the platform IdP, in
+place of the in-cluster ThunderID. AE holds no management rights on the
+organization, so its admin prepares it first and `aectl` administers nothing
+on it. It serves one org.
+
+1. **Create the applications.** The organization's admin runs
+   `deployments/scripts/ae-asgardeo-apps.sh` (its header is the manual) with
+   an M2M application of their own that is authorized for the Application
+   Management API. It creates the console's browser client and four M2M
+   clients, and writes one file per M2M secret.
+2. **Import the four secrets** into the install's vault, one per file:
+
+   ```bash
+   aectl platform secret import --path aep/thunder-clients/aep-api-client     --value-file <dir>/aep-api-client
+   aectl platform secret import --path aep/thunder-clients/ae-studio-internal --value-file <dir>/ae-studio-internal
+   aectl platform secret import --path aep/thunder-clients/org-publisher      --value-file <dir>/org-publisher
+   aectl platform secret import --path aep/thunder-clients/org-studio         --value-file <dir>/org-studio
+   ```
+
+3. **Set the config** and import it. The `thunder.*` keys are not read and
+   may be left out:
+
+   ```yaml
+   idp:
+     kind: "asgardeo"
+     issuer: "https://api.asgardeo.io/t/<handle>/oauth2/token"
+     org_handle: "<handle>"
+   oc:
+     default_org_namespace: "<the org's namespace>"   # the script's AE_ORG_NAMESPACE
+   ```
+
+4. **Install** with `aectl platform install` as usual.
+
+What differs from a Thunder install:
+
+- `aectl` asks for no admin secret, generates no client secret and registers
+  no client. Before Helm runs it requires the four imported paths and stops,
+  naming the missing ones, if any is absent. One the local OpenBao lost is
+  restored from the cluster Secret ESO last synced it into, like every other
+  key. `platform sync-clients` does the same check and registers nothing.
+- The chart renders no Thunder admin credentials (`aep-thunder-admin-creds`),
+  no Thunder admin env on aep-api and no CORS policy on Thunder's route; of
+  `aep-thunder-secrets` only `AEP_API_CLIENT_SECRET` remains.
+- aep-api maps the organization's handle in a token to the org's namespace,
+  and serves the org's two pre-created clients instead of creating them
+  (`services/aep-api/internal/platform/auth/README.md`,
+  `services/aep-api/internal/organization/README.md`).
+- The AE Studio pod reaches the IdP at its public address: no IdP namespace
+  is opened in its egress, since its NetworkPolicy already allows public
+  HTTPS.
+- The environment ThunderIDs (the generated apps' own IdPs) stay ThunderID
+  and are not told to trust the platform IdP: that trust serves Agent
+  Manager, which installs on a Thunder platform only.
+- `aectl sre install` refuses: it registers OpenChoreo's observer and RCA
+  clients on the platform IdP.
+
+OpenChoreo itself must trust the same organization (its `security.oidc`
+issuer and key set), and its own clients are the cluster owner's to create.
+The chart's `aep-api-client-binding` grants aep-api's client by its
+`client_id` claim, which Asgardeo sets to the client id.
+
 ## Credentials
 
 `aectl platform install` registers AEP's OAuth clients in Thunder itself (see

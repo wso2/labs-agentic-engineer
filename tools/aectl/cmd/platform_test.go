@@ -460,7 +460,7 @@ func TestAEStudioOverrides_WebhookRelaySwitch(t *testing.T) {
 // the paths whose absence means a wiped store: an install that predates the
 // relay is not "wiped".
 func TestWebhookRelaySeed_GeneratedNotRequired(t *testing.T) {
-	if slices.Contains(requiredOpenBaoPaths, webhookRelaySeedPath) {
+	if slices.Contains(requiredOpenBaoPaths(), webhookRelaySeedPath) {
 		t.Error("aep/webhook-relay-seed must not be in requiredOpenBaoPaths")
 	}
 	seed, err := webhookRelaySeed()
@@ -514,7 +514,7 @@ func TestReuseSecrets_TopsUpTheRelaySeed(t *testing.T) {
 // aep/task-signing-key: a store without it is not "wiped", which keeps an
 // existing install's --reuse-secrets working either way.
 func TestTaskSigningKey_NotRequired(t *testing.T) {
-	if slices.Contains(requiredOpenBaoPaths, "aep/task-signing-key") {
+	if slices.Contains(requiredOpenBaoPaths(), "aep/task-signing-key") {
 		t.Error("aep/task-signing-key must not be in requiredOpenBaoPaths")
 	}
 }
@@ -523,7 +523,7 @@ func TestTaskSigningKey_NotRequired(t *testing.T) {
 // no longer seeds or requires a static aep/openbao-token: a store without it
 // is not "wiped", and a store that still has it fails nothing.
 func TestOpenBaoToken_NotRequired(t *testing.T) {
-	if slices.Contains(requiredOpenBaoPaths, "aep/openbao-token") {
+	if slices.Contains(requiredOpenBaoPaths(), "aep/openbao-token") {
 		t.Error("aep/openbao-token must not be in requiredOpenBaoPaths")
 	}
 }

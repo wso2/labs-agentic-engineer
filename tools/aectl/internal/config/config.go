@@ -50,6 +50,8 @@ var ConfigMapKeys = []string{
 	"thunder.admin_client_id",
 	"thunder.public_url",
 	"idp.kind",
+	"idp.issuer",
+	"idp.org_handle",
 	"console.public_url",
 	"tryit.public_url",
 	"oc.api_url",
@@ -77,25 +79,51 @@ const (
 	kindString keyKind = iota
 	kindBool
 	kindURL
+	// kindHTTPSURL is an absolute URL whose scheme must be https.
+	kindHTTPSURL
 	kindEnum
+)
+
+// The platform IdP kinds (idp.kind). IDPKindThunder is the in-cluster
+// ThunderID aectl administers; IDPKindAsgardeo is an Asgardeo organization
+// aectl administers nothing on.
+const (
+	IDPKindThunder  = "thunder"
+	IDPKindAsgardeo = "asgardeo"
 )
 
 type configKeyMeta struct {
 	required   bool
 	kind       keyKind
 	enumValues []string // only for kindEnum
+	// idpKind ties the key to one platform IdP kind: it is then required
+	// under that kind (whatever required says) and not required under
+	// another. exclusive also refuses a value under another kind, for a key
+	// nothing reads there.
+	idpKind   string
+	exclusive bool
 }
 
 // keyRegistry maps each ConfigMapKey to its validation metadata.
 var keyRegistry = map[string]configKeyMeta{
-	"thunder.namespace":       {required: true, kind: kindString},
-	"thunder.url":             {required: true, kind: kindURL},
-	"thunder.admin_client_id": {required: true, kind: kindString},
-	"thunder.public_url":      {required: true, kind: kindURL},
-	// The platform IdP's token dialect: the claim names and rules every reader
-	// of its tokens uses (aep-api, the AE Studio pod, the console). Optional;
-	// unset is thunder, the one kind this build knows.
-	"idp.kind": {required: false, kind: kindEnum, enumValues: []string{"thunder"}},
+	// The in-cluster ThunderID aectl administers. Required when it is the
+	// platform IdP (idp.kind thunder or unset); an Asgardeo install has no
+	// in-cluster IdP and reads none of them.
+	"thunder.namespace":       {idpKind: IDPKindThunder, kind: kindString},
+	"thunder.url":             {idpKind: IDPKindThunder, kind: kindURL},
+	"thunder.admin_client_id": {idpKind: IDPKindThunder, kind: kindString},
+	"thunder.public_url":      {idpKind: IDPKindThunder, kind: kindURL},
+	// Which platform IdP the install uses, and so the token dialect (the
+	// claim names and rules every reader of its tokens uses: aep-api, the AE
+	// Studio pod, the console). Optional; unset is thunder.
+	"idp.kind": {required: false, kind: kindEnum, enumValues: []string{IDPKindThunder, IDPKindAsgardeo}},
+	// Asgardeo only, both required there. idp.issuer is the organization's
+	// issuer (https://api.asgardeo.io/t/<handle>/oauth2/token): the iss of
+	// every token, and where the discovery document is read. idp.org_handle
+	// is the organization's handle, which its tokens name the one org by and
+	// aep-api maps to oc.default_org_namespace.
+	"idp.issuer":     {idpKind: IDPKindAsgardeo, exclusive: true, kind: kindHTTPSURL},
+	"idp.org_handle": {idpKind: IDPKindAsgardeo, exclusive: true, kind: kindString},
 	// The platform's three browser-facing origins. All optional: each is bound
 	// to a flag carrying the local default, so a file that omits them installs
 	// the same cluster it always did. Set them together — re-domaining one and
@@ -208,16 +236,39 @@ func ValidateLoaded() []string {
 	return validateViper(viper.GetViper())
 }
 
+// idpKindOf is the platform IdP kind v names: idp.kind, thunder when unset.
+// An unknown value is returned as it is; the enum check reports it, and the
+// keys tied to a kind are then all "another kind's".
+func idpKindOf(v *viper.Viper) string {
+	if k := v.GetString("idp.kind"); k != "" {
+		return k
+	}
+	return IDPKindThunder
+}
+
 func validateViper(v *viper.Viper) []string {
 	var errs []string
+	idpKind := idpKindOf(v)
 	for _, k := range ConfigMapKeys {
 		meta, ok := keyRegistry[k]
 		if !ok {
 			continue
 		}
 		val := v.GetString(k)
-		if meta.required && val == "" {
-			errs = append(errs, fmt.Sprintf("%s: required but not set", k))
+		required := meta.required
+		if meta.idpKind != "" {
+			required = meta.idpKind == idpKind
+			if !required && meta.exclusive && val != "" {
+				errs = append(errs, fmt.Sprintf("%s: read only when idp.kind is %s; unset it", k, meta.idpKind))
+				continue
+			}
+		}
+		if required && val == "" {
+			if meta.idpKind != "" {
+				errs = append(errs, fmt.Sprintf("%s: required when idp.kind is %s but not set", k, meta.idpKind))
+			} else {
+				errs = append(errs, fmt.Sprintf("%s: required but not set", k))
+			}
 			continue
 		}
 		if val == "" {
@@ -232,6 +283,11 @@ func validateViper(v *viper.Viper) []string {
 			parsed, err := url.ParseRequestURI(val)
 			if err != nil || parsed.Host == "" {
 				errs = append(errs, fmt.Sprintf("%s: not a valid absolute URL (must include scheme and host): %q", k, val))
+			}
+		case kindHTTPSURL:
+			parsed, err := url.ParseRequestURI(val)
+			if err != nil || parsed.Host == "" || parsed.Scheme != "https" {
+				errs = append(errs, fmt.Sprintf("%s: not a valid https URL (must be https:// with a host): %q", k, val))
 			}
 		case kindEnum:
 			valid := false

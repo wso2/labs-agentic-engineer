@@ -190,6 +190,9 @@ spec:
                   key: PLATFORM_IDP_ORG_STUDIO_SECRET
                   optional: true
             {{- end }}
+            {{- /* Thunder's admin client: creating an org's clients and
+            checking an org unit. aep-api builds it only for kind thunder. */}}
+            {{- if ne (default "thunder" .Values.idp.kind) "asgardeo" }}
 
             - name: THUNDER_ADMIN_URL
               valueFrom:
@@ -200,6 +203,7 @@ spec:
               value: "aep-system-client"
             - name: THUNDER_SYSTEM_RESOURCE_IDENTIFIER
               value: {{ .Values.thunder.systemResourceIdentifier | default (printf "%s/mcp" .Values.console.thunderPublicURL) | quote }}
+            {{- end }}
             - name: AGENT_PLATFORM_URL
               value: "http://aep-api.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.aepApi.port }}"
             # The Claude Code runner image, used by both task kinds.
@@ -353,11 +357,13 @@ spec:
               value: aep-api
             {{- end }}
             # secrets — all values sourced from ESO-synced K8s Secrets (written by aep init)
+            {{- if ne (default "thunder" .Values.idp.kind) "asgardeo" }}
             - name: THUNDER_SYSTEM_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: aep-thunder-secrets
                   key: THUNDER_SYSTEM_CLIENT_SECRET
+            {{- end }}
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
