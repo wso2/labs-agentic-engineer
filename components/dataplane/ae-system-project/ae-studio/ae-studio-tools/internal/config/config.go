@@ -24,6 +24,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/wso2/aep/ae-studio-tools/internal/auth/dialect"
 )
 
 // Config is what ae-studio-tools reads from its pod env (ADR-0045). Each
@@ -31,10 +33,13 @@ import (
 type Config struct {
 	OrgID, OrgHandle      string
 	IDPIssuer, IDPJWKSURL string
-	UserAudiences         []string
-	M2MClientID           string
-	GitHubPAT             string
-	WebhookSecret         string
+	// IDPKind names the platform IdP's token dialect (AE_IDP_KIND; optional,
+	// thunder when unset), which the verifier reads the token's org and type by.
+	IDPKind       dialect.Kind
+	UserAudiences []string
+	M2MClientID   string
+	GitHubPAT     string
+	WebhookSecret string
 	// WebhookURL (AE_WEBHOOK_URL) is where the repo hooks this pod registers
 	// deliver; WebhookSecret signs them.
 	WebhookURL             string
@@ -161,6 +166,13 @@ func Load(getenv func(string) string) (Config, error) {
 	if len(c.UserAudiences) == 0 {
 		problems = append(problems, "missing AE_USER_AUDIENCES")
 	}
+	// Optional: empty is thunder. A kind this build does not know is a boot
+	// error, never a fall-through to another kind's rules.
+	kind, err := dialect.ParseKind(getenv("AE_IDP_KIND"))
+	if err != nil {
+		problems = append(problems, "invalid AE_IDP_KIND")
+	}
+	c.IDPKind = kind
 	if len(problems) > 0 {
 		return Config{}, fmt.Errorf("ae-studio-tools env: %s", strings.Join(problems, ", "))
 	}

@@ -22,31 +22,36 @@ import { orgRule, userRule } from "../src/index.js";
 
 const pod = { orgId: "ou-1", orgHandle: "default" };
 
-test("userRule: both claims must equal the pod's", () => {
-  assert.equal(userRule({ sub: "u", exp: 1, ouId: "ou-1", ouHandle: "default" }, pod), true);
-  assert.equal(userRule({ sub: "u", exp: 1, ouId: "ou-2", ouHandle: "default" }, pod), false);
-  assert.equal(userRule({ sub: "u", exp: 1, ouId: "ou-1", ouHandle: "other" }, pod), false);
-  assert.equal(userRule({ sub: "u", exp: 1, ouId: "ou-1" }, pod), false);
-  assert.equal(userRule({ sub: "u", exp: 1, ouHandle: "default" }, pod), false);
-  assert.equal(userRule({ sub: "u", exp: 1 }, pod), false);
+/** An org as the dialect reads it; `declared` false means the handle came from a fallback claim. */
+const org = (id: string, handle: string, declared = true) => ({ id, handle, name: "", handleDeclared: declared });
+
+test("userRule: the org's id and its declared handle must both equal the pod's", () => {
+  assert.equal(userRule({ sub: "u", exp: 1, org: org("ou-1", "default") }, pod), true);
+  assert.equal(userRule({ sub: "u", exp: 1, org: org("ou-2", "default") }, pod), false);
+  assert.equal(userRule({ sub: "u", exp: 1, org: org("ou-1", "other") }, pod), false);
+  assert.equal(userRule({ sub: "u", exp: 1, org: org("ou-1", "") }, pod), false);
+  assert.equal(userRule({ sub: "u", exp: 1, org: org("", "default") }, pod), false);
+  // The handle filled in from a name or id is not a declared handle: the
+  // fallback serves aep-api's user edge for legacy tokens, never the pod.
+  assert.equal(userRule({ sub: "u", exp: 1, org: org("ou-1", "default", false) }, pod), false);
 });
 
 test("userRule: an empty pod org fails closed", () => {
-  const claims = { sub: "u", exp: 1, ouId: "", ouHandle: "" };
+  const claims = { sub: "u", exp: 1, org: org("", "", false) };
   assert.throws(() => userRule(claims, { orgId: "", orgHandle: "default" }), /orgId/);
   assert.throws(() => userRule(claims, { orgId: "ou-1", orgHandle: "" }), /orgHandle/);
 });
 
 test("orgRule: the org check alone, for any verified token kind", () => {
-  // An ae-studio client token carries no sub; the org claims still decide.
-  assert.equal(orgRule({ exp: 1, ouId: "ou-1", ouHandle: "default" }, pod), true);
-  assert.equal(orgRule({ exp: 1, ouId: "ou-2", ouHandle: "default" }, pod), false);
-  assert.equal(orgRule({ exp: 1, ouId: "ou-1", ouHandle: "other" }, pod), false);
-  assert.equal(orgRule({ exp: 1 }, pod), false);
-  assert.throws(() => orgRule({ exp: 1, ouId: "", ouHandle: "" }, { orgId: "", orgHandle: "default" }), /orgId/);
-  assert.throws(() => orgRule({ exp: 1, ouId: "", ouHandle: "" }, { orgId: "ou-1", orgHandle: "" }), /orgHandle/);
+  // No sub, as an ae-studio client token may be.
+  assert.equal(orgRule({ exp: 1, org: org("ou-1", "default") }, pod), true);
+  assert.equal(orgRule({ exp: 1, org: org("ou-2", "default") }, pod), false);
+  assert.equal(orgRule({ exp: 1, org: org("ou-1", "other") }, pod), false);
+  assert.equal(orgRule({ exp: 1, org: org("ou-1", "default", false) }, pod), false);
+  assert.throws(() => orgRule({ exp: 1, org: org("", "", false) }, { orgId: "", orgHandle: "default" }), /orgId/);
+  assert.throws(() => orgRule({ exp: 1, org: org("", "", false) }, { orgId: "ou-1", orgHandle: "" }), /orgHandle/);
 });
 
 test("userRule: the org rule plus a subject", () => {
-  assert.equal(userRule({ sub: "", exp: 1, ouId: "ou-1", ouHandle: "default" }, pod), false);
+  assert.equal(userRule({ sub: "", exp: 1, org: org("ou-1", "default") }, pod), false);
 });

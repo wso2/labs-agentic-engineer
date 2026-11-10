@@ -50,11 +50,14 @@ export async function testKeys(): Promise<TestKeys> {
       .setExpirationTime("1h")
       .sign(privateKey);
   const cc = { grant_type: "client_credentials" };
+  // A real ThunderID user token says its grant; a token without one is
+  // refused by every gate.
+  const user = { grant_type: "authorization_code" };
   return {
     issuer: ISSUER,
     jwks,
-    user: (ouHandle, ouId) => sign({ aud: USER_AUDIENCE, sub: `user-${ouHandle}`, ouId, ouHandle }),
-    userWith: (claims) => sign({ aud: USER_AUDIENCE, sub: `user-${claims.ouHandle}`, ...claims }),
+    user: (ouHandle, ouId) => sign({ ...user, aud: USER_AUDIENCE, sub: `user-${ouHandle}`, ouId, ouHandle }),
+    userWith: (claims) => sign({ ...user, aud: USER_AUDIENCE, sub: `user-${claims.ouHandle}`, ...claims }),
     m2m: (client = "publisher") =>
       client === "publisher"
         ? sign({ ...cc, aud: "aep-publisher-default", client_id: "aep-publisher-default", ouId: "ou-1", ouHandle: "default" })

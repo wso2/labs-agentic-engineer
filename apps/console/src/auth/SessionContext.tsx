@@ -28,7 +28,7 @@ export interface Session {
    * teammate's. `""` when the token carries none.
    */
   user: { id: string; name: string; email: string; role?: string };
-  /** Active org, resolved with the BFF's precedence (ouHandle > ouName > ouId). */
+  /** Active org, read from the token by the platform IdP's token dialect (`env.idpKind`, `auth/claims.ts`). */
   orgHandle: string | null;
   signOut: () => void;
 }

@@ -69,7 +69,10 @@ test("onTokenSync: an IdP that cannot be reached closes nothing and moves no dea
 test("onTokenSync: a verified token of the same subject moves the deadline, logging no subject change", async () => {
   const armed: number[] = [];
   const lines: PodLogLine[] = [];
-  const verified: VerifiedToken = { kind: "user", claims: { sub: "u-ann", ouId: "ou-acme", ouHandle: "acme", exp: 500 } };
+  const verified: VerifiedToken = {
+    kind: "user",
+    claims: { sub: "u-ann", org: { handle: "acme", id: "ou-acme", name: "", handleDeclared: true }, exp: 500 },
+  };
   const sync = onTokenSyncFor(cfg, () => Promise.resolve(verified), { arm: (_c, exp) => armed.push(exp) }, (l) => lines.push(l));
   const context: CollabContext = {
     listener: "public",

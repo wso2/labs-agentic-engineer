@@ -29,6 +29,7 @@
 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parseDialectKind, type DialectKind } from "@aep/platform-idp-auth";
 
 /** What the listeners need, in pod and in dev mode alike. */
 export interface ListenerConfig {
@@ -48,6 +49,8 @@ export interface PodConfig extends ListenerConfig {
   orgHandle: string;
   issuer: string;
   jwksUrl: string;
+  /** `AE_IDP_KIND`: the platform IdP's token dialect (optional, thunder when unset). */
+  idpKind: DialectKind;
   userAudiences: string[];
   /** ae-studio-tools' Files socket: spec content and commits, no token. */
   filesSocket: string;
@@ -94,6 +97,14 @@ export function loadPodConfig(env: Env): PodConfig | null {
   const issuer = required("AE_IDP_ISSUER");
   const jwksUrl = required("AE_IDP_JWKS_URL");
   const userAudiences = requiredList("AE_USER_AUDIENCES");
+  // Optional: empty is thunder. A kind this build does not know is a boot
+  // error, never a fall-through to another kind's rules.
+  let idpKind: DialectKind = "thunder";
+  try {
+    idpKind = parseDialectKind(env.AE_IDP_KIND);
+  } catch {
+    problems.push("invalid AE_IDP_KIND");
+  }
   const allowedOrigins = requiredList("AE_ALLOWED_ORIGINS");
   // A listed value that is not a bare origin never equals an Origin header:
   // fail loudly instead of refusing every browser in silence.
@@ -108,6 +119,7 @@ export function loadPodConfig(env: Env): PodConfig | null {
     orgHandle,
     issuer,
     jwksUrl,
+    idpKind,
     userAudiences,
     allowedOrigins,
     filesSocket,

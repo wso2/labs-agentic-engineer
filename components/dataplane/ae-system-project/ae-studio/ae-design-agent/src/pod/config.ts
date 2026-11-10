@@ -25,11 +25,15 @@
  * apart (`shared/connection-env.ts`): the pod boots without a key.
  */
 
+import { parseDialectKind, type DialectKind } from "@aep/platform-idp-auth";
+
 export interface PodConfig {
   orgId: string;
   orgHandle: string;
   issuer: string;
   jwksUrl: string;
+  /** `AE_IDP_KIND`: the platform IdP's token dialect (optional, thunder when unset). */
+  idpKind: DialectKind;
   userAudiences: string[];
   listenPort: number;
   healthPort: number;
@@ -82,6 +86,14 @@ export function loadPodConfig(env: Env): PodConfig | null {
     .map((a) => a.trim())
     .filter((a) => a !== "");
   if (userAudiences.length === 0) problems.push("missing AE_USER_AUDIENCES");
+  // Optional: empty is thunder. A kind this build does not know is a boot
+  // error, never a fall-through to another kind's rules.
+  let idpKind: DialectKind = "thunder";
+  try {
+    idpKind = parseDialectKind(env.AE_IDP_KIND);
+  } catch {
+    problems.push("invalid AE_IDP_KIND");
+  }
   const mcpSocket = required("AE_MCP_SOCKET");
   const turnSocket = required("AE_TURN_SOCKET");
   const roomSocket = required("AE_ROOM_SOCKET");
@@ -94,6 +106,7 @@ export function loadPodConfig(env: Env): PodConfig | null {
     orgHandle,
     issuer,
     jwksUrl,
+    idpKind,
     userAudiences,
     listenPort,
     healthPort,
