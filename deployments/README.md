@@ -547,6 +547,12 @@ Never `bao kv get` a multi-field document without `-field=<name>` piped to
    | `aep/jev-api-key` (only with `aeStudio.jev.enabled`) | `aep-jev` | `AE_STUDIO_JEV_API_KEY` |
    | `aep/thunder-clients/org-publisher`, `.../org-studio` (only with `idp.kind: asgardeo`) | `aep-org-client-secrets` | `PLATFORM_IDP_ORG_PUBLISHER_SECRET`, `PLATFORM_IDP_ORG_STUDIO_SECRET`: the secrets of the org's two pre-created clients, imported by the tenant's admin |
 
+   For `idp.kind: asgardeo`, the organization's admin creates the five
+   applications and their secret files with
+   `deployments/scripts/ae-asgardeo-apps.sh` (its header is the manual), then
+   imports `aep-api-client`, `ae-studio-internal`, `org-publisher` and
+   `org-studio` with `aectl platform secret import`.
+
    The SRE handoff key is not in OpenBao: `aectl sre install` keeps it in the
    Kubernetes Secrets `sre-handoff` (`wso2-aep`) and `sre-agent-aep` (the
    observability plane), so a wipe leaves it alone.
