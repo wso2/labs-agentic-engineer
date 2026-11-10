@@ -102,7 +102,7 @@ func TestTenantGate_DenyByDefault(t *testing.T) {
 	})
 
 	t.Run("token org → bound into handler ctx", func(t *testing.T) {
-		ctx := auth.WithClaims(context.Background(), &auth.Claims{OuHandle: "acme"})
+		ctx := auth.WithClaims(context.Background(), &auth.Claims{OrgHandle: "acme"})
 		if _, err := tenantGate(next, "ListProjects")(ctx, nil, req, nil); err != nil {
 			t.Fatalf("authed call: %v", err)
 		}

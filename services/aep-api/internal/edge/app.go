@@ -26,6 +26,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/dependencies/mcpdiscovery"
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
+	"github.com/wso2/aep/aep-api/internal/platform/auth/dialect"
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 	"github.com/wso2/aep/aep-api/internal/platform/obs"
 )
@@ -66,6 +67,11 @@ type AppParams struct {
 	// Required for inbound auth: when nil, every /api/ request fails closed
 	// (401) — there is no unsigned-claim fallback. Both planes set JWKS_URL.
 	ThunderJWKS *jwtassertion.JWKSCache
+
+	// Dialect is the platform IdP's token dialect (PLATFORM_IDP_KIND): how the
+	// inbound verifier reads the caller's org and tells a user's token from a
+	// machine's. The zero value reads Thunder's claims.
+	Dialect dialect.Dialect
 
 	// InboundAuth, when non-nil, REPLACES the JWKS-backed jwt.Middleware on the
 	// public /api/ edge.

@@ -64,11 +64,11 @@ func getAEStudio(h http.Handler, target string) *httptest.ResponseRecorder {
 // A user reads their own org's AE Studio; a user of another org reads their
 // own, never this one's — even when the request names acme.
 func TestGetAeStudio_ReadsOnlyTheTokenOrg(t *testing.T) {
-	own := getAEStudio(aeStudioHandler(t, &auth.Claims{Subject: "u", OuHandle: "acme"}), "/api/v1/ae-studio")
+	own := getAEStudio(aeStudioHandler(t, &auth.Claims{Subject: "u", OrgHandle: "acme"}), "/api/v1/ae-studio")
 	if own.Code != http.StatusOK || !strings.Contains(own.Body.String(), `"state":"ready"`) {
 		t.Fatalf("own org: %d %s", own.Code, own.Body)
 	}
-	other := aeStudioHandler(t, &auth.Claims{Subject: "v", OuHandle: "globex"})
+	other := aeStudioHandler(t, &auth.Claims{Subject: "v", OrgHandle: "globex"})
 	for _, target := range []string{"/api/v1/ae-studio", "/api/v1/ae-studio?org=acme&orgHandle=acme"} {
 		w := getAEStudio(other, target)
 		if strings.Contains(w.Body.String(), "ready") || strings.Contains(w.Body.String(), "http://d") {

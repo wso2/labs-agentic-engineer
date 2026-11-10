@@ -93,7 +93,7 @@ var idpDBOU = uuid.MustParse("6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b")
 // idpDBCtx is a user request whose ouId claim names idpDBOU: the vault path
 // every org secret write derives from.
 func idpDBCtx() context.Context {
-	return jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: idpDBOU.String()})
+	return jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OrgID: idpDBOU.String()})
 }
 
 // publisherRef is the org's ae-publisher-client row's reference name ("" =

@@ -37,6 +37,7 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/delivery/validation"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
+	"github.com/wso2/aep/aep-api/internal/platform/auth/dialect"
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 )
 
@@ -120,7 +121,7 @@ func newInternalStack(t *testing.T) internalStack {
 		}}})
 	}))
 	t.Cleanup(jwks.Close)
-	verifier := auth.NewPublisherTokenVerifier(jwtassertion.NewJWKSCache(jwks.URL), pubIssuer, pubAudPrefix)
+	verifier := auth.NewPublisherTokenVerifier(jwtassertion.NewJWKSCache(jwks.URL), pubIssuer, pubAudPrefix, thunderDialect())
 	if verifier == nil {
 		t.Fatal("NewPublisherTokenVerifier returned nil")
 	}
@@ -140,7 +141,7 @@ func newInternalStack(t *testing.T) internalStack {
 				Audience:  jwt.ClaimStrings{pubAudPrefix + org},
 				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 			},
-			OuHandle: org,
+			Raw: dialect.Raw{OuHandle: org},
 		})
 	}
 	mintStudio := func(org string) string {
@@ -150,10 +151,10 @@ func newInternalStack(t *testing.T) internalStack {
 				Audience:  jwt.ClaimStrings{"ae-studio-" + org},
 				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 			},
-			OuHandle: org,
+			Raw: dialect.Raw{OuHandle: org},
 		})
 	}
-	studioClients := auth.NewStudioClientVerifier(jwtassertion.NewJWKSCache(jwks.URL), pubIssuer, recordedStudioClients{})
+	studioClients := auth.NewStudioClientVerifier(jwtassertion.NewJWKSCache(jwks.URL), pubIssuer, thunderDialect(), recordedStudioClients{})
 	if studioClients == nil {
 		t.Fatal("NewStudioClientVerifier returned nil")
 	}

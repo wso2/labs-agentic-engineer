@@ -60,7 +60,10 @@ func tenantGate(f gen.StrictHandlerFunc, operationID string) gen.StrictHandlerFu
 		return f
 	}
 	return func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error) {
-		tokenOrg := auth.ResolveOuHandle(auth.ClaimsFromContext(ctx))
+		tokenOrg := ""
+		if claims := auth.ClaimsFromContext(ctx); claims != nil {
+			tokenOrg = claims.OrgHandle
+		}
 		if tokenOrg == "" {
 			mode := tenant.GateModeFromContext(ctx)
 			slog.WarnContext(ctx, "tenant gate would-deny",

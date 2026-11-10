@@ -774,7 +774,7 @@ func postSkillTarball(t *testing.T, h *componenttest.Harness, org, filename stri
 
 	req := httptest.NewRequest(http.MethodPost, base+"/import", &buf)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
-	claims := auth.Claims{OuHandle: org, OuId: org + "-ouid", Subject: "componenttest-user"}
+	claims := auth.Claims{OrgHandle: org, OrgID: org + "-ouid", Subject: "componenttest-user"}
 	raw, err := json.Marshal(claims)
 	if err != nil {
 		t.Fatal(err)

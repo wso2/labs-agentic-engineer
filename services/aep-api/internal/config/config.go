@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/wso2/aep/aep-api/internal/platform/auth/dialect"
 )
 
 // Config holds all application configuration.
@@ -272,6 +274,11 @@ func (c Config) Validate() error {
 		// there is no unsigned-claim fallback.
 		errs = append(errs, "JWKS_URL is required — the inbound JWT verifier cannot start without it")
 	}
+	if _, err := dialect.ParseKind(c.PlatformIDP.Kind); err != nil {
+		// An install naming a kind this build does not know must not boot on
+		// another kind's rules.
+		errs = append(errs, "PLATFORM_IDP_KIND: "+err.Error())
+	}
 	if len(errs) > 0 {
 		return fmt.Errorf("configuration errors:\n%s", strings.Join(errs, "\n"))
 	}
@@ -317,11 +324,14 @@ type KubeAPIConfig struct {
 }
 
 // PlatformIDPDefaults are the issuer + JWKS URL of the cluster's
-// platform IDP (Thunder in v1). Seeded into every new
-// organization_idp_profiles row.
+// platform IDP (Thunder in v1), seeded into every new
+// organization_idp_profiles row, and the IdP's token dialect kind.
 type PlatformIDPDefaults struct {
 	Issuer  string
 	JWKSURL string
+	// Kind names the token dialect the verifiers read the IdP's claims by
+	// (PLATFORM_IDP_KIND; dialect.ParseKind). Empty is thunder.
+	Kind string
 }
 
 // AEStudioConfig is the deployment-supplied input of the AE Studio Resource.

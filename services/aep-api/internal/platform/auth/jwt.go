@@ -23,6 +23,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/wso2/aep/aep-api/internal/platform/auth/dialect"
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 )
 
@@ -30,12 +31,14 @@ import (
 type Claims struct {
 	Subject  string
 	ClientID string
-	// Organisation claims sourced from Thunder. ResolveOuHandle is the
-	// only place that picks one — keep the precedence in lockstep with
-	// the console.
-	OuHandle string
-	OuName   string
-	OuId     string
+	// The caller's org as the platform IdP's dialect read it: OrgHandle is
+	// the name the platform knows the org by (the OpenChoreo namespace),
+	// OrgID the IdP's own id for it, OrgName a display name. Empty when the
+	// token carries no org, which a caller surfaces as a fail-loud error
+	// rather than substituting one.
+	OrgHandle string
+	OrgID     string
+	OrgName   string
 	// Display claims of the verified token: who to credit a user's work to
 	// (spec.displayIdentity holds the name rule). Empty when the IdP sends
 	// none.
@@ -43,27 +46,6 @@ type Claims struct {
 	Email      string
 	GivenName  string
 	FamilyName string
-}
-
-// ResolveOuHandle returns the canonical OC org handle from a verified
-// JWT, preferring `ouHandle` over `ouName` over `ouId`. Returns "" when
-// the token has none of those claims (which the caller must surface as
-// a fail-loud error rather than silently substitute an org).
-//
-// The console mirrors this precedence verbatim
-// (console/src/utils/orgClaims.ts). Any change here MUST land on both
-// sides simultaneously.
-func ResolveOuHandle(c *Claims) string {
-	if c == nil {
-		return ""
-	}
-	if c.OuHandle != "" {
-		return c.OuHandle
-	}
-	if c.OuName != "" {
-		return c.OuName
-	}
-	return c.OuId
 }
 
 type claimsContextKey struct{}
@@ -90,9 +72,9 @@ func claimsOf(tc *jwtassertion.TokenClaims) *Claims {
 	return &Claims{
 		Subject:    tc.Sub,
 		ClientID:   tc.ClientID,
-		OuHandle:   tc.OuHandle,
-		OuName:     tc.OuName,
-		OuId:       tc.OuId,
+		OrgHandle:  tc.OrgHandle,
+		OrgID:      tc.OrgID,
+		OrgName:    tc.OrgName,
 		Name:       tc.Name,
 		Email:      tc.Email,
 		GivenName:  tc.GivenName,
@@ -107,6 +89,7 @@ type JWTConfig struct {
 	AllowedIssuers      []string
 	AllowedAudiences    []string
 	ResourceMetadataURL string
+	Dialect             dialect.Dialect
 }
 
 // JWTMiddleware returns an HTTP middleware that verifies the Authorization
@@ -127,6 +110,7 @@ func JWTMiddleware(cfg JWTConfig) func(http.Handler) http.Handler {
 		AllowedIssuers:      cfg.AllowedIssuers,
 		AllowedAudiences:    cfg.AllowedAudiences,
 		ResourceMetadataURL: cfg.ResourceMetadataURL,
+		Dialect:             cfg.Dialect,
 		UserTokensOnly:      true,
 	})
 	return func(next http.Handler) http.Handler {

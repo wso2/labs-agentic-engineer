@@ -222,6 +222,7 @@ func publicChain(p AppParams) http.Handler {
 			AllowedIssuers:      SplitAndTrim(p.Config.JWTAllowedIssuer),
 			AllowedAudiences:    SplitAndTrim(p.Config.JWTAllowedAudience),
 			ResourceMetadataURL: p.Config.JWTResourceMetadataURL,
+			Dialect:             p.Dialect,
 		})
 	}
 	ensureOrg := auth.EnsureOrgMiddleware(p.OrganizationService)

@@ -71,9 +71,9 @@ func tokenClaimsOf(c *auth.Claims) *jwtassertion.TokenClaims {
 	return &jwtassertion.TokenClaims{
 		Sub:        c.Subject,
 		ClientID:   c.ClientID,
-		OuHandle:   c.OuHandle,
-		OuName:     c.OuName,
-		OuId:       c.OuId,
+		OrgHandle:  c.OrgHandle,
+		OrgID:      c.OrgID,
+		OrgName:    c.OrgName,
 		Name:       c.Name,
 		Email:      c.Email,
 		GivenName:  c.GivenName,

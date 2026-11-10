@@ -33,6 +33,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/contracts"
 	"github.com/wso2/aep/aep-api/internal/organization/aestudio"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
+	"github.com/wso2/aep/aep-api/internal/platform/auth/dialect"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
@@ -287,7 +288,7 @@ func TestTurnUsage_Tenancy(t *testing.T) {
 			Audience:  jwt.ClaimStrings{"aep-console"},
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		},
-		OuHandle: "acme",
+		Raw: dialect.Raw{OuHandle: "acme"},
 	})
 
 	cases := []struct {

@@ -73,6 +73,23 @@ func TestConfigValidate_RequiredFields(t *testing.T) {
 			t.Fatal("Validate() = nil, want error for empty JWKS_URL")
 		}
 	})
+	// The platform IdP kind names the token dialect every verifier reads by.
+	// Empty is thunder; a kind this build does not know is a boot error, never
+	// a fall-through to another kind's rules.
+	t.Run("PLATFORM_IDP_KIND", func(t *testing.T) {
+		for _, kind := range []string{"", "thunder"} {
+			c := validConfig()
+			c.PlatformIDP.Kind = kind
+			if err := c.Validate(); err != nil {
+				t.Fatalf("kind %q: Validate() = %v, want nil", kind, err)
+			}
+		}
+		c := validConfig()
+		c.PlatformIDP.Kind = "asgardeo"
+		if err := c.Validate(); err == nil {
+			t.Fatal("Validate() = nil, want error for a kind this build does not know")
+		}
+	})
 }
 
 // TestValidate_NoSigningKeyRequired: BFF token minting is gone, so a config

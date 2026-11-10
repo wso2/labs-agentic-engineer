@@ -33,9 +33,13 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/wso2/aep/aep-api/internal/platform/auth/dialect"
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 )
+
+// thunderDialect reads the Thunder claims every test token here carries.
+var thunderDialect = dialect.ForKind(dialect.KindThunder)
 
 // openCycle is an open cycle owned by org.
 func openCycle(org string) RunnerCycle { return RunnerCycle{OrgHandle: org, Open: true} }
@@ -131,7 +135,7 @@ func newPublisherVerifier(t *testing.T) (*PublisherTokenVerifier, func(org, ouHa
 	}))
 	t.Cleanup(srv.Close)
 
-	v := NewPublisherTokenVerifier(jwtassertion.NewJWKSCache(srv.URL), pubIssuer, pubAudPrefix)
+	v := NewPublisherTokenVerifier(jwtassertion.NewJWKSCache(srv.URL), pubIssuer, pubAudPrefix, thunderDialect)
 	if v == nil {
 		t.Fatal("NewPublisherTokenVerifier returned nil")
 	}
@@ -142,7 +146,7 @@ func newPublisherVerifier(t *testing.T) (*PublisherTokenVerifier, func(org, ouHa
 				Audience:  jwt.ClaimStrings{pubAudPrefix + org},
 				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 			},
-			OuHandle: ouHandle,
+			Raw: dialect.Raw{OuHandle: ouHandle},
 		}
 		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 		tok.Header["kid"] = kid

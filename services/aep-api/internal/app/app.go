@@ -65,6 +65,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/organization/aestudio"
 	orghttpapi "github.com/wso2/aep/aep-api/internal/organization/httpapi"
 	authn "github.com/wso2/aep/aep-api/internal/platform/auth"
+	"github.com/wso2/aep/aep-api/internal/platform/auth/dialect"
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
@@ -628,7 +629,11 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// RequirePublisherForBuild reads. Coding dispatch mounts
 	// PUBLISHER_CLIENT_ID and PUBLISHER_CLIENT_SECRET from the reference the
 	// ae-publisher-client row names.
-	idpService := organization.NewIDPService(idpRepo, orgRepo, thunderAdminClient, organization.PlatformIDPConfig{
+	// The admin client is the org-clients port's one implementation (the
+	// assignment is the compile-time check); unset admin credentials leave it
+	// a nil interface, and the service answers ErrIDPThunderUnavailable.
+	var orgClients organization.OrgClients = thunderAdminClient
+	idpService := organization.NewIDPService(idpRepo, orgRepo, orgClients, organization.PlatformIDPConfig{
 		Issuer:  cfg.PlatformIDP.Issuer,
 		JWKSURL: cfg.PlatformIDP.JWKSURL,
 	}).WithSecretRefWriter(secretRefWriter).WithOrgSecretRefs(orgSecretRepo)
@@ -828,13 +833,24 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// branch resolves the acting org by that cycle id. Every agent pod in the
 	// system is launched by the milestone supervisor, so a cycle id is the only
 	// runner identity there is; an execution id named in a path fails closed.
-	publisherVerifier := authn.NewPublisherTokenVerifier(thunderJWKS, cfg.PlatformIDP.Issuer, "aep-publisher-")
+	// The platform IdP's token dialect: every verifier reads the caller's org
+	// through it, and the user edge tells a user's token from a machine's by
+	// it. Validate accepted the kind at load; parsing again keeps this seam
+	// honest if a caller builds the config by hand.
+	idpKind, err := dialect.ParseKind(cfg.PlatformIDP.Kind)
+	if err != nil {
+		return nil, fmt.Errorf("platform IdP: %w", err)
+	}
+	idpDialect := dialect.ForKind(idpKind)
+	slog.Info("Platform IdP token dialect", "kind", idpKind)
+
+	publisherVerifier := authn.NewPublisherTokenVerifier(thunderJWKS, cfg.PlatformIDP.Issuer, "aep-publisher-", idpDialect)
 	runnerAuth := authn.NewRunnerAuthorizer(publisherVerifier, cycleRunnerLookup(db))
 	// The ae-studio/ internal ops take only the org's ae-studio-<org> client
 	// token, checked against the client id recorded for the org; a publisher
 	// token (what a coding Job holds) never opens them. MCP takes this token
 	// beside the publisher token; runs/ never does.
-	studioClientVerifier := authn.NewStudioClientVerifier(thunderJWKS, cfg.PlatformIDP.Issuer, studioClientRecords{profiles: idpRepo})
+	studioClientVerifier := authn.NewStudioClientVerifier(thunderJWKS, cfg.PlatformIDP.Issuer, idpDialect, studioClientRecords{profiles: idpRepo})
 
 	// The RCA-report store the ops domain reads through (console Alerts). No
 	// writer is wired since the SRE handoff moved to its MCP tools; see
@@ -881,7 +897,8 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 
 	// Controllers
 	params := edge.AppParams{
-		Config: cfg,
+		Config:  cfg,
+		Dialect: idpDialect,
 		// Runner callbacks are the internal contract-first route group (InternalDeps);
 		// only the webhook controller remains a raw handler.
 		// Every other feature is served by the strict handlers via params.Deps.

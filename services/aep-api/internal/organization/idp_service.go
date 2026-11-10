@@ -120,7 +120,7 @@ type PlatformIDPConfig struct {
 type idpService struct {
 	repo            IDPRepository
 	orgRepo         OrganizationRepository
-	thunder         thundersvc.Client
+	clients         OrgClients
 	platform        PlatformIDPConfig
 	secretRefWriter *SecretRefWriter
 	// orgSecrets reads the ae-publisher-client row RequirePublisherForBuild
@@ -130,14 +130,15 @@ type idpService struct {
 
 // NewIDPService builds the service. `repo` persists the idp tables; `orgRepo`
 // serves the org → Thunder OU lookup the client ensure needs (reused, not
-// duplicated). `thunder` may be nil in unit tests — the service rejects
+// duplicated). `clients` is the platform IdP's admin client behind the
+// OrgClients port; it may be nil in unit tests — the service rejects
 // EnsureClient / RevokeOrgPublisher with ErrIDPThunderUnavailable when so.
 // Read methods (GetProfile, GetOrCreateProfile) keep working. Returns the
 // concrete type so the With* setters can chain at the composition root; the
 // concrete value still satisfies the IDPService interface for consumers that
 // store it as such.
-func NewIDPService(repo IDPRepository, orgRepo OrganizationRepository, thunder thundersvc.Client, platform PlatformIDPConfig) *idpService {
-	return &idpService{repo: repo, orgRepo: orgRepo, thunder: thunder, platform: platform}
+func NewIDPService(repo IDPRepository, orgRepo OrganizationRepository, clients OrgClients, platform PlatformIDPConfig) *idpService {
+	return &idpService{repo: repo, orgRepo: orgRepo, clients: clients, platform: platform}
 }
 
 // WithSecretRefWriter attaches the vault writer the client ensure stores the
@@ -156,9 +157,9 @@ func (s *idpService) WithOrgSecretRefs(refs OrgSecretRefReader) *idpService {
 	return s
 }
 
-// ErrIDPThunderUnavailable means the Thunder admin client isn't wired
-// (missing system credentials, etc): the client ensure and the publisher
-// revoke cannot run.
+// ErrIDPThunderUnavailable means the platform IdP's admin client (the
+// OrgClients port) isn't wired (missing system credentials, etc): the client
+// ensure and the publisher revoke cannot run.
 var ErrIDPThunderUnavailable = errors.New("idp_service: thunder admin client not configured")
 
 func (s *idpService) GetProfile(ctx context.Context, orgID string) (*OrganizationIDPProfile, error) {
@@ -271,7 +272,7 @@ func (s *idpService) ensurePublisherApp(ctx context.Context, orgID, actor, orgOU
 	} else {
 		slog.DebugContext(ctx, "idp_service: provisioning publisher under org OU", "orgID", orgID, "orgOU", orgOUID)
 	}
-	app, terr := s.thunder.EnsurePublisherApp(ctx, orgID, orgOUID, profile.PublisherThunderAppID)
+	app, terr := s.clients.EnsurePublisherApp(ctx, orgID, orgOUID, profile.PublisherThunderAppID)
 	if terr != nil {
 		s.audit(ctx, orgID, IDPAuditEnsurePublisher, actor, beforeJSON, nil, terr)
 		return thundersvc.OrgApp{}, fmt.Errorf("idp_service.ensurePublisherApp: %w", terr)
@@ -328,7 +329,7 @@ func (s *idpService) RevokeOrgPublisher(ctx context.Context, orgID, actor string
 	if orgID == "" {
 		return false, fmt.Errorf("orgID required")
 	}
-	if s.thunder == nil {
+	if s.clients == nil {
 		return false, ErrIDPThunderUnavailable
 	}
 	profile, err := s.GetProfile(ctx, orgID)
@@ -341,7 +342,7 @@ func (s *idpService) RevokeOrgPublisher(ctx context.Context, orgID, actor string
 	}
 	beforeJSON, _ := json.Marshal(profileSummary(profile))
 
-	deleted, terr := s.thunder.DeletePublisherApp(ctx, orgID, profile.PublisherThunderAppID)
+	deleted, terr := s.clients.DeletePublisherApp(ctx, orgID, profile.PublisherThunderAppID)
 	if terr != nil {
 		s.audit(ctx, orgID, IDPAuditRevokePublisher, actor, beforeJSON, nil, terr)
 		return false, fmt.Errorf("idp_service.RevokeOrgPublisher: %w", terr)
@@ -524,10 +525,10 @@ func (s *idpService) SetProfile(ctx context.Context, orgID, actor, kind, issuer,
 // reference, so the build gate stops passing on credentials of a deleted app.
 // Skipped when thunder isn't configured (the caller just clears the ids).
 func (s *idpService) dropPublisherApp(ctx context.Context, orgID string, existing *OrganizationIDPProfile) {
-	if existing.Kind != "platform" || existing.PublisherClientID == "" || s.thunder == nil {
+	if existing.Kind != "platform" || existing.PublisherClientID == "" || s.clients == nil {
 		return
 	}
-	if _, err := s.thunder.DeletePublisherApp(ctx, orgID, existing.PublisherThunderAppID); err != nil {
+	if _, err := s.clients.DeletePublisherApp(ctx, orgID, existing.PublisherThunderAppID); err != nil {
 		slog.WarnContext(ctx, "idp_service: Thunder publisher cleanup on kind switch failed (ignored)",
 			"orgID", orgID, "error", err)
 		return

@@ -116,8 +116,8 @@ func (s ampKeyStore) WriteAMPTracingToken(ctx context.Context, ocOrgID, componen
 // orgIdentity attaches the org's OU id to the context as token claims.
 //
 // Returns the context unchanged when the org row carries no Thunder OU — the
-// write then fails with the writer's own "no ouId claim" error, which names the
-// problem, rather than silently writing to a path nothing reads.
+// write then fails with the writer's own "no org id claim" error, which names
+// the problem, rather than silently writing to a path nothing reads.
 func (s ampKeyStore) orgIdentity(ctx context.Context, ocOrgID string) (context.Context, error) {
 	if jwtassertion.GetTokenClaims(ctx) != nil {
 		return ctx, nil // already in a request context; use the caller's identity
@@ -130,7 +130,7 @@ func (s ampKeyStore) orgIdentity(ctx context.Context, ocOrgID string) (context.C
 		return ctx, nil
 	}
 	return jwtassertion.ContextWithTokenClaims(ctx,
-		&jwtassertion.TokenClaims{OuId: org.ThunderOrgUUID.String()}), nil
+		&jwtassertion.TokenClaims{OrgID: org.ThunderOrgUUID.String()}), nil
 }
 
 // ampEndpointStore records the endpoint each governed agent's key was stored

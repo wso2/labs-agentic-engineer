@@ -127,7 +127,7 @@ func (s *idpService) EnsureClient(ctx context.Context, orgID string, kind Client
 	if err != nil {
 		return err
 	}
-	if s.thunder == nil {
+	if s.clients == nil {
 		return ErrIDPThunderUnavailable
 	}
 	if s.secretRefWriter == nil || !s.secretRefWriter.Enabled() {
@@ -188,7 +188,7 @@ func (s *idpService) storeClientSecret(ctx context.Context, l *OrgSecretLocked, 
 		return "", fmt.Errorf("generate client secret: %w", err)
 	}
 	return "healed", c.write(secret, func() error {
-		return s.thunder.SetAppSecret(ctx, c.app.EntityID, secret)
+		return s.clients.SetAppSecret(ctx, c.app.EntityID, secret)
 	})
 }
 
@@ -222,7 +222,7 @@ func (s *idpService) studioClient(ctx context.Context, l *OrgSecretLocked, orgID
 	if err != nil {
 		return orgClient{}, err
 	}
-	app, err := s.thunder.EnsureOrgApp(ctx, thundersvc.OrgAppSpec{
+	app, err := s.clients.EnsureOrgApp(ctx, thundersvc.OrgAppSpec{
 		Name:     thundersvc.StudioAppName(orgID),
 		OUID:     thunderOU,
 		StoredID: profile.StudioThunderAppID,

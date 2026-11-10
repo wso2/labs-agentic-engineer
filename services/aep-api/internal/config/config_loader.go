@@ -27,6 +27,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/wso2/aep/aep-api/internal/platform/auth/dialect"
 )
 
 type configReader struct {
@@ -85,6 +87,7 @@ func Load() (Config, error) {
 			// (THUNDER_INTERNAL_JWKS_URL) is the source of truth for the IdP's
 			// name; this default must agree with it.
 			JWKSURL: r.readOptionalString("PLATFORM_IDP_JWKS_URL", "http://platform-idp-service.platform-idp.svc.cluster.local:8090/oauth2/jwks"),
+			Kind:    r.readOptionalString("PLATFORM_IDP_KIND", string(dialect.KindThunder)),
 		},
 		AEStudio:               r.aeStudio(),
 		JWKSURL:                r.readOptionalString("JWKS_URL", ""),

@@ -31,6 +31,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/wso2/aep/aep-api/internal/platform/auth/dialect"
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 )
 
@@ -61,7 +62,7 @@ func newStudioVerifierStack(t *testing.T, clients StudioClientLookup) (*StudioCl
 		}}})
 	}))
 	t.Cleanup(srv.Close)
-	v := NewStudioClientVerifier(jwtassertion.NewJWKSCache(srv.URL), pubIssuer, clients)
+	v := NewStudioClientVerifier(jwtassertion.NewJWKSCache(srv.URL), pubIssuer, thunderDialect, clients)
 	if v == nil {
 		t.Fatal("NewStudioClientVerifier returned nil")
 	}
@@ -72,7 +73,7 @@ func newStudioVerifierStack(t *testing.T, clients StudioClientLookup) (*StudioCl
 				Audience:  jwt.ClaimStrings{aud},
 				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 			},
-			OuHandle: ouHandle,
+			Raw: dialect.Raw{OuHandle: ouHandle},
 		})
 		tok.Header["kid"] = kid
 		signed, err := tok.SignedString(priv)
@@ -123,9 +124,9 @@ func TestStudioClientVerifier(t *testing.T) {
 
 func TestNewStudioClientVerifier_NilWithoutInputs(t *testing.T) {
 	jwks := jwtassertion.NewJWKSCache("http://127.0.0.1:1/jwks")
-	if NewStudioClientVerifier(nil, "iss", storedStudioClients{}) != nil ||
-		NewStudioClientVerifier(jwks, "", storedStudioClients{}) != nil ||
-		NewStudioClientVerifier(jwks, "iss", nil) != nil {
+	if NewStudioClientVerifier(nil, "iss", thunderDialect, storedStudioClients{}) != nil ||
+		NewStudioClientVerifier(jwks, "", thunderDialect, storedStudioClients{}) != nil ||
+		NewStudioClientVerifier(jwks, "iss", thunderDialect, nil) != nil {
 		t.Fatal("a verifier missing an input must be nil (fails closed at the gate)")
 	}
 }

@@ -26,6 +26,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
+	"github.com/wso2/aep/aep-api/internal/platform/auth/dialect"
 )
 
 // sre-handoff/mcp is its own route group: only the install-time handoff key
@@ -44,7 +45,7 @@ func TestInternalGate_SREHandoffMCP(t *testing.T) {
 			Audience:  jwt.ClaimStrings{"aep-console"},
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		},
-		OuHandle: "acme",
+		Raw: dialect.Raw{OuHandle: "acme"},
 	})
 	const path = "/internal/v1/sre-handoff/mcp"
 	cases := []struct {

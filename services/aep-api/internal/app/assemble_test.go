@@ -40,6 +40,7 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
 	"github.com/wso2/aep/aep-api/internal/config"
+	"github.com/wso2/aep/aep-api/internal/platform/auth/dialect"
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 )
 
@@ -324,8 +325,9 @@ func userTokens(t *testing.T) (jwksURL, token string) {
 		}}})
 	}))
 	t.Cleanup(srv.Close)
-	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwtassertion.TokenClaims{
-		Sub: "user-1", ClientID: testUserAudience, OuHandle: "acme", GrantType: "authorization_code",
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwtassertion.WireClaims{
+		Raw: dialect.Raw{OuHandle: "acme", GrantType: "authorization_code"},
+		Sub: "user-1", ClientID: testUserAudience,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer: testUserIssuer, Audience: jwt.ClaimStrings{testUserAudience},
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
