@@ -52,7 +52,14 @@ export function devAuth(): DevAuth {
   const expected = Buffer.from(secret);
   const user: AuthenticatedUser = {
     ...PLAYGROUND_USER,
-    claims: { sub: PLAYGROUND_USER.sub, name: PLAYGROUND_USER.name, exp: Number.MAX_SAFE_INTEGER },
+    // No IdP signs the playground in: the session carries no org, and the
+    // bearer check below is its only gate.
+    claims: {
+      sub: PLAYGROUND_USER.sub,
+      name: PLAYGROUND_USER.name,
+      org: { handle: "", id: "", name: "", handleDeclared: false },
+      exp: Number.MAX_SAFE_INTEGER,
+    },
   };
   return {
     authenticate: async (req) => {
