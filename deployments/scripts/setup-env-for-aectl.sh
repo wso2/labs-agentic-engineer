@@ -124,6 +124,11 @@
 #   ASGARDEO_TENANT         the Asgardeo organization's handle (asgardeo only).
 #                           Its applications are created beforehand with
 #                           ae-asgardeo-apps.sh.
+#   AE_ASGARDEO_SECRETS_DIR the directory ae-asgardeo-apps.sh wrote its secret
+#                           files to (asgardeo only, optional). When it holds
+#                           oc-workload-publisher, OpenChoreo's build template
+#                           is pointed at the organization so builds can finish
+#                           (ae-asgardeo-oc-publisher.sh).
 
 set -euo pipefail
 set -o errtrace
@@ -1887,6 +1892,24 @@ if [ "$WITH_BUILD" = "1" ]; then
       -f "$(oc_manifest samples/getting-started/workflow-templates.yaml)" \
       -f "$(oc_manifest samples/getting-started/workflow-templates/publish-image-k3d.yaml)" \
       -f "$(oc_manifest samples/getting-started/workflow-templates/generate-workload-k3d.yaml)"
+
+    # The build's last step signs in as OpenChoreo's own workload publisher
+    # client, and upstream's template names ThunderID's token address for it.
+    # On an Asgardeo organization that client is created by
+    # `ae-asgardeo-apps.sh --with-openchoreo-publisher`; with its secret file
+    # at hand, point the template at the organization. Without it the cluster
+    # still comes up, and a build stops at that step.
+    if [ "$AE_IDP_KIND" = "asgardeo" ]; then
+        oc_publisher_secret="${AE_ASGARDEO_SECRETS_DIR:+${AE_ASGARDEO_SECRETS_DIR}/oc-workload-publisher}"
+        if [ -n "$oc_publisher_secret" ] && [ -s "$oc_publisher_secret" ]; then
+            ASGARDEO_TENANT="$ASGARDEO_TENANT" ASGARDEO_BASE_URL="$ASGARDEO_BASE_URL" \
+                bash "${SCRIPT_DIR}/ae-asgardeo-oc-publisher.sh" "$oc_publisher_secret"
+        else
+            echo "   ⚠️  No oc-workload-publisher secret file (AE_ASGARDEO_SECRETS_DIR): builds will stop at their last step."
+            echo "      Create OpenChoreo's publisher client with ae-asgardeo-apps.sh --with-openchoreo-publisher,"
+            echo "      then run ae-asgardeo-oc-publisher.sh on this cluster."
+        fi
+    fi
 
     kubectl wait -n openchoreo-workflow-plane --for=condition=Ready certificate/cluster-agent-workflowplane-tls --timeout=120s
     AGENT_CA=$(kubectl get secret cluster-agent-tls -n openchoreo-workflow-plane -o jsonpath='{.data.ca\.crt}' | base64 -d)

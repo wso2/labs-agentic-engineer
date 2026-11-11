@@ -294,8 +294,12 @@ AECTL_CONFIG ?= skaffold/defaults.yaml
 # asgardeo. Left out there, because each signs in with a client that exists
 # only in ThunderID: OpenChoreo's portal, the observability plane, Agent
 # Manager, the SRE agent and dev-seed (connect GitHub and the model key in
-# the console's welcome step). A coding cycle's build stops at its publish
-# step for the same reason: OpenChoreo's workload publisher client.
+# the console's welcome step). A build's last step signs in as OpenChoreo's
+# own workload publisher client: run ae-asgardeo-apps.sh with
+# --with-openchoreo-publisher and its secret file, in AE_ASGARDEO_SECRETS_DIR,
+# makes dev-env point the build template at the organization
+# (deployments/scripts/ae-asgardeo-oc-publisher.sh). Without that file the
+# cluster comes up and a build stops at that step.
 # It is a mode of a NEW cluster, not a switch on a running one: an org's
 # secret paths are derived from the IdP's id for it.
 AE_IDP_KIND ?= thunder
@@ -329,7 +333,7 @@ dev-env-asgardeo:
 	done
 	cd tools/aectl && go build -o aectl-skaffold .
 	bash deployments/scripts/ae-asgardeo-aectl-config.sh $(AECTL_CONFIG) $(ASGARDEO_TENANT) $(ASGARDEO_BASE_URL) > $(AE_ASGARDEO_AECTL_CONFIG)
-	AE_DOMAIN=$(AE_DOMAIN) AE_IDP_KIND=asgardeo ASGARDEO_TENANT=$(ASGARDEO_TENANT) ASGARDEO_BASE_URL=$(ASGARDEO_BASE_URL) bash deployments/scripts/setup-env-for-aectl.sh
+	AE_DOMAIN=$(AE_DOMAIN) AE_IDP_KIND=asgardeo ASGARDEO_TENANT=$(ASGARDEO_TENANT) ASGARDEO_BASE_URL=$(ASGARDEO_BASE_URL) AE_ASGARDEO_SECRETS_DIR="$(AE_ASGARDEO_SECRETS_DIR)" bash deployments/scripts/setup-env-for-aectl.sh
 	$(MAKE) dev-images
 	$(MAKE) ae-studio-refs-check
 	@# aectl connects to the cluster for every command, `config test` included,

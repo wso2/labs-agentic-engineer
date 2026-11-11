@@ -132,8 +132,16 @@ the four secret files. The mode:
 - leaves out what signs in with a client that exists only in ThunderID:
   OpenChoreo's portal, the observability plane, Agent Manager, the SRE agent
   and `dev-seed`. Connect GitHub and the model key in the console's welcome
-  step. A coding cycle's build stops at its publish step, which uses
-  OpenChoreo's workload publisher client.
+  step;
+- makes builds finish only if OpenChoreo's own workload publisher client is
+  on the organization too. Run `ae-asgardeo-apps.sh` with
+  `--with-openchoreo-publisher`: it creates that client and writes
+  `oc-workload-publisher` beside the other secret files, and the dev-env then
+  points OpenChoreo's build template at the organization
+  (`deployments/scripts/ae-asgardeo-oc-publisher.sh`, which can also be run
+  on a cluster that is already up). Without it a build stops at its last
+  step. This is for a local cluster only: on a real one that client and
+  template are the cluster owner's.
 
 It is a mode of a new cluster. Do not run it over a Thunder cluster, or the
 reverse: an org's secret paths are derived from the IdP's id for the org, so
