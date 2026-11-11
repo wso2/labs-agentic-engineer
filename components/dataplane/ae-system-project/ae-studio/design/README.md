@@ -228,8 +228,8 @@ its own deployment.
 | `gatewayHost` | `AE_STUDIO_GATEWAY_HOST` | aectl `gateway.hostname` |
 | `publicScheme`, `listenerName`, `publicPortSuffix` | `AE_STUDIO_PUBLIC_SCHEME`, `AE_STUDIO_LISTENER_NAME`, `AE_STUDIO_PUBLIC_PORT_SUFFIX` | from aectl `tls.enabled` alone: `http`/`http`/`:19080`, or `https`/`https`/`:19443` |
 | `consoleOrigins` | `AE_STUDIO_CONSOLE_ORIGINS` | the console's public URL and `http://localhost:8090` (Vite `pnpm dev`) |
-| `idp.issuer` | `AE_STUDIO_IDP_ISSUER` | aectl `thunder.public_url` |
-| `idp.jwksUrl`, `idp.tokenUrl` | `AE_STUDIO_IDP_JWKS_URL`, `AE_STUDIO_IDP_TOKEN_URL` | the IdP's OIDC discovery document (`jwks_uri`, `token_endpoint`), its paths on aectl `thunder.url` (in-cluster: the issuer's host is loopback inside a pod) |
+| `idp.issuer` | `AE_STUDIO_IDP_ISSUER` | the platform IdP's issuer: aectl `thunder.public_url`, or `idp.issuer` where `idp.kind` is `asgardeo` |
+| `idp.jwksUrl`, `idp.tokenUrl` | `AE_STUDIO_IDP_JWKS_URL`, `AE_STUDIO_IDP_TOKEN_URL` | the IdP's OIDC discovery document (`jwks_uri`, `token_endpoint`). ThunderID: its paths on aectl `thunder.url` (in-cluster: the issuer's host is loopback inside a pod). Asgardeo: the public endpoints as the document names them; `thunder.url` is not read |
 | `idp.kind` | `AE_STUDIO_IDP_KIND` | the chart's `idp.kind`, from aectl `idp.kind` (`thunder` when unset): the token dialect the three containers read the IdP's claims by, their `AE_IDP_KIND` (`thunder` or `asgardeo`) |
 | `idp.userAudiences` | `AE_STUDIO_IDP_USER_AUDIENCES` | the console's client id (chart default) |
 | `aepApiBaseUrl` | `AE_STUDIO_AEP_API_BASE_URL` | the chart: `aep-api`'s in-cluster Service URL |
