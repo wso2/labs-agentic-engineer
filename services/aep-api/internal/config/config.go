@@ -280,11 +280,17 @@ func (c Config) Validate() error {
 		// another kind's rules.
 		errs = append(errs, "PLATFORM_IDP_KIND: "+err.Error())
 	}
-	if _, err := dialect.ParseKind(c.AEStudio.IDP.Kind); err != nil {
+	platformKind, platformErr := dialect.ParseKind(c.PlatformIDP.Kind)
+	if podKind, err := dialect.ParseKind(c.AEStudio.IDP.Kind); err != nil {
 		// The same rule for the kind every org's pod is told: a bad value
 		// fails here, not in each pod at its next start.
 		errs = append(errs, "AE_STUDIO_IDP_KIND: "+err.Error())
+	} else if platformErr == nil && podKind != platformKind {
+		// The pod verifies tokens of the same IdP as aep-api. Told another
+		// kind, it would read them by the wrong rules and refuse every one.
+		errs = append(errs, fmt.Sprintf("AE_STUDIO_IDP_KIND (%s) must be the same kind as PLATFORM_IDP_KIND (%s): the org's pod reads the same IdP's tokens; leave AE_STUDIO_IDP_KIND unset to follow it", podKind, platformKind))
 	}
+	errs = append(errs, c.PlatformIDP.singleOrgErrors()...)
 	if len(errs) > 0 {
 		return fmt.Errorf("configuration errors:\n%s", strings.Join(errs, "\n"))
 	}
@@ -342,6 +348,56 @@ type PlatformIDPDefaults struct {
 	// Kind names the token dialect the verifiers read the IdP's claims by
 	// (PLATFORM_IDP_KIND; dialect.ParseKind). Empty is thunder.
 	Kind string
+	// OrgHandle and OrgNamespace are set on an IdP that serves one org under
+	// a handle of its own (kind asgardeo: the tenant's handle).
+	// OrgHandle (PLATFORM_IDP_ORG_HANDLE) is the handle its tokens carry;
+	// OrgNamespace (PLATFORM_IDP_ORG_NAMESPACE) is the org's OpenChoreo
+	// namespace, the name aep-api knows the org by. A token declaring
+	// OrgHandle is that org's and any other token is no org's
+	// (dialect.WithSingleOrg). Both are required under asgardeo and refused
+	// under thunder, whose handle is the namespace already.
+	OrgHandle    string
+	OrgNamespace string
+	// OrgPublisherSecret and OrgStudioSecret are the client secrets of that
+	// one org's two pre-created clients, aep-publisher-<org> and
+	// ae-studio-<org> (PLATFORM_IDP_ORG_PUBLISHER_SECRET,
+	// PLATFORM_IDP_ORG_STUDIO_SECRET), imported into the vault by the IdP's
+	// admin. aep-api stores them in the org's references on GitHub connect
+	// (organization.StaticOrgClients). Required under asgardeo and refused
+	// under thunder, where aep-api creates the clients itself.
+	OrgPublisherSecret string
+	OrgStudioSecret    string
+}
+
+// singleOrgErrors checks the settings of an IdP that serves one org against
+// the kind. An Asgardeo install needs all four: without the handle and the
+// namespace every user would resolve to a namespace named after the tenant,
+// and without the two imported client secrets the org's coding runs and pod
+// have no identity. Under thunder the handle is the namespace and aep-api
+// creates the clients, so a value set there would be read by nothing while
+// looking as if it took effect. The messages name the setting and never its
+// value. An unknown kind is reported by its own check.
+func (p PlatformIDPDefaults) singleOrgErrors() []string {
+	kind, err := dialect.ParseKind(p.Kind)
+	if err != nil {
+		return nil
+	}
+	settings := []struct{ name, value, why string }{
+		{"PLATFORM_IDP_ORG_HANDLE", p.OrgHandle, "the tenant's handle in the tokens maps to the org's namespace"},
+		{"PLATFORM_IDP_ORG_NAMESPACE", p.OrgNamespace, "the tenant's handle in the tokens maps to the org's namespace"},
+		{"PLATFORM_IDP_ORG_PUBLISHER_SECRET", p.OrgPublisherSecret, "import the secret of the org's pre-created publisher client (vault path aep/thunder-clients/org-publisher)"},
+		{"PLATFORM_IDP_ORG_STUDIO_SECRET", p.OrgStudioSecret, "import the secret of the org's pre-created AE Studio client (vault path aep/thunder-clients/org-studio)"},
+	}
+	var errs []string
+	for _, s := range settings {
+		switch {
+		case kind == dialect.KindAsgardeo && s.value == "":
+			errs = append(errs, s.name+" is required when PLATFORM_IDP_KIND is asgardeo: "+s.why)
+		case kind != dialect.KindAsgardeo && s.value != "":
+			errs = append(errs, s.name+" is read only when PLATFORM_IDP_KIND is asgardeo; unset it")
+		}
+	}
+	return errs
 }
 
 // AEStudioConfig is the deployment-supplied input of the AE Studio Resource.
@@ -357,9 +413,14 @@ type AEStudioConfig struct {
 
 	IDP struct {
 		Issuer, JWKSURL, TokenURL string
-		// Kind is the token dialect the pod reads the IdP's claims by
-		// (AE_STUDIO_IDP_KIND; thunder when unset), shipped to it as AE_IDP_KIND.
-		Kind          string
+		// Kind is the token dialect the pod reads the IdP's claims by, shipped
+		// to it as AE_IDP_KIND (AE_STUDIO_IDP_KIND; PLATFORM_IDP_KIND when
+		// unset). It must be the platform's kind.
+		Kind string
+		// OrgHandle is PlatformIDP.OrgHandle (the same PLATFORM_IDP_ORG_HANDLE):
+		// when set, the handle the IdP's tokens name the org by, which the
+		// pod is given as its org handle in place of the namespace name.
+		OrgHandle     string
 		UserAudiences []string
 	}
 

@@ -73,6 +73,10 @@ func TestLoad_IDPKind(t *testing.T) {
 		t.Fatalf("explicit thunder: %v / %q", err, c.IDPKind)
 	}
 	m["AE_IDP_KIND"] = "asgardeo"
+	if c, err := Load(env(m)); err != nil || c.IDPKind != "asgardeo" {
+		t.Fatalf("asgardeo: %v / %q", err, c.IDPKind)
+	}
+	m["AE_IDP_KIND"] = "okta"
 	if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), "AE_IDP_KIND") {
 		t.Fatalf("unknown kind: err = %v, want it named", err)
 	}

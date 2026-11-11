@@ -112,7 +112,7 @@ func newMCPIdP(t *testing.T) *mcpIdP {
 func (p *mcpIdP) clientToken(t *testing.T, aud, ouHandle string) string {
 	t.Helper()
 	return signTestJWT(t, p.priv, mcpTestKid, jwt.MapClaims{
-		"iss": mcpTestIssuer, "aud": aud, "ouHandle": ouHandle,
+		"iss": mcpTestIssuer, "aud": aud, "ouHandle": ouHandle, "grant_type": "client_credentials",
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 }

@@ -80,20 +80,124 @@ func TestConfigValidate_RequiredFields(t *testing.T) {
 		for _, kind := range []string{"", "thunder"} {
 			c := validConfig()
 			c.PlatformIDP.Kind = kind
+			c.AEStudio.IDP.Kind = kind
 			if err := c.Validate(); err != nil {
 				t.Fatalf("kind %q: Validate() = %v, want nil", kind, err)
 			}
 		}
 		c := validConfig()
 		c.PlatformIDP.Kind = "asgardeo"
+		c.AEStudio.IDP.Kind = "asgardeo"
+		c.PlatformIDP.OrgHandle = "acmecorp"
+		c.PlatformIDP.OrgNamespace = "default"
+		c.PlatformIDP.OrgPublisherSecret = "p"
+		c.PlatformIDP.OrgStudioSecret = "s"
+		if err := c.Validate(); err != nil {
+			t.Fatalf("kind asgardeo with its org: Validate() = %v, want nil", err)
+		}
+		c = validConfig()
+		c.PlatformIDP.Kind = "okta"
 		if err := c.Validate(); err == nil {
 			t.Fatal("Validate() = nil, want error for a kind this build does not know")
 		}
-		// The kind shipped to every org's pod is checked by the same rule.
+		// The pod's kind must be the platform's: the pod reads the same
+		// IdP's tokens.
 		c = validConfig()
+		c.PlatformIDP.Kind = "thunder"
 		c.AEStudio.IDP.Kind = "asgardeo"
 		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "AE_STUDIO_IDP_KIND") {
+			t.Fatalf("Validate() = %v, want an error naming AE_STUDIO_IDP_KIND for a kind other than the platform's", err)
+		}
+		// The kind shipped to every org's pod is checked by the same rule.
+		c = validConfig()
+		c.AEStudio.IDP.Kind = "okta"
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "AE_STUDIO_IDP_KIND") {
 			t.Fatalf("Validate() = %v, want an error naming AE_STUDIO_IDP_KIND", err)
+		}
+	})
+	// An Asgardeo install serves one org: the tenant's handle in the tokens
+	// and the namespace it maps to are both required, so an unmapped install
+	// fails at boot instead of resolving every user to a namespace named
+	// after the tenant. Thunder's handle is the namespace already, so there
+	// neither may be set.
+	t.Run("PLATFORM_IDP_ORG_HANDLE and PLATFORM_IDP_ORG_NAMESPACE", func(t *testing.T) {
+		for name, tc := range map[string]struct {
+			kind, handle, namespace string
+			wantErr                 string
+		}{
+			"asgardeo with both":           {kind: "asgardeo", handle: "acmecorp", namespace: "default"},
+			"asgardeo with neither":        {kind: "asgardeo", wantErr: "PLATFORM_IDP_ORG_HANDLE"},
+			"asgardeo without a namespace": {kind: "asgardeo", handle: "acmecorp", wantErr: "PLATFORM_IDP_ORG_NAMESPACE"},
+			"asgardeo without a handle":    {kind: "asgardeo", namespace: "default", wantErr: "PLATFORM_IDP_ORG_HANDLE"},
+			"thunder with neither":         {kind: "thunder"},
+			"thunder with a handle":        {kind: "thunder", handle: "acmecorp", wantErr: "PLATFORM_IDP_ORG_HANDLE"},
+			"thunder with a namespace":     {kind: "thunder", namespace: "default", wantErr: "PLATFORM_IDP_ORG_NAMESPACE"},
+			"unset kind with a handle":     {kind: "", handle: "acmecorp", wantErr: "PLATFORM_IDP_ORG_HANDLE"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				c := validConfig()
+				c.PlatformIDP.Kind = tc.kind
+				c.AEStudio.IDP.Kind = tc.kind
+				c.PlatformIDP.OrgHandle = tc.handle
+				c.PlatformIDP.OrgNamespace = tc.namespace
+				if tc.kind == "asgardeo" {
+					// The org's client secrets have their own cases below.
+					c.PlatformIDP.OrgPublisherSecret = "p"
+					c.PlatformIDP.OrgStudioSecret = "s"
+				}
+				err := c.Validate()
+				if tc.wantErr == "" {
+					if err != nil {
+						t.Fatalf("Validate() = %v, want nil", err)
+					}
+					return
+				}
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("Validate() = %v, want an error naming %s", err, tc.wantErr)
+				}
+			})
+		}
+	})
+	// The one org's two clients are pre-created on an Asgardeo tenant and
+	// their secrets imported: both are required there, so a missing import
+	// is a boot error naming it, and neither is read under thunder, where
+	// aep-api creates the clients itself.
+	t.Run("PLATFORM_IDP_ORG_PUBLISHER_SECRET and PLATFORM_IDP_ORG_STUDIO_SECRET", func(t *testing.T) {
+		for name, tc := range map[string]struct {
+			kind, publisher, studio string
+			wantErr                 string
+		}{
+			"asgardeo with both":         {kind: "asgardeo", publisher: "p", studio: "s"},
+			"asgardeo without publisher": {kind: "asgardeo", studio: "s", wantErr: "PLATFORM_IDP_ORG_PUBLISHER_SECRET"},
+			"asgardeo without studio":    {kind: "asgardeo", publisher: "p", wantErr: "PLATFORM_IDP_ORG_STUDIO_SECRET"},
+			"thunder with neither":       {kind: "thunder"},
+			"thunder with a publisher":   {kind: "thunder", publisher: "p", wantErr: "PLATFORM_IDP_ORG_PUBLISHER_SECRET"},
+			"thunder with a studio":      {kind: "thunder", studio: "s", wantErr: "PLATFORM_IDP_ORG_STUDIO_SECRET"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				c := validConfig()
+				c.PlatformIDP.Kind = tc.kind
+				c.AEStudio.IDP.Kind = tc.kind
+				if tc.kind == "asgardeo" {
+					c.PlatformIDP.OrgHandle = "acmecorp"
+					c.PlatformIDP.OrgNamespace = "default"
+				}
+				c.PlatformIDP.OrgPublisherSecret = tc.publisher
+				c.PlatformIDP.OrgStudioSecret = tc.studio
+				err := c.Validate()
+				if tc.wantErr == "" {
+					if err != nil {
+						t.Fatalf("Validate() = %v, want nil", err)
+					}
+					return
+				}
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("Validate() = %v, want an error naming %s", err, tc.wantErr)
+				}
+				if strings.Contains(err.Error(), `"p"`) || strings.Contains(err.Error(), `"s"`) {
+					t.Fatalf("the error quotes a secret: %v", err)
+				}
+			})
 		}
 	})
 }

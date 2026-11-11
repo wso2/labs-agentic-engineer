@@ -23,11 +23,20 @@ token need not carry one.
 ## The token dialect
 
 A token dialect is the claim names and rules one IdP kind uses to say who
-the caller is. One kind exists, `thunder`: the org is `ouHandle` (else
-`ouName`, else `ouId`; only `ouHandle` counts as declared), its id `ouId`,
-its name `ouName`; a machine's token has `grant_type` `client_credentials`,
-a user's any other grant, and a token with no `grant_type` is placed as
-neither. `src/dialect.ts` is the twin of ae-studio-tools'
+the caller is. Two kinds exist (`createVerifier`'s `kind`, `thunder` when
+unset):
+
+- `thunder`: the org is `ouHandle` (else `ouName`, else `ouId`; only
+  `ouHandle` counts as declared), its id `ouId`, its name `ouName`; a
+  machine's token has `grant_type` `client_credentials`, a user's any other
+  grant, and a token with no `grant_type` is placed as neither.
+- `asgardeo`: the org is `org_handle` (no fallback; declared when present),
+  its id `org_id`, its name `org_name`; a machine's token has `aut`
+  `APPLICATION`, a user's `APPLICATION_USER`, and a token with no `aut` or
+  any other value is placed as neither.
+
+A token of one kind read by the other's dialect names no org and is placed
+as neither. `src/dialect.ts` is the twin of ae-studio-tools'
 `internal/auth/dialect` and aep-api's `internal/platform/auth/dialect`.
 
 ## Known limitation

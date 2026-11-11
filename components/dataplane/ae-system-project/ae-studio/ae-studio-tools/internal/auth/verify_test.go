@@ -185,6 +185,94 @@ func TestGate_Table(t *testing.T) {
 	}
 }
 
+// The gates under the Asgardeo dialect. The tokens carry a real Asgardeo
+// access token's claim set (names recorded from a test organization, values
+// made up): the org in org_handle / org_id / org_name, aut for who the token
+// was issued to, aud as one string, and on a machine token sub, aud, azp and
+// client_id all holding the client id. Every token carries the tenant's org,
+// the install-wide client's included, so the M2M gate asks for the pod's org
+// where Thunder asks for none.
+func TestGate_Table_Asgardeo(t *testing.T) {
+	const iss = "https://api.asgardeo.io/t/acme/oauth2/token"
+	kp := newKeyPair(t)
+	srv := kp.serveJWKS(t)
+	v := NewVerifier(iss, NewJWKSCache(srv.URL), dialect.ForKind(dialect.KindAsgardeo))
+	exp := time.Now().Add(time.Hour).Unix()
+	user := func(changes map[string]any) string {
+		claims := jwt.MapClaims{"iss": iss, "aud": "aep-console-client", "azp": "aep-console-client", "client_id": "aep-console-client",
+			"sub": "u1", "aut": "APPLICATION_USER", "org_id": "org-1", "org_name": "Acme Inc", "org_handle": "acme",
+			"scope": "openid profile", "exp": exp}
+		for k, val := range changes {
+			if val == nil {
+				delete(claims, k)
+				continue
+			}
+			claims[k] = val
+		}
+		return kp.sign(t, claims)
+	}
+	machine := func(clientID string, changes map[string]any) string {
+		claims := jwt.MapClaims{"iss": iss, "aud": clientID, "azp": clientID, "client_id": clientID, "sub": clientID,
+			"aut": "APPLICATION", "org_id": "org-1", "org_name": "Acme Inc", "org_handle": "acme", "exp": exp}
+		for k, val := range changes {
+			if val == nil {
+				delete(claims, k)
+				continue
+			}
+			claims[k] = val
+		}
+		return kp.sign(t, claims)
+	}
+	const internalClient = "ae-studio-internal-client"
+
+	userGate := UserGate(v, []string{"aep-console-client"}, "org-1", "acme")
+	m2mGate := M2MGate(v, internalClient, "org-1")
+	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) })
+
+	cases := []struct {
+		name  string
+		gate  func(http.Handler) http.Handler
+		token string
+		org   string
+		want  int
+	}{
+		{"user ok", userGate, user(nil), "", 204},
+		{"user of another org", userGate, user(map[string]any{"org_id": "org-2", "org_handle": "globex"}), "", 403},
+		{"user handle matches id differs", userGate, user(map[string]any{"org_id": "org-2"}), "", 403},
+		{"user id matches handle differs", userGate, user(map[string]any{"org_handle": "globex"}), "", 403},
+		{"user without org_handle", userGate, user(map[string]any{"org_handle": nil}), "", 403},
+		{"user without aut on v1", userGate, user(map[string]any{"aut": nil}), "", 401},
+		{"user with an unknown aut on v1", userGate, user(map[string]any{"aut": "DEVICE"}), "", 401},
+		{"a Thunder user's claims on v1", userGate, user(map[string]any{"aut": nil, "grant_type": "authorization_code", "ouId": "org-1", "ouHandle": "acme"}), "", 401},
+		{"user without sub on v1", userGate, user(map[string]any{"sub": nil}), "", 401},
+		{"install-wide client on v1", userGate, machine(internalClient, nil), "", 401},
+		{"machine token with the user aud on v1", userGate, machine("aep-console-client", nil), "", 401},
+		{"m2m ok", m2mGate, machine(internalClient, nil), "org-1", 204},
+		{"m2m no impersonation", m2mGate, machine(internalClient, nil), "", 403},
+		{"m2m foreign impersonation", m2mGate, machine(internalClient, nil), "org-2", 403},
+		{"m2m of another org on internal", m2mGate, machine(internalClient, map[string]any{"org_id": "org-2"}), "org-1", 401},
+		{"m2m without an org on internal", m2mGate, machine(internalClient, map[string]any{"org_id": nil, "org_handle": nil, "org_name": nil}), "org-1", 401},
+		{"m2m without aut on internal", m2mGate, machine(internalClient, map[string]any{"aut": nil}), "org-1", 401},
+		{"other client id on internal", m2mGate, machine(internalClient, map[string]any{"client_id": "someone-else"}), "org-1", 401},
+		{"the org's publisher on internal", m2mGate, machine("aep-publisher-acme", nil), "org-1", 401},
+		{"user on internal", m2mGate, user(nil), "org-1", 401},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/x", nil)
+			r.Header.Set("Authorization", "Bearer "+c.token)
+			if c.org != "" {
+				r.Header.Set("X-Impersonate-Org", c.org)
+			}
+			rec := httptest.NewRecorder()
+			c.gate(ok).ServeHTTP(rec, r)
+			if rec.Code != c.want {
+				t.Fatalf("status %d, want %d (%s)", rec.Code, c.want, rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestConstructors_PanicOnEmptySecurityParams(t *testing.T) {
 	jwks := NewJWKSCache("http://idp/jwks")
 	v := NewVerifier("http://idp", jwks, thunderDialect)

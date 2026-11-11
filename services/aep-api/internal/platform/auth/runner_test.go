@@ -146,7 +146,7 @@ func newPublisherVerifier(t *testing.T) (*PublisherTokenVerifier, func(org, ouHa
 				Audience:  jwt.ClaimStrings{pubAudPrefix + org},
 				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 			},
-			Raw: dialect.Raw{OuHandle: ouHandle},
+			Raw: dialect.Raw{OuHandle: ouHandle, GrantType: "client_credentials"},
 		}
 		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 		tok.Header["kid"] = kid

@@ -73,6 +73,7 @@ type syncClientsSteps struct {
 	// refusing while that Secret is unsynced.
 	syncPostgres func(ctx context.Context, unsynced map[string]string) error
 	// setupThunder registers the Thunder clients except the skipped ones.
+	// nil on Asgardeo, where aectl registers nothing.
 	setupThunder func(ctx context.Context, skip map[string]string) error
 }
 
@@ -93,13 +94,13 @@ func syncClients(ctx context.Context, st syncClientsSteps) error {
 		return errOpenBaoWiped(missing)
 	}
 
-	ui.Step("Seeding missing Thunder client secrets")
+	ui.Step("Seeding missing client secrets")
 	seeded, err := st.seed(ctx)
 	if err != nil {
-		return fmt.Errorf("seed Thunder client secrets: %w", err)
+		return fmt.Errorf("seed client secrets: %w", err)
 	}
 	if len(seeded) == 0 {
-		ui.Success("All Thunder client secrets already seeded")
+		ui.Success("All client secrets already in OpenBao")
 	}
 	for _, line := range describeSeeded(seeded) {
 		ui.Success(line)
@@ -121,6 +122,10 @@ func syncClients(ctx context.Context, st syncClientsSteps) error {
 		return fmt.Errorf("sync postgres password: %w", err)
 	}
 
+	if st.setupThunder == nil {
+		ui.Success("Platform IdP is Asgardeo: its clients are pre-created, none registered")
+		return nil
+	}
 	ui.Step("Registering Thunder OAuth clients")
 	if err := st.setupThunder(ctx, clientsReadingUnsynced(unsynced)); err != nil {
 		return err
@@ -142,14 +147,23 @@ func runSyncClients(cmd *cobra.Command, args []string) error {
 	}
 	defer session.stop()
 
-	return syncClients(ctx, syncClientsSteps{
+	steps := syncClientsSteps{
 		missingRequired: session.missingRequiredPaths,
+		// Thunder's client secrets are generated where missing. Asgardeo's
+		// are imported: restored from the cluster where the store lost them,
+		// and required.
 		seed: func(ctx context.Context) ([]seededSecret, error) {
 			recover, err := newClusterSecretRecovery(ctx, syncClientsNamespace)
 			if err != nil {
 				return nil, err
 			}
-			return seedGeneratedSecrets(generatedThunderClientSecrets(), session.seedStore(ctx, recover))
+			st := session.seedStore(ctx, recover)
+			restored, err := requireImportedClientSecrets(st)
+			if err != nil {
+				return restored, err
+			}
+			seeded, err := seedGeneratedSecrets(generatedClientSecrets(), st)
+			return append(restored, seeded...), err
 		},
 		syncSecrets: func(ctx context.Context) (map[string]string, error) {
 			return syncPlatformExternalSecrets(ctx, syncClientsNamespace)
@@ -161,5 +175,9 @@ func runSyncClients(cmd *cobra.Command, args []string) error {
 			return doThunderSetup(ctx, k8sClient, syncClientsNamespace,
 				viper.GetString("thunder.namespace"), consolePublicURL(), skip)
 		},
-	})
+	}
+	if onAsgardeo() {
+		steps.setupThunder = nil
+	}
+	return syncClients(ctx, steps)
 }

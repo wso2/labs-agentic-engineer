@@ -528,7 +528,15 @@ func (s *idpService) dropPublisherApp(ctx context.Context, orgID string, existin
 	if existing.Kind != "platform" || existing.PublisherClientID == "" || s.clients == nil {
 		return
 	}
-	if _, err := s.clients.DeletePublisherApp(ctx, orgID, existing.PublisherThunderAppID); err != nil {
+	_, err := s.clients.DeletePublisherApp(ctx, orgID, existing.PublisherThunderAppID)
+	if errors.Is(err, ErrOrgClientNotManaged) {
+		// A pre-created client is not deleted and stays valid: its reference
+		// is kept, so builds do not stop for a client that still works.
+		slog.InfoContext(ctx, "idp_service: the publisher client is pre-created on the platform IdP; kept on kind switch",
+			"orgID", orgID)
+		return
+	}
+	if err != nil {
 		slog.WarnContext(ctx, "idp_service: Thunder publisher cleanup on kind switch failed (ignored)",
 			"orgID", orgID, "error", err)
 		return
