@@ -115,6 +115,30 @@ platform fallback. aep-api writes it into the org's AE Studio pod env
 (`AE_MODEL_CONNECTION` and `ANTHROPIC_API_KEY`, read once at boot) when it
 converges the pod, and hands it to each coding run at dispatch.
 
+**Asgardeo as the platform IdP.** `make dev-env AE_IDP_KIND=asgardeo
+ASGARDEO_TENANT=<handle> AE_ASGARDEO_SECRETS_DIR=<dir>` builds the cluster on
+an Asgardeo organization in place of the in-cluster ThunderID. Run
+`deployments/scripts/ae-asgardeo-apps.sh` on the organization first, with
+`AE_CONSOLE_URL=http://console.ae.localhost:8080`; `<dir>` is where it wrote
+the four secret files. The mode:
+
+- points OpenChoreo's control plane at the organization (its four
+  `security.oidc` URLs come from the organization's discovery document) and
+  installs no platform ThunderID;
+- generates the aectl config from `AECTL_CONFIG` with the `idp:` block set
+  (`deployments/scripts/ae-asgardeo-aectl-config.sh`, written to the ignored
+  `tools/aectl/.aectl-asgardeo.yaml`), imports the four secrets and installs
+  with `idp.kind: asgardeo` (see "Install with Asgardeo as the platform IdP");
+- leaves out what signs in with a client that exists only in ThunderID:
+  OpenChoreo's portal, the observability plane, Agent Manager, the SRE agent
+  and `dev-seed`. Connect GitHub and the model key in the console's welcome
+  step. A coding cycle's build stops at its publish step, which uses
+  OpenChoreo's workload publisher client.
+
+It is a mode of a new cluster. Do not run it over a Thunder cluster, or the
+reverse: an org's secret paths are derived from the IdP's id for the org, so
+the org's stored secrets would be orphaned. Delete the cluster first.
+
 `make dev-update` is one-shot, not a watch loop — run it again after every
 edit you want reflected in the cluster. Its steps are the `dev-update` target
 in the `Makefile`: build the images (only those whose dependencies changed),
