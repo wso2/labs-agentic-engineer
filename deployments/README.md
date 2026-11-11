@@ -33,7 +33,11 @@ appears in the config file you import (`console.public_url`, `tryit.public_url`,
 `gateway.hostname`, `environment.idp_base_domain`,
 `environment.gateway_base_domain`, `thunder.public_url`). On a non-localhost
 run the cluster script prints that block already composed, so it doesn't have
-to be written by hand.
+to be written by hand. The IdP's endpoints are not in the config: `aectl`
+reads them from `<thunder.public_url>/.well-known/openid-configuration` at
+install and update, and puts their paths on `thunder.url` for the pods. The
+optional `idp.kind` (`thunder` when unset) names the IdP's token dialect, the
+claim names and rules every reader of its tokens uses.
 
 ```bash
 # 1. One-shot bring-up — cluster + platform, via aectl (idempotent).

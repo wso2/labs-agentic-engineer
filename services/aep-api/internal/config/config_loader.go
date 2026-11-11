@@ -86,8 +86,9 @@ func Load() (Config, error) {
 			// The platform IdP's in-cluster JWKS. deployments/scripts/env.sh
 			// (THUNDER_INTERNAL_JWKS_URL) is the source of truth for the IdP's
 			// name; this default must agree with it.
-			JWKSURL: r.readOptionalString("PLATFORM_IDP_JWKS_URL", "http://platform-idp-service.platform-idp.svc.cluster.local:8090/oauth2/jwks"),
-			Kind:    r.readOptionalString("PLATFORM_IDP_KIND", string(dialect.KindThunder)),
+			JWKSURL:  r.readOptionalString("PLATFORM_IDP_JWKS_URL", "http://platform-idp-service.platform-idp.svc.cluster.local:8090/oauth2/jwks"),
+			TokenURL: r.readOptionalString("PLATFORM_IDP_TOKEN_URL", ""),
+			Kind:     r.readOptionalString("PLATFORM_IDP_KIND", string(dialect.KindThunder)),
 		},
 		AEStudio:               r.aeStudio(),
 		JWKSURL:                r.readOptionalString("JWKS_URL", ""),
@@ -300,6 +301,7 @@ func (r *configReader) aeStudio() AEStudioConfig {
 	c.IDP.Issuer = r.readOptionalString("AE_STUDIO_IDP_ISSUER", "")
 	c.IDP.JWKSURL = r.readOptionalString("AE_STUDIO_IDP_JWKS_URL", "")
 	c.IDP.TokenURL = r.readOptionalString("AE_STUDIO_IDP_TOKEN_URL", "")
+	c.IDP.Kind = r.readOptionalString("AE_STUDIO_IDP_KIND", string(dialect.KindThunder))
 	c.IDP.UserAudiences = splitCSV(os.Getenv("AE_STUDIO_IDP_USER_AUDIENCES"))
 	c.AEPAPIBaseURL = r.readOptionalString("AE_STUDIO_AEP_API_BASE_URL", "")
 	c.InternalClientID = r.readOptionalString("AE_STUDIO_INTERNAL_CLIENT_ID", "")

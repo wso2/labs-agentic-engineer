@@ -80,8 +80,13 @@ spec:
               value: {{ .Values.console.thunder.clientId | quote }}
             - name: SERVICE_AUTH_CLIENT_ID
               value: {{ .Values.aepApi.serviceAuth.clientId | quote }}
+            # The IdP's token endpoint at the in-cluster address, from its
+            # discovery document (aectl writes thunder.tokenURL).
             - name: SERVICE_AUTH_TOKEN_URL
-              value: "{{ .Values.thunder.adminURL }}/oauth2/token"
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-configs
+                  key: THUNDER_TOKEN_URL
             - name: SERVICE_AUTH_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
@@ -146,6 +151,17 @@ spec:
                 configMapKeyRef:
                   name: platform-configs
                   key: THUNDER_ISSUER
+            # The token endpoint the coding-agent dispatch mints the org's
+            # publisher token against.
+            - name: PLATFORM_IDP_TOKEN_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-configs
+                  key: THUNDER_TOKEN_URL
+            # The IdP's token dialect: how aep-api reads the claims of every
+            # token it verifies (values.yaml idp.kind).
+            - name: PLATFORM_IDP_KIND
+              value: {{ .Values.idp.kind | quote }}
 
             - name: THUNDER_ADMIN_URL
               valueFrom:
@@ -233,6 +249,9 @@ spec:
             - name: AE_STUDIO_IDP_TOKEN_URL
               value: {{ . | quote }}
             {{- end }}
+            # The dialect every org's AE Studio pod reads tokens by (its AE_IDP_KIND).
+            - name: AE_STUDIO_IDP_KIND
+              value: {{ .Values.idp.kind | quote }}
             {{- with $ae.runtimeClassName }}
             - name: AE_STUDIO_RUNTIME_CLASS_NAME
               value: {{ . | quote }}

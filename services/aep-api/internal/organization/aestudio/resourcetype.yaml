@@ -84,6 +84,8 @@ spec:
             issuer: { type: string }
             jwksUrl: { type: string }
             tokenUrl: { type: string }
+            # The IdP's token dialect, which the containers read its claims by.
+            kind: { type: string, default: thunder }
             userAudiences: { type: array, items: { type: string }, default: [APP_FACTORY_CONSOLE] }
         aepApiBaseUrl: { type: string }
         aeOnlyClientId: { type: string }
@@ -250,6 +252,7 @@ spec:
                     - { name: AE_ORG_HANDLE, value: "${parameters.org.handle}" }
                     - { name: AE_IDP_ISSUER, value: "${environmentConfigs.idp.issuer}" }
                     - { name: AE_IDP_JWKS_URL, value: "${environmentConfigs.idp.jwksUrl}" }
+                    - { name: AE_IDP_KIND, value: "${environmentConfigs.idp.kind}" }
                     - { name: AE_USER_AUDIENCES, value: '${environmentConfigs.idp.userAudiences.join(",")}' }
                     - { name: AE_MCP_SOCKET, value: /run/ae/mcp/mcp.sock }
                     - { name: AE_TURN_SOCKET, value: /run/ae/mcp/turn.sock }
@@ -279,6 +282,7 @@ spec:
                     - { name: AE_ORG_HANDLE, value: "${parameters.org.handle}" }
                     - { name: AE_IDP_ISSUER, value: "${environmentConfigs.idp.issuer}" }
                     - { name: AE_IDP_JWKS_URL, value: "${environmentConfigs.idp.jwksUrl}" }
+                    - { name: AE_IDP_KIND, value: "${environmentConfigs.idp.kind}" }
                     - { name: AE_USER_AUDIENCES, value: '${environmentConfigs.idp.userAudiences.join(",")}' }
                     - { name: AE_ALLOWED_ORIGINS, value: '${environmentConfigs.consoleOrigins.join(",")}' }   # 10
                     - { name: AE_FILES_SOCKET, value: /run/ae/files/files.sock }
@@ -302,6 +306,7 @@ spec:
                     - { name: AE_ORG_HANDLE, value: "${parameters.org.handle}" }
                     - { name: AE_IDP_ISSUER, value: "${environmentConfigs.idp.issuer}" }
                     - { name: AE_IDP_JWKS_URL, value: "${environmentConfigs.idp.jwksUrl}" }
+                    - { name: AE_IDP_KIND, value: "${environmentConfigs.idp.kind}" }
                     - { name: AE_IDP_TOKEN_URL, value: "${environmentConfigs.idp.tokenUrl}" }
                     - { name: AE_USER_AUDIENCES, value: '${environmentConfigs.idp.userAudiences.join(",")}' }
                     - { name: AE_M2M_CLIENT_ID, value: "${environmentConfigs.aeOnlyClientId}" }

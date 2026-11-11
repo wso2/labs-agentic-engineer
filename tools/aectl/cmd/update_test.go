@@ -85,7 +85,7 @@ func TestHelmUpgradeArgs_ChartSource(t *testing.T) {
 // the MCPHostname from sreParams, not a global.
 func TestUpdatePlatformSreAgent_PassesChartSourceThrough(t *testing.T) {
 	p := sreParams{AEPNamespace: "wso2-aep", ObsNamespace: "obs", RcaName: "sre-agent", MCPHostname: "aep-mcp.openchoreo.localhost"}
-	cfg := sreAgentPlatformUpdateConfig(p, "deployments/helm-charts/platform", "", "abc123")
+	cfg := sreAgentPlatformUpdateConfig(p, "deployments/helm-charts/platform", "", "abc123", testPlatformIDP)
 	args, err := helmUpgradeArgs(cfg)
 	if err != nil {
 		t.Fatalf("helmUpgradeArgs: %v", err)
@@ -156,12 +156,12 @@ func TestRunSreInstall_MissingConfigRefusesBeforeCluster(t *testing.T) {
 func TestSreAgentPlatformUpdateConfig_CarriesAEStudioValuesAndValueStrategy(t *testing.T) {
 	setValidUpdateConfig(t)
 	p := sreParams{AEPNamespace: "wso2-aep", MCPHostname: "aep-mcp.openchoreo.localhost"}
-	args, err := helmUpgradeArgs(sreAgentPlatformUpdateConfig(p, "deployments/helm-charts/platform", "", "abc123"))
+	args, err := helmUpgradeArgs(sreAgentPlatformUpdateConfig(p, "deployments/helm-charts/platform", "", "abc123", testPlatformIDP))
 	if err != nil {
 		t.Fatalf("helmUpgradeArgs: %v", err)
 	}
 	joined := strings.Join(args, "\x00")
-	want := aeStudioOverrides("wso2-aep")
+	want := append(aeStudioOverrides("wso2-aep"), platformIDPOverrides(testPlatformIDP)...)
 	for i := 0; i+1 < len(want); i += 2 {
 		if !strings.Contains(joined, want[i]+"\x00"+want[i+1]) {
 			t.Errorf("sre update args lack %s %s", want[i], want[i+1])

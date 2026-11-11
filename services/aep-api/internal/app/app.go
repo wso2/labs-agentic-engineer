@@ -673,7 +673,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	codingExecutor.WithCodingAgentSettings(agentSettings)
 	codingExecutor.WithPublisherCredentials(
 		codingagent.NewIDPPublisherResolver(orgSecretRepo),
-		codingagent.PublisherTokenURLFromJWKS(cfg.PlatformIDP.JWKSURL),
+		cfg.PlatformIDP.TokenURL,
 	)
 	// agentDeadlines is how long each cycle kind may run. The dispatcher, the
 	// run supervisor and the settler each derive their bound from this one

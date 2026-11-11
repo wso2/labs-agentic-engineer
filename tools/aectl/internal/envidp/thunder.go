@@ -30,6 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/wso2/aep/aectl/internal/helm"
+	"github.com/wso2/aep/aectl/internal/oidc"
 	"github.com/wso2/aep/aectl/internal/thunder"
 )
 
@@ -201,7 +202,7 @@ func createThunder(ctx context.Context, c clients, cfg Config, inst *ThunderInst
 		return fmt.Errorf("apply bootstrap ConfigMap %s/%s: %w", inst.Namespace, bootstrapCM, err)
 	}
 
-	values, err := thunderChartSpec(inst, bootstrapCM, names, platformTrustFrom(cfg.PlatformThunderPublicURL))
+	values, err := thunderChartSpec(inst, bootstrapCM, names, platformTrustFrom(cfg.PlatformIDP))
 	if err != nil {
 		return fmt.Errorf("build Thunder chart spec: %w", err)
 	}
@@ -284,19 +285,23 @@ type platformTrust struct {
 	Audience string
 }
 
-// platformTrustFrom derives T2's trust of T1 from the platform IdP's public
-// URL. Returns the zero value when that URL is unset, which leaves the
-// trustedIssuer block off the install entirely rather than writing a half
-// one: a trustedIssuer naming an issuer that signs nothing is worse than no
-// trustedIssuer, because it reads as configured.
-func platformTrustFrom(platformPublicURL string) platformTrust {
-	host := hostnameOf(platformPublicURL)
-	if platformPublicURL == "" || host == "" {
+// platformTrustFrom derives T2's trust of T1 from the platform IdP's
+// discovered endpoints: the issuer as named, and its JWKS reached through
+// the control-plane HTTPS gateway (the same path on https://<host>:8443,
+// ADR-0028: ThunderID fetches a trusted issuer's keys over HTTPS only).
+// Returns the zero value when the endpoints are undiscovered, which leaves
+// the trustedIssuer block off the install entirely rather than writing a
+// half one: a trustedIssuer naming an issuer that signs nothing is worse
+// than no trustedIssuer, because it reads as configured.
+func platformTrustFrom(idp oidc.Endpoints) platformTrust {
+	host := hostnameOf(idp.Issuer)
+	if !idp.Configured() || host == "" {
 		return platformTrust{}
 	}
+	gateway := idp.OnBase(fmt.Sprintf("https://%s:%d", host, platformTrustJWKSPort))
 	return platformTrust{
-		Issuer:   platformPublicURL,
-		JWKSURL:  fmt.Sprintf("https://%s:%d/oauth2/jwks", host, platformTrustJWKSPort),
+		Issuer:   idp.Issuer,
+		JWKSURL:  gateway.JWKSURL,
 		Audience: platformTrustAudience,
 	}
 }

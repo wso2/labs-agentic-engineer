@@ -103,6 +103,7 @@ type envConfigs struct {
 		Issuer        string   `json:"issuer"`
 		JWKSURL       string   `json:"jwksUrl"`
 		TokenURL      string   `json:"tokenUrl"`
+		Kind          string   `json:"kind"`
 		UserAudiences []string `json:"userAudiences"`
 	} `json:"idp"`
 	AEPAPIBaseURL    string `json:"aepApiBaseUrl"`
@@ -376,6 +377,7 @@ func envConfigsOf(cfg config.AEStudioConfig) envConfigs {
 	e.IDP.Issuer = cfg.IDP.Issuer
 	e.IDP.JWKSURL = cfg.IDP.JWKSURL
 	e.IDP.TokenURL = cfg.IDP.TokenURL
+	e.IDP.Kind = cfg.IDP.Kind
 	e.IDP.UserAudiences = cfg.IDP.UserAudiences
 	e.AEPAPIBaseURL = cfg.AEPAPIBaseURL
 	e.AEOnlyClientID = cfg.InternalClientID

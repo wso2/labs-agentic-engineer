@@ -164,6 +164,7 @@ func tryItOverrides(publicURL, gatewayHostname string) []string {
 // plain or 19443 TLS locally). tls.enabled and oc.data_plane_gateway_tls
 // describe the same gateway listener and must agree. The image refs are not set here; an empty
 // image keeps aep-api booting and makes the AE Studio Ensure fail loudly.
+// The IdP values (aeStudio.idp.*) are platformIDPOverrides', from discovery.
 //
 // Shared by `platform install` and `platform update` (so `make dev-update`
 // too): an install made before these values existed converges on its next
@@ -183,17 +184,6 @@ func aeStudioOverrides(platformNamespace string) []string {
 	// previous release's values, and an empty --set would wipe one the install made.
 	if h := viper.GetString("gateway.hostname"); h != "" {
 		args = append(args, "--set", "aeStudio.gatewayHost="+h)
-	}
-	if u := viper.GetString("thunder.public_url"); u != "" {
-		args = append(args, "--set", "aeStudio.idp.issuer="+u)
-	}
-	// An unset thunder.url leaves the IdP URLs absent so aep-api's
-	// not-configured check names them, instead of a half-built URL.
-	if thunderURL := viper.GetString("thunder.url"); thunderURL != "" {
-		args = append(args,
-			"--set", "aeStudio.idp.jwksUrl="+thunderURL+"/oauth2/jwks",
-			"--set", "aeStudio.idp.tokenUrl="+thunderURL+"/oauth2/token",
-		)
 	}
 	// Always set, so update (which reuses the previous release's values)
 	// follows the config both ways. The relay image is the chart's own default.
@@ -348,6 +338,15 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	}
 	ui.Success("Config loaded")
 
+	// The IdP's endpoints come from its discovery document, fetched once here
+	// and written into the chart. First, before anything touches the cluster:
+	// an IdP that cannot be reached stops the install with nothing changed.
+	idp, err := discoverPlatformIDP(ctx)
+	if err != nil {
+		return err
+	}
+	ui.Success(fmt.Sprintf("Platform IdP %s (token dialect %s)", idp.Public.Issuer, idp.Kind))
+
 	if _, err := exec.LookPath("helm"); err != nil {
 		return fmt.Errorf("helm not found in PATH — install from https://helm.sh/docs/intro/install/")
 	}
@@ -443,6 +442,9 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("clean up legacy resources: %w", err)
 	}
 
+	// The in-cluster admin URL is thunder.url itself; the issuer is the one
+	// string the IdP's document names, so every `iss` check in the chart
+	// compares against exactly what the IdP stamps.
 	thunderURL := viper.GetString("thunder.url")
 	consoleURL := consolePublicURL()
 	helmArgs := []string{
@@ -450,9 +452,8 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		"-n", initPlatformNamespace,
 		"--create-namespace",
 		"--set", "console.publicURL=" + consoleURL,
-		"--set", "console.thunderPublicURL=" + viper.GetString("thunder.public_url"),
+		"--set", "console.thunderPublicURL=" + idp.Public.Issuer,
 		"--set", "thunder.adminURL=" + thunderURL,
-		"--set", "thunder.jwksURL=" + thunderURL + "/oauth2/jwks",
 		"--set", "platformAPI.baseURL=" + viper.GetString("oc.api_url"),
 		"--set", fmt.Sprintf("dataPlaneGateway.tls=%t", viper.GetBool("oc.data_plane_gateway_tls")),
 	}
@@ -471,6 +472,7 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	}
 	helmArgs = append(helmArgs, tryItOverrides(tryItPublicURL(), viper.GetString("gateway.hostname"))...)
 	helmArgs = append(helmArgs, aeStudioOverrides(initPlatformNamespace)...)
+	helmArgs = append(helmArgs, platformIDPOverrides(idp)...)
 	helmArgs = append(helmArgs, imageTagOverrides(initImageTag)...)
 	helmArgs = append(helmArgs, aeStudioImageOverrides(initAEStudioImageDesignAgent, initAEStudioImageCollab, initAEStudioImageStudioTools)...)
 	if u := viper.GetString("oc.observability_api_url"); u != "" {
@@ -541,8 +543,8 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		// applyGatewayIngressConfig do, so envidp's T2/gateway/binding record
 		// targets the SAME Environment object those functions read and patch.
 		Org: ocOrgNamespace(), Env: ocPipelineSourceEnvironment(),
-		PlatformThunderURL:       thunderURL,
-		PlatformThunderPublicURL: viper.GetString("thunder.public_url"),
+		PlatformThunderURL: thunderURL,
+		PlatformIDP:        idp.Public,
 		// Empty leaves envidp on the k3d convention. Both are browser-facing
 		// — the environment IdP is where a generated app sends its end users
 		// to sign in — so a cluster reachable by more than its own host has

@@ -114,6 +114,10 @@ type platformUpdateConfig struct {
 	PullPolicy     string
 	HelmSets       []string
 	ImageOverrides []serviceImageOverride
+	// IDP is the platform IdP as discovered (discoverPlatformIDP). A caller
+	// that has it passes it; platformUpdate discovers it when the zero value
+	// arrives, so one command fetches the document once.
+	IDP platformIDP
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
@@ -203,10 +207,11 @@ func helmUpgradeArgs(cfg platformUpdateConfig) ([]string, error) {
 		}
 	}
 
-	// The aectl-computed AE Studio values, the same set `platform install`
-	// applies, so an install that predates them converges on upgrade. Before
-	// --set so an explicit override still wins.
+	// The aectl-computed AE Studio and IdP values, the same sets `platform
+	// install` applies, so an install that predates them converges on
+	// upgrade. Before --set so an explicit override still wins.
 	helmArgs = append(helmArgs, aeStudioOverrides(cfg.Namespace)...)
+	helmArgs = append(helmArgs, platformIDPOverrides(cfg.IDP)...)
 
 	// Arbitrary --set overrides.
 	for _, s := range cfg.HelmSets {
@@ -229,6 +234,13 @@ func platformUpdate(ctx context.Context, cfg platformUpdateConfig) error {
 	}
 	if _, err := exec.LookPath("helm"); err != nil {
 		return fmt.Errorf("helm is required but was not found in PATH")
+	}
+	if !cfg.IDP.Public.Configured() {
+		idp, err := discoverPlatformIDP(ctx)
+		if err != nil {
+			return err
+		}
+		cfg.IDP = idp
 	}
 
 	helmArgs, err := helmUpgradeArgs(cfg)

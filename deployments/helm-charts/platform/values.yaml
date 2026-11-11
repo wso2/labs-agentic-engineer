@@ -243,7 +243,12 @@ thunder:
   # for the IdP's name is deployments/scripts/env.sh (THUNDER_INTERNAL_URL) and
   # these must agree with it. Override if the IdP moves.
   adminURL: "http://platform-idp-service.platform-idp.svc.cluster.local:8090"
+  # The IdP's JWKS and token endpoints at the in-cluster address. `aectl`
+  # sets both from the IdP's OIDC discovery document (the public document's
+  # paths on thunder.url) at install and update; the defaults are the local
+  # ThunderID's.
   jwksURL: "http://platform-idp-service.platform-idp.svc.cluster.local:8090/oauth2/jwks"
+  tokenURL: "http://platform-idp-service.platform-idp.svc.cluster.local:8090/oauth2/token"
   # OAuth resource indicator for ThunderID's own "System" resource server, the
   # one that owns the `system` scope aep-api's admin calls need. It is a name,
   # not an address: conventionally "<public issuer>/mcp", so the default derives
@@ -252,6 +257,14 @@ thunder:
   # converged cluster) drops the scope silently and every admin call 403s.
   # Set only when the IdP registered a non-conventional identifier.
   systemResourceIdentifier: ""
+
+idp:
+  # The platform IdP's token dialect: the claim names and rules every reader
+  # of its tokens uses to say who the caller is. One value reaches aep-api
+  # (PLATFORM_IDP_KIND), every org's AE Studio pod (AE_STUDIO_IDP_KIND, then
+  # AE_IDP_KIND) and the console (VITE_IDP_KIND). `thunder` is the one kind
+  # this release knows; `aectl` sets it from its idp.kind config.
+  kind: "thunder"
 
 openbao:
   # Address of OpenChoreo's built-in OpenBao service.

@@ -192,6 +192,19 @@ func TestTemplate_ContainerCommandsAndEnv(t *testing.T) {
 	}
 }
 
+// The platform IdP's token dialect reaches every container as AE_IDP_KIND,
+// from environmentConfigs.idp.kind: the three readers of the IdP's tokens
+// must read them by the same rules aep-api does.
+func TestTemplate_IDPKindReachesEveryContainer(t *testing.T) {
+	cs := byName(renderedContainers(t, ""))
+	for _, name := range []string{"ae-design-agent", "ae-collab", "ae-studio-tools"} {
+		got, ok := cs[name].env("AE_IDP_KIND")
+		if !ok || got != "thunder" {
+			t.Errorf("%s AE_IDP_KIND = %q (set %v), want thunder from environmentConfigs.idp.kind", name, got, ok)
+		}
+	}
+}
+
 // TestTemplate_WebhookURLEnvIsTheOutput: without a relay,
 // ae-studio-tools registers its repo hooks at AE_WEBHOOK_URL, which must
 // render to the very URL the webhookUrl output publishes, or GitHub delivers

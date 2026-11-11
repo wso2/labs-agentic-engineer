@@ -50,8 +50,9 @@ a tag is cut, and nothing reaches Thunder. Coding dispatch reads the name
 the row records and mounts `PUBLISHER_CLIENT_ID` /
 `PUBLISHER_CLIENT_SECRET` from it. No row does not create the OpenChoreo
 Component; the run settles blocked (`publisher-credentials-missing`) instead
-of spending the re-dispatch budget. `PUBLISHER_TOKEN_URL` is plain env, derived from
-`PLATFORM_IDP_JWKS_URL` (`/oauth2/jwks` → `/oauth2/token`).
+of spending the re-dispatch budget. `PUBLISHER_TOKEN_URL` is plain env: the
+platform IdP's token endpoint, `PLATFORM_IDP_TOKEN_URL`, which `aectl` reads
+from the IdP's OIDC discovery document at install and writes into the chart.
 
 ```mermaid
 sequenceDiagram

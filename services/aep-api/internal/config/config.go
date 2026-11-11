@@ -141,9 +141,10 @@ type Config struct {
 	// differently wants.
 	APIGatewayHost string
 
-	// Platform IDP defaults seeded into organization_idp_profiles rows
-	// on first access. Loaded from PLATFORM_IDP_ISSUER /
-	// PLATFORM_IDP_JWKS_URL.
+	// The platform IdP: its issuer and JWKS (seeded into
+	// organization_idp_profiles rows on first access), its token endpoint,
+	// and its token dialect kind. Loaded from PLATFORM_IDP_ISSUER,
+	// PLATFORM_IDP_JWKS_URL, PLATFORM_IDP_TOKEN_URL and PLATFORM_IDP_KIND.
 	PlatformIDP PlatformIDPDefaults
 
 	// AEStudio configures the per-org AE Studio data-plane Resource. Every
@@ -279,6 +280,11 @@ func (c Config) Validate() error {
 		// another kind's rules.
 		errs = append(errs, "PLATFORM_IDP_KIND: "+err.Error())
 	}
+	if _, err := dialect.ParseKind(c.AEStudio.IDP.Kind); err != nil {
+		// The same rule for the kind every org's pod is told: a bad value
+		// fails here, not in each pod at its next start.
+		errs = append(errs, "AE_STUDIO_IDP_KIND: "+err.Error())
+	}
 	if len(errs) > 0 {
 		return fmt.Errorf("configuration errors:\n%s", strings.Join(errs, "\n"))
 	}
@@ -329,6 +335,10 @@ type KubeAPIConfig struct {
 type PlatformIDPDefaults struct {
 	Issuer  string
 	JWKSURL string
+	// TokenURL is the IdP's token endpoint (PLATFORM_IDP_TOKEN_URL), from
+	// its discovery document at install; the coding-agent dispatch mints
+	// the org's publisher token against it. Empty refuses every dispatch.
+	TokenURL string
 	// Kind names the token dialect the verifiers read the IdP's claims by
 	// (PLATFORM_IDP_KIND; dialect.ParseKind). Empty is thunder.
 	Kind string
@@ -347,7 +357,10 @@ type AEStudioConfig struct {
 
 	IDP struct {
 		Issuer, JWKSURL, TokenURL string
-		UserAudiences             []string
+		// Kind is the token dialect the pod reads the IdP's claims by
+		// (AE_STUDIO_IDP_KIND; thunder when unset), shipped to it as AE_IDP_KIND.
+		Kind          string
+		UserAudiences []string
 	}
 
 	AEPAPIBaseURL string

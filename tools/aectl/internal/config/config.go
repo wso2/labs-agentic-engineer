@@ -49,6 +49,7 @@ var ConfigMapKeys = []string{
 	"thunder.url",
 	"thunder.admin_client_id",
 	"thunder.public_url",
+	"idp.kind",
 	"console.public_url",
 	"tryit.public_url",
 	"oc.api_url",
@@ -91,6 +92,10 @@ var keyRegistry = map[string]configKeyMeta{
 	"thunder.url":             {required: true, kind: kindURL},
 	"thunder.admin_client_id": {required: true, kind: kindString},
 	"thunder.public_url":      {required: true, kind: kindURL},
+	// The platform IdP's token dialect: the claim names and rules every reader
+	// of its tokens uses (aep-api, the AE Studio pod, the console). Optional;
+	// unset is thunder, the one kind this build knows.
+	"idp.kind": {required: false, kind: kindEnum, enumValues: []string{"thunder"}},
 	// The platform's three browser-facing origins. All optional: each is bound
 	// to a flag carrying the local default, so a file that omits them installs
 	// the same cluster it always did. Set them together — re-domaining one and
