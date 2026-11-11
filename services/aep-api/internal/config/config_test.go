@@ -100,6 +100,14 @@ func TestConfigValidate_RequiredFields(t *testing.T) {
 		if err := c.Validate(); err == nil {
 			t.Fatal("Validate() = nil, want error for a kind this build does not know")
 		}
+		// The pod's kind must be the platform's: the pod reads the same
+		// IdP's tokens.
+		c = validConfig()
+		c.PlatformIDP.Kind = "thunder"
+		c.AEStudio.IDP.Kind = "asgardeo"
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "AE_STUDIO_IDP_KIND") {
+			t.Fatalf("Validate() = %v, want an error naming AE_STUDIO_IDP_KIND for a kind other than the platform's", err)
+		}
 		// The kind shipped to every org's pod is checked by the same rule.
 		c = validConfig()
 		c.AEStudio.IDP.Kind = "okta"
@@ -129,6 +137,7 @@ func TestConfigValidate_RequiredFields(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				c := validConfig()
 				c.PlatformIDP.Kind = tc.kind
+				c.AEStudio.IDP.Kind = tc.kind
 				c.PlatformIDP.OrgHandle = tc.handle
 				c.PlatformIDP.OrgNamespace = tc.namespace
 				if tc.kind == "asgardeo" {
@@ -168,6 +177,7 @@ func TestConfigValidate_RequiredFields(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				c := validConfig()
 				c.PlatformIDP.Kind = tc.kind
+				c.AEStudio.IDP.Kind = tc.kind
 				if tc.kind == "asgardeo" {
 					c.PlatformIDP.OrgHandle = "acmecorp"
 					c.PlatformIDP.OrgNamespace = "default"

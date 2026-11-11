@@ -280,10 +280,15 @@ func (c Config) Validate() error {
 		// another kind's rules.
 		errs = append(errs, "PLATFORM_IDP_KIND: "+err.Error())
 	}
-	if _, err := dialect.ParseKind(c.AEStudio.IDP.Kind); err != nil {
+	platformKind, platformErr := dialect.ParseKind(c.PlatformIDP.Kind)
+	if podKind, err := dialect.ParseKind(c.AEStudio.IDP.Kind); err != nil {
 		// The same rule for the kind every org's pod is told: a bad value
 		// fails here, not in each pod at its next start.
 		errs = append(errs, "AE_STUDIO_IDP_KIND: "+err.Error())
+	} else if platformErr == nil && podKind != platformKind {
+		// The pod verifies tokens of the same IdP as aep-api. Told another
+		// kind, it would read them by the wrong rules and refuse every one.
+		errs = append(errs, fmt.Sprintf("AE_STUDIO_IDP_KIND (%s) must be the same kind as PLATFORM_IDP_KIND (%s): the org's pod reads the same IdP's tokens; leave AE_STUDIO_IDP_KIND unset to follow it", podKind, platformKind))
 	}
 	errs = append(errs, c.PlatformIDP.singleOrgErrors()...)
 	if len(errs) > 0 {
@@ -408,8 +413,9 @@ type AEStudioConfig struct {
 
 	IDP struct {
 		Issuer, JWKSURL, TokenURL string
-		// Kind is the token dialect the pod reads the IdP's claims by
-		// (AE_STUDIO_IDP_KIND; thunder when unset), shipped to it as AE_IDP_KIND.
+		// Kind is the token dialect the pod reads the IdP's claims by, shipped
+		// to it as AE_IDP_KIND (AE_STUDIO_IDP_KIND; PLATFORM_IDP_KIND when
+		// unset). It must be the platform's kind.
 		Kind string
 		// OrgHandle is PlatformIDP.OrgHandle (the same PLATFORM_IDP_ORG_HANDLE):
 		// when set, the handle the IdP's tokens name the org by, which the

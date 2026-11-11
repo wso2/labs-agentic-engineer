@@ -271,3 +271,54 @@ func TestLoad_AEStudioCPURequestsMalformedFailBootNamingTheKey(t *testing.T) {
 		}
 	}
 }
+
+// The org's pod reads the same IdP's tokens as aep-api, so the kind it is
+// told (AE_STUDIO_IDP_KIND) follows PLATFORM_IDP_KIND when it is not set,
+// and a different explicit kind is a boot error: the pod would otherwise
+// read every token by the wrong rules and refuse it.
+func TestLoad_AEStudioIDPKindFollowsThePlatformKind(t *testing.T) {
+	asgardeo := func(t *testing.T) {
+		t.Helper()
+		setMinimalEnv(t)
+		t.Setenv("PLATFORM_IDP_KIND", "asgardeo")
+		t.Setenv("PLATFORM_IDP_ORG_HANDLE", "acmecorp")
+		t.Setenv("PLATFORM_IDP_ORG_NAMESPACE", "default")
+		t.Setenv("PLATFORM_IDP_ORG_PUBLISHER_SECRET", "p")
+		t.Setenv("PLATFORM_IDP_ORG_STUDIO_SECRET", "s")
+	}
+
+	t.Run("unset follows the platform kind", func(t *testing.T) {
+		asgardeo(t)
+		t.Setenv("AE_STUDIO_IDP_KIND", "")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.AEStudio.IDP.Kind != "asgardeo" {
+			t.Fatalf("AEStudio.IDP.Kind = %q, want asgardeo", cfg.AEStudio.IDP.Kind)
+		}
+	})
+	t.Run("the same kind set explicitly", func(t *testing.T) {
+		asgardeo(t)
+		t.Setenv("AE_STUDIO_IDP_KIND", "asgardeo")
+		if _, err := Load(); err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+	})
+	t.Run("a different kind is refused", func(t *testing.T) {
+		asgardeo(t)
+		t.Setenv("AE_STUDIO_IDP_KIND", "thunder")
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "AE_STUDIO_IDP_KIND") || !strings.Contains(err.Error(), "PLATFORM_IDP_KIND") {
+			t.Fatalf("Load = %v, want an error naming both settings", err)
+		}
+	})
+	t.Run("a thunder install sets neither", func(t *testing.T) {
+		setMinimalEnv(t)
+		t.Setenv("PLATFORM_IDP_KIND", "")
+		t.Setenv("AE_STUDIO_IDP_KIND", "")
+		cfg, err := Load()
+		if err != nil || cfg.AEStudio.IDP.Kind != "thunder" {
+			t.Fatalf("Load = %q, %v; want thunder", cfg.AEStudio.IDP.Kind, err)
+		}
+	})
+}

@@ -307,7 +307,10 @@ func (r *configReader) aeStudio() AEStudioConfig {
 	c.IDP.Issuer = r.readOptionalString("AE_STUDIO_IDP_ISSUER", "")
 	c.IDP.JWKSURL = r.readOptionalString("AE_STUDIO_IDP_JWKS_URL", "")
 	c.IDP.TokenURL = r.readOptionalString("AE_STUDIO_IDP_TOKEN_URL", "")
-	c.IDP.Kind = r.readOptionalString("AE_STUDIO_IDP_KIND", string(dialect.KindThunder))
+	// The pod reads the platform IdP's tokens, so its kind follows
+	// PLATFORM_IDP_KIND unless set; Validate refuses a different one.
+	c.IDP.Kind = r.readOptionalString("AE_STUDIO_IDP_KIND",
+		r.readOptionalString("PLATFORM_IDP_KIND", string(dialect.KindThunder)))
 	c.IDP.OrgHandle = strings.TrimSpace(r.readOptionalString("PLATFORM_IDP_ORG_HANDLE", ""))
 	c.IDP.UserAudiences = splitCSV(os.Getenv("AE_STUDIO_IDP_USER_AUDIENCES"))
 	c.AEPAPIBaseURL = r.readOptionalString("AE_STUDIO_AEP_API_BASE_URL", "")
