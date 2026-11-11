@@ -18,7 +18,6 @@ package organization
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/wso2/aep/aep-api/internal/clients/thundersvc"
@@ -30,6 +29,9 @@ import (
 // client ids aep-api derives from the org's name, and their secrets are
 // imported into the vault and reach aep-api as settings. Nothing here calls
 // the IdP.
+//
+// A write on a client (SetAppSecret, DeletePublisherApp) answers
+// ErrOrgClientNotManaged.
 //
 // Every ensure reports the client as Created, which to EnsureClient means
 // "store this secret": the imported secret is written to the org's reference
@@ -49,9 +51,6 @@ var _ OrgClients = (*StaticOrgClients)(nil)
 func NewStaticOrgClients(org, publisherSecret, studioSecret string) *StaticOrgClients {
 	return &StaticOrgClients{org: org, publisherSecret: publisherSecret, studioSecret: studioSecret}
 }
-
-// errStaticClientSecret is a write the static registry cannot make.
-var errStaticClientSecret = errors.New("the org's clients are pre-created on this platform IdP: rotate the client secret in the IdP and import it again")
 
 // EnsurePublisherApp answers the org's pre-created publisher client. The OU
 // and the stored id are Thunder's lookup keys and are not read.
@@ -82,11 +81,11 @@ func (c *StaticOrgClients) app(clientID, secret, setting string) (thundersvc.Org
 
 // SetAppSecret is refused: the secret is the IdP admin's to rotate.
 func (c *StaticOrgClients) SetAppSecret(context.Context, string, string) error {
-	return errStaticClientSecret
+	return fmt.Errorf("%w: rotate the client secret in the IdP and import it again", ErrOrgClientNotManaged)
 }
 
-// DeletePublisherApp deletes nothing and says so: the app is the IdP admin's
-// to remove. The caller still drops aep-api's own record of its secret.
+// DeletePublisherApp is refused: the client is the IdP admin's to remove. It
+// stays valid, so the caller keeps its record of it.
 func (c *StaticOrgClients) DeletePublisherApp(context.Context, string, string) (bool, error) {
-	return false, nil
+	return false, fmt.Errorf("%w: remove the publisher client in the IdP", ErrOrgClientNotManaged)
 }

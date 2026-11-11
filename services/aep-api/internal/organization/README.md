@@ -265,9 +265,10 @@ model-connection / idp services.*
   imported secret and `Created`, so `EnsureClient` stores the secret in the org's reference on each
   GitHub connect, with no call to the IdP: that is how a secret rotated in the IdP and imported again
   reaches the org. Its client id stands in for the Thunder entity id on the profile. It refuses
-  another org and any other app name; `SetAppSecret` is an error, and `DeletePublisherApp` deletes
-  nothing while the caller still drops the `ae-publisher-client` reference. The port keeps
-  `thundersvc`'s `OrgApp` and `OrgAppSpec` as its data types.
+  another org and any other app name. `SetAppSecret` and `DeletePublisherApp` answer
+  `ErrOrgClientNotManaged`: the client is the IdP admin's to rotate or remove. On an IDP-kind switch
+  the client is therefore not deleted and stays valid, so its `ae-publisher-client` reference is kept
+  and builds go on. The port keeps `thundersvc`'s `OrgApp` and `OrgAppSpec` as its data types.
 - **`OrgCatalogVaultKey` reconstructs a Registered External's org-catalog vault path from the
   request JWT `ouId`** — a read, not a second write. Used after aep-api restart when the
   process-local value plane is empty (ADR-0021). A missing `ouId` cannot invent a path.

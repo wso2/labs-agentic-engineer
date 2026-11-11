@@ -18,6 +18,7 @@ package organization
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -108,17 +109,40 @@ func TestStaticOrgClients_MissingSettings(t *testing.T) {
 	}
 }
 
-// The apps are an admin's: aep-api cannot set a secret on one, and a delete
-// removes nothing (the caller still drops its own record).
+// The apps are an admin's: aep-api can neither set a secret on one nor
+// delete one. Both answer ErrOrgClientNotManaged, so a caller can tell
+// "not mine to change" from a failure.
 func TestStaticOrgClients_WritesAreNotAepApis(t *testing.T) {
 	c := newStatic()
 	ctx := context.Background()
-	if err := c.SetAppSecret(ctx, "aep-publisher-default", "new"); err == nil {
-		t.Fatal("SetAppSecret = nil, want an error: the secret is rotated in the IdP")
+	if err := c.SetAppSecret(ctx, "aep-publisher-default", "new"); !errors.Is(err, ErrOrgClientNotManaged) {
+		t.Fatalf("SetAppSecret = %v, want ErrOrgClientNotManaged", err)
 	}
 	deleted, err := c.DeletePublisherApp(ctx, "default", "aep-publisher-default")
-	if deleted || err != nil {
-		t.Fatalf("DeletePublisherApp = %v, %v; want false, nil", deleted, err)
+	if deleted || !errors.Is(err, ErrOrgClientNotManaged) {
+		t.Fatalf("DeletePublisherApp = %v, %v; want false, ErrOrgClientNotManaged", deleted, err)
+	}
+}
+
+// A profile kind switch drops the publisher client where aep-api created it
+// (the app is deleted, so its credentials must stop passing the build gate).
+// A pre-created client is not deleted and stays valid, so its reference is
+// kept: dropping it would only block builds until GitHub is reconnected.
+func TestDropPublisherApp_StaticRegistryKeepsTheReference(t *testing.T) {
+	f := newStaticEnsureFixture(t)
+	if err := f.svc.EnsureClient(ensureCtx(), "default", ClientPublisher); err != nil {
+		t.Fatal(err)
+	}
+	ref := f.row(OrgSecretPublisherClient)
+	p := f.profile(t)
+	if p.Kind != "platform" || p.PublisherClientID == "" || ref == "" {
+		t.Fatalf("setup: kind %q client %q ref %q", p.Kind, p.PublisherClientID, ref)
+	}
+
+	f.svc.dropPublisherApp(ensureCtx(), "default", p)
+
+	if got := f.row(OrgSecretPublisherClient); got != ref || !f.vault.refs[ref] {
+		t.Fatalf("the publisher reference was dropped: row %q, live refs %v", got, f.vault.refs)
 	}
 }
 
