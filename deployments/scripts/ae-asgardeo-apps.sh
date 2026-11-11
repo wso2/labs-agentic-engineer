@@ -24,7 +24,9 @@
 # reads from the access token.
 #
 #   client id                    kind     secret file (vault path aep/thunder-clients/<file>)
-#   aep-console-client           browser  none (public client, PKCE)
+#   aep-console-client           browser  none (public client, PKCE; redirects
+#                                         <console>/callback after sign-in and
+#                                         <console> after sign-out)
 #   aep-api-client               M2M      aep-api-client
 #   ae-studio-internal-client    M2M      ae-studio-internal
 #   aep-publisher-<namespace>    M2M      org-publisher
@@ -82,7 +84,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --confirm-tenant) shift; CONFIRM_TENANT="${1:-}" ;;
-    -h|--help) sed -n '18,65p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '18,67p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
   shift
@@ -107,6 +109,10 @@ OUT_DIR="${AE_ASGARDEO_OUT_DIR:-}"
 CONSOLE_URL="${CONSOLE_URL%/}"
 CONSOLE_ORIGIN="$(printf '%s' "$CONSOLE_URL" | sed -E 's#^(https?://[^/]+).*#\1#')"
 CALLBACK_URL="${CONSOLE_URL}/callback"
+# Where the console asks to be sent back after sign-out: its origin. Asgardeo
+# refuses a sign-out whose return address is not registered on the
+# application, so it is registered beside the sign-in callback.
+POST_LOGOUT_URL="${CONSOLE_ORIGIN}"
 API="${BASE_URL%/}/t/${TENANT}/api/server/v1"
 ISSUER="${BASE_URL%/}/t/${TENANT}/oauth2/token"
 
@@ -119,7 +125,7 @@ ae-studio-${NAMESPACE}|m2m|org-studio"
 
 echo "Asgardeo organization : ${TENANT} (${BASE_URL})"
 echo "Org namespace         : ${NAMESPACE}"
-echo "Console               : ${CONSOLE_URL} (redirect ${CALLBACK_URL}, origin ${CONSOLE_ORIGIN})"
+echo "Console               : ${CONSOLE_URL} (redirects ${CALLBACK_URL} and ${POST_LOGOUT_URL}, origin ${CONSOLE_ORIGIN})"
 echo "Secrets written to    : ${OUT_DIR}"
 echo "Applications (each created only if its client id does not exist):"
 printf '%s\n' "$APPS" | while IFS='|' read -r id kind file; do
@@ -212,14 +218,18 @@ check_app() {
       ] | .[]' "$BODY"
     return
   fi
-  jq -r --arg id "$id" --arg cb "$CALLBACK_URL" --arg origin "$CONSOLE_ORIGIN" --argjson attrs "$TOKEN_ATTRIBUTES" '
-    [ (if .clientId != $id then "client id is \(.clientId)" else empty end),
+  # Asgardeo stores several redirect URLs as one entry, regexp=(a|b).
+  jq -r --arg id "$id" --arg cb "$CALLBACK_URL" --arg logout "$POST_LOGOUT_URL" --arg origin "$CONSOLE_ORIGIN" --argjson attrs "$TOKEN_ATTRIBUTES" '
+    [ (.callbackURLs // [])[]
+      | if startswith("regexp=(") and endswith(")") then (.[8:-1] | split("|"))[] else . end ] as $redirects
+    | [ (if .clientId != $id then "client id is \(.clientId)" else empty end),
       (if .accessToken.type != "JWT" then "access token type is \(.accessToken.type), not JWT" else empty end),
       (if .publicClient != true then "it is not a public client" else empty end),
       (if .pkce.mandatory != true then "PKCE is not mandatory" else empty end),
       (if ((.grantTypes // []) | index("authorization_code")) == null then "the authorization_code grant is off" else empty end),
       (if ((.grantTypes // []) | index("refresh_token")) == null then "the refresh_token grant is off" else empty end),
-      (if ((.callbackURLs // []) | index($cb)) == null then "the redirect URL \($cb) is not registered" else empty end),
+      (if ($redirects | index($cb)) == null then "the sign-in redirect URL \($cb) is not registered" else empty end),
+      (if ($redirects | index($logout)) == null then "the sign-out redirect URL \($logout) is not registered" else empty end),
       (if ((.allowedOrigins // []) | index($origin)) == null then "the origin \($origin) is not allowed" else empty end),
       ($attrs - (.accessToken.accessTokenAttributes // []) | map("the access token lacks the attribute \(.)") | .[])
     ] | .[]' "$BODY"
@@ -240,7 +250,7 @@ create_app() {
             accessToken: { type: "JWT", userAccessTokenExpiryInSeconds: 3600, applicationAccessTokenExpiryInSeconds: 3600 } } } }' \
       | api POST "${API}/applications" -H 'Content-Type: application/json' -d @-)
   else
-    status=$(jq -n --arg id "$id" --arg template "$BROWSER_TEMPLATE" --arg cb "$CALLBACK_URL" --arg origin "$CONSOLE_ORIGIN" \
+    status=$(jq -n --arg id "$id" --arg template "$BROWSER_TEMPLATE" --arg cb "$CALLBACK_URL" --arg logout "$POST_LOGOUT_URL" --arg origin "$CONSOLE_ORIGIN" \
         --argjson attrs "$TOKEN_ATTRIBUTES" --argjson claims "$REQUESTED_CLAIMS" '
         { name: $id, templateId: $template,
           advancedConfigurations: { skipLoginConsent: true, skipLogoutConsent: true },
@@ -252,7 +262,7 @@ create_app() {
           inboundProtocolConfiguration: { oidc: {
             clientId: $id, grantTypes: ["authorization_code", "refresh_token"], publicClient: true,
             pkce: { mandatory: true, supportPlainTransformAlgorithm: false },
-            callbackURLs: [$cb], allowedOrigins: [$origin],
+            callbackURLs: ["regexp=(\($logout)|\($cb))"], allowedOrigins: [$origin],
             accessToken: { type: "JWT", bindingType: "sso-session", revokeTokensWhenIDPSessionTerminated: true,
               validateTokenBinding: false, userAccessTokenExpiryInSeconds: 3600,
               applicationAccessTokenExpiryInSeconds: 3600, accessTokenAttributes: $attrs },
