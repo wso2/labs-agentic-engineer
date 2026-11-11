@@ -301,6 +301,11 @@ AECTL_CONFIG ?= skaffold/defaults.yaml
 AE_IDP_KIND ?= thunder
 ASGARDEO_TENANT ?=
 AE_ASGARDEO_SECRETS_DIR ?=
+# Asgardeo's API address, for an organization in another region. One value
+# for the cluster script (which points OpenChoreo at the issuer under it) and
+# the generated aectl config (whose idp.issuer is under it): the two must name
+# the same issuer.
+ASGARDEO_BASE_URL ?= https://api.asgardeo.io
 
 # The four client secrets an Asgardeo install imports, by file name and vault
 # name (ae-asgardeo-apps.sh; importedClientNames in tools/aectl).
@@ -323,8 +328,8 @@ dev-env-asgardeo:
 		[ -s "$(AE_ASGARDEO_SECRETS_DIR)/$$f" ] || { echo "❌ $(AE_ASGARDEO_SECRETS_DIR)/$$f is missing or empty: run deployments/scripts/ae-asgardeo-apps.sh first." >&2; exit 1; }; \
 	done
 	cd tools/aectl && go build -o aectl-skaffold .
-	bash deployments/scripts/ae-asgardeo-aectl-config.sh $(AECTL_CONFIG) $(ASGARDEO_TENANT) > $(AE_ASGARDEO_AECTL_CONFIG)
-	AE_DOMAIN=$(AE_DOMAIN) AE_IDP_KIND=asgardeo ASGARDEO_TENANT=$(ASGARDEO_TENANT) bash deployments/scripts/setup-env-for-aectl.sh
+	bash deployments/scripts/ae-asgardeo-aectl-config.sh $(AECTL_CONFIG) $(ASGARDEO_TENANT) $(ASGARDEO_BASE_URL) > $(AE_ASGARDEO_AECTL_CONFIG)
+	AE_DOMAIN=$(AE_DOMAIN) AE_IDP_KIND=asgardeo ASGARDEO_TENANT=$(ASGARDEO_TENANT) ASGARDEO_BASE_URL=$(ASGARDEO_BASE_URL) bash deployments/scripts/setup-env-for-aectl.sh
 	$(MAKE) dev-images
 	$(MAKE) ae-studio-refs-check
 	@# aectl connects to the cluster for every command, `config test` included,
