@@ -103,6 +103,7 @@ OUT_DIR="${AE_ASGARDEO_OUT_DIR:-}"
 [[ "$TENANT" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "ASGARDEO_TENANT must be the organization handle (lowercase letters, digits, hyphens)"
 [[ "$NAMESPACE" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || die "AE_ORG_NAMESPACE must be a namespace name (lowercase letters, digits, hyphens)"
 [[ "$CONSOLE_URL" =~ ^https?://[^/]+ ]] || die "AE_CONSOLE_URL must be the console's public URL (http:// or https://)"
+[[ "$CONSOLE_URL" =~ [[:space:]\|\(\)\\] ]] && die "AE_CONSOLE_URL must not contain spaces, '|', parentheses or backslashes"
 [[ "$BASE_URL" =~ ^https:// ]] || die "ASGARDEO_BASE_URL must be an https:// URL"
 [ -n "$OUT_DIR" ] || die "AE_ASGARDEO_OUT_DIR is required: the directory the generated secrets are written to"
 
@@ -218,10 +219,14 @@ check_app() {
       ] | .[]' "$BODY"
     return
   fi
-  # Asgardeo stores several redirect URLs as one entry, regexp=(a|b).
+  # Asgardeo stores several redirect URLs as one entry, regexp=(a|b), which
+  # it matches as a regular expression; each alternative is unescaped here
+  # before it is compared.
   jq -r --arg id "$id" --arg cb "$CALLBACK_URL" --arg logout "$POST_LOGOUT_URL" --arg origin "$CONSOLE_ORIGIN" --argjson attrs "$TOKEN_ATTRIBUTES" '
     [ (.callbackURLs // [])[]
-      | if startswith("regexp=(") and endswith(")") then (.[8:-1] | split("|"))[] else . end ] as $redirects
+      | if startswith("regexp=(") and endswith(")")
+        then (.[8:-1] | split("|"))[] | gsub("\\\\(?<c>.)"; "\(.c)")
+        else . end ] as $redirects
     | [ (if .clientId != $id then "client id is \(.clientId)" else empty end),
       (if .accessToken.type != "JWT" then "access token type is \(.accessToken.type), not JWT" else empty end),
       (if .publicClient != true then "it is not a public client" else empty end),
@@ -252,6 +257,11 @@ create_app() {
   else
     status=$(jq -n --arg id "$id" --arg template "$BROWSER_TEMPLATE" --arg cb "$CALLBACK_URL" --arg logout "$POST_LOGOUT_URL" --arg origin "$CONSOLE_ORIGIN" \
         --argjson attrs "$TOKEN_ATTRIBUTES" --argjson claims "$REQUESTED_CLAIMS" '
+        # The two redirect URLs go in one regexp entry, which Asgardeo matches
+        # as a regular expression. Every metacharacter is escaped, so the entry
+        # matches those two URLs and nothing else: an unescaped "." would also
+        # accept a look-alike host.
+        def rx: gsub("(?<c>[.+*?(){}|^$\\[\\]\\\\])"; "\\\(.c)");
         { name: $id, templateId: $template,
           advancedConfigurations: { skipLoginConsent: true, skipLogoutConsent: true },
           claimConfiguration: {
@@ -262,7 +272,7 @@ create_app() {
           inboundProtocolConfiguration: { oidc: {
             clientId: $id, grantTypes: ["authorization_code", "refresh_token"], publicClient: true,
             pkce: { mandatory: true, supportPlainTransformAlgorithm: false },
-            callbackURLs: ["regexp=(\($logout)|\($cb))"], allowedOrigins: [$origin],
+            callbackURLs: ["regexp=(\($logout | rx)|\($cb | rx))"], allowedOrigins: [$origin],
             accessToken: { type: "JWT", bindingType: "sso-session", revokeTokensWhenIDPSessionTerminated: true,
               validateTokenBinding: false, userAccessTokenExpiryInSeconds: 3600,
               applicationAccessTokenExpiryInSeconds: 3600, accessTokenAttributes: $attrs },
