@@ -19,7 +19,7 @@
 import { useEffect, useMemo, useState, type PropsWithChildren } from "react";
 import { hasAuthParams, useAuth } from "react-oidc-context";
 import { env } from "../config/env";
-import { getUserManager } from "./userManager";
+import { isSigningOut, signOut } from "./signOut";
 import { decodeJwtClaims, identityFromClaims, sessionUserId, type TokenClaims } from "./claims";
 import { MOCK_ORG, MOCK_USER, isMockSignedOut, setMockSignedOut } from "./mockSession";
 import { AuthScreen } from "./AuthScreen";
@@ -71,35 +71,14 @@ function MockGuard({ children }: PropsWithChildren) {
   );
 }
 
-// RP-initiated logout when the IdP advertises end_session_endpoint; some
-// Thunder versions don't (dev-thunder-setup's v0.47.0), so fall back to
-// best-effort token revocation + dropping the local session, then a fresh
-// page load — the guard restarts the login flow, which prompts again.
-// Uses the raw UserManager: the react-oidc-context wrapper converts the
-// signoutRedirect rejection into auth.error instead of rethrowing, which
-// would strand the user on the error screen.
-async function signOut(): Promise<void> {
-  const userManager = getUserManager();
-  try {
-    await userManager.signoutRedirect();
-  } catch {
-    try {
-      await userManager.revokeTokens();
-    } catch {
-      // Best effort — revocation failing must not block sign-out.
-    }
-    await userManager.removeUser();
-    window.location.assign("/");
-  }
-}
-
 function OidcGuard({ children }: PropsWithChildren) {
   const auth = useAuth();
 
   // Kick off the redirect only when settled-unauthenticated: not while the
-  // provider is loading, not mid-navigation, and not while ?code&state from
-  // Thunder is still being exchanged.
+  // provider is loading, not mid-navigation, not while ?code&state from the
+  // IdP is still being exchanged, and not once sign-out has started.
   const shouldSignIn =
+    !isSigningOut() &&
     !auth.isLoading &&
     !auth.isAuthenticated &&
     !auth.activeNavigator &&
