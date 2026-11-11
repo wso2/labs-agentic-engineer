@@ -288,7 +288,7 @@ func TestTurnUsage_Tenancy(t *testing.T) {
 			Audience:  jwt.ClaimStrings{"aep-console"},
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		},
-		Raw: dialect.Raw{OuHandle: "acme"},
+		Raw: dialect.Raw{OuHandle: "acme", GrantType: "client_credentials"},
 	})
 
 	cases := []struct {

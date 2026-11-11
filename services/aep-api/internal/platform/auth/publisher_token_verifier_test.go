@@ -84,7 +84,7 @@ func TestPublisherTokenVerifier_ReadsTheOrgThroughTheDialect(t *testing.T) {
 		raw     dialect.Raw
 		wantErr string
 	}{
-		"ouHandle matches":                {raw: dialect.Raw{OuHandle: "acme", OuName: "Globex"}},
+		"ouHandle matches":                {raw: dialect.Raw{OuHandle: "acme", OuName: "Globex", GrantType: "client_credentials"}},
 		"ouName alone is refused":         {raw: dialect.Raw{OuName: "acme"}, wantErr: "org handle claim missing"},
 		"ouId alone is refused":           {raw: dialect.Raw{OuID: "acme"}, wantErr: "org handle claim missing"},
 		"ouHandle names another org":      {raw: dialect.Raw{OuHandle: "globex"}, wantErr: `org "globex" does not match audience org "acme"`},
@@ -106,5 +106,23 @@ func TestPublisherTokenVerifier_ReadsTheOrgThroughTheDialect(t *testing.T) {
 				t.Fatalf("Verify: err=%v, want containing %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// The same rule under Thunder: the token of a per-org client carries
+// grant_type client_credentials. Any other grant, or none, is refused even
+// when the audience and the org handle match.
+func TestPublisherTokenVerifier_RequiresAMachineToken(t *testing.T) {
+	v, sign := newRawPublisherVerifier(t)
+	if _, err := v.Verify(sign(pubAudPrefix+"acme", dialect.Raw{OuHandle: "acme", GrantType: "client_credentials"})); err != nil {
+		t.Fatalf("client_credentials: %v", err)
+	}
+	for name, raw := range map[string]dialect.Raw{
+		"a user grant": {OuHandle: "acme", GrantType: "authorization_code"},
+		"no grant":     {OuHandle: "acme"},
+	} {
+		if _, err := v.Verify(sign(pubAudPrefix+"acme", raw)); err == nil || !strings.Contains(err.Error(), "machine") {
+			t.Errorf("%s: err=%v, want refused as not a machine token", name, err)
+		}
 	}
 }

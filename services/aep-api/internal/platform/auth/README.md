@@ -12,7 +12,7 @@ outside this package reads a claim by the platform IdP's own name for it.
 | `jwtassertion.Authenticator` | RS256 JWT verification against a JWKS cache: issuer and audience lists, the RFC 9728 challenge, and on a user-only route the machine-token refusal. Decodes a token into `WireClaims`, reads it through the dialect into `TokenClaims`. |
 | `JWTMiddleware` | The `/api/v1` user edge: `Authenticator` with `UserTokensOnly`, projected into `Claims` (`Subject`, `ClientID`, `OrgHandle`, `OrgID`, `OrgName`, display claims). |
 | `EnsureOrgMiddleware` | Verifies the token's `OrgHandle` names an OpenChoreo namespace and warms the org row; passes through when the token carries no org. |
-| `PublisherTokenVerifier` | A per-org machine token (`aep-publisher-<org>`): the client is the audience with the prefix, and the org handle the dialect reads, declared outright, must equal the one in that audience. |
+| `PublisherTokenVerifier` | A per-org machine token (`aep-publisher-<org>`): the client is the audience with the prefix, and the org handle the dialect reads, declared outright, must equal the one in that audience; and the token is a machine's by the dialect. `StudioClientVerifier`, the MCP gate and the runner authorizer verify through it, so the same holds for each. |
 | `StudioClientVerifier` | The same over the `ae-studio-` prefix, plus the client must be the one recorded for the org. |
 | `RunnerAuthorizer` · `MCPGate` · issues MCP | The route gates over those verifiers. |
 | `SREHandoffVerifier` | A static key, no IdP. |
@@ -41,7 +41,9 @@ tag at one depth makes encoding/json drop both fields). `dialect.Org` and
 `dialect.Machine` are the two questions.
 
 Fail closed: a user-only route refuses a token the dialect cannot place as a
-user's or a machine's, rather than taking it for a user's. A `Dialect` of a
+user's or a machine's, rather than taking it for a user's, and a machine
+route (`PublisherTokenVerifier`) refuses it rather than taking it for a
+machine's. A `Dialect` of a
 kind the build does not know (the zero value included) reads no org and
 places no token, and a token of one kind read by the other's dialect names no
 org.

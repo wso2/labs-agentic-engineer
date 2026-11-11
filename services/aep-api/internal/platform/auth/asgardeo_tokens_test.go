@@ -310,3 +310,24 @@ func TestMachineVerifiers_AsgardeoSingleOrg(t *testing.T) {
 		t.Errorf("another org's studio client verified as %q, want refused", org)
 	}
 }
+
+// A per-org client's token must be a machine's by the dialect, as on the
+// pod's gates: a user's token, one without aut and one whose aut is neither
+// value are refused even when the audience and the org match.
+func TestMachineVerifiers_AsgardeoRequireAMachineToken(t *testing.T) {
+	jwks, sign := asgardeoSigner(t)
+	pub := NewPublisherTokenVerifier(jwks, asgIssuer, pubAudPrefix, asgardeoDialect)
+	studio := NewStudioClientVerifier(jwks, asgIssuer, asgardeoDialect, storedStudioClients{"acme": "ae-studio-acme"})
+	for name, change := range map[string]map[string]any{
+		"a user's token":    {"aut": "APPLICATION_USER"},
+		"no aut":            {"aut": nil},
+		"aut neither value": {"aut": "DEVICE"},
+	} {
+		if _, err := pub.Verify(sign(with(asgardeoMachineClaims(pubAudPrefix+"acme"), change))); err == nil || !strings.Contains(err.Error(), "machine") {
+			t.Errorf("publisher, %s: err=%v, want refused as not a machine token", name, err)
+		}
+		if org, err := studio.Verify(context.Background(), sign(with(asgardeoMachineClaims("ae-studio-acme"), change))); err == nil {
+			t.Errorf("studio, %s: verified as %q, want refused", name, org)
+		}
+	}
+}
