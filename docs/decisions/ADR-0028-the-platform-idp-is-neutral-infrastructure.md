@@ -1,7 +1,10 @@
 # ADR-0028 — The platform IdP is neutral infrastructure
 
 **Status:** Accepted · 2026-09-05 · the second tier it names is settled by
-[ADR-0029](ADR-0029-environment-identity-is-bound-by-a-record.md)
+[ADR-0029](ADR-0029-environment-identity-is-bound-by-a-record.md); who
+administers the platform IdP on an Asgardeo install is settled by
+[ADR-0054](ADR-0054-the-platform-idp-is-a-setup-choice.md) (its admin, not the
+installer)
 **Context:** the one shared ThunderID from ADR-0027, now that both AEP and the
 WSO2 Agent Management Platform depend on it and Agent Manager has grown a
 second, per-environment Thunder tier.
