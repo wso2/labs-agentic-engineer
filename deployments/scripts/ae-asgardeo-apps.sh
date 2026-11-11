@@ -285,6 +285,7 @@ create_app() {
 
 failed=0
 imports=""
+absent=""
 # The list is read on fd 3, so nothing in the loop can consume it from stdin.
 while IFS='|' read -r id kind file <&3; do
   app="$(app_id_of "$id")"
@@ -292,6 +293,7 @@ while IFS='|' read -r id kind file <&3; do
     state="exists, left alone"
     if [ -n "$file" ] && [ ! -s "${OUT_DIR}/${file}" ]; then
       state="${state}; its secret is not in ${OUT_DIR}, so it is not in the import list below"
+      absent="${absent} ${id}"
     fi
   else
     secret_file=""
@@ -317,7 +319,10 @@ while IFS='|' read -r id kind file <&3; do
     echo "✅ ${id} (${state})"
   fi
   if [ -n "$file" ] && [ -s "${OUT_DIR}/${file}" ]; then
-    imports="${imports}aectl platform secret import --path aep/thunder-clients/${file} --value-file ${OUT_DIR}/${file}
+    # %q: the path is printed as one shell word, so a directory name with a
+    # space survives being copied into a terminal.
+    printf -v quoted_path '%q' "${OUT_DIR}/${file}"
+    imports="${imports}aectl platform secret import --path aep/thunder-clients/${file} --value-file ${quoted_path}
 "
   fi
 done 3<<EOF
@@ -339,3 +344,13 @@ if [ "$failed" = "1" ]; then
   die "one or more applications need fixing: correct the settings listed above in the Asgardeo console, or delete the application there and run this again"
 fi
 echo "✅ All five applications are set up"
+if [ -n "$absent" ]; then
+  # An existing application's secret cannot be read back. Its file being gone
+  # is the normal state after an import; it is a problem only if the secret
+  # was never imported, and this script cannot tell which.
+  echo
+  echo "Note: no secret file in ${OUT_DIR} for:${absent}"
+  echo "  That is expected once a secret has been imported and its file deleted."
+  echo "  A secret that was never imported cannot be read back: delete that"
+  echo "  application in the Asgardeo console and run this again to get a new one."
+fi
