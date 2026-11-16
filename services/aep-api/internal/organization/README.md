@@ -267,8 +267,8 @@ model-connection / idp services.*
   reaches the org. Its client id stands in for the Thunder entity id on the profile. It refuses
   another org and any other app name. `SetAppSecret` and `DeletePublisherApp` answer
   `ErrOrgClientNotManaged`: the client is the IdP admin's to rotate or remove. On an IDP-kind switch
-  the client is therefore not deleted and stays valid, so its `ae-publisher-client` reference is kept
-  and builds go on. The port keeps `thundersvc`'s `OrgApp` and `OrgAppSpec` as its data types.
+  the client is therefore not deleted and stays valid, so its `ae-publisher-client` reference and its
+  ids on the profile are both kept and builds go on. The port keeps `thundersvc`'s `OrgApp` and `OrgAppSpec` as its data types.
 - **`OrgCatalogVaultKey` reconstructs a Registered External's org-catalog vault path from the
   request JWT `ouId`** — a read, not a second write. Used after aep-api restart when the
   process-local value plane is empty (ADR-0021). A missing `ouId` cannot invent a path.

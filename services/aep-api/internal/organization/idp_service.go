@@ -429,9 +429,11 @@ func (s *idpService) UpdateProfile(ctx context.Context, orgID, actor string, req
 	// Clear publisher state when kind switches — the existing publisher
 	// app belongs to the previous IDP. Trying to reuse it across IDPs
 	// breaks the trust chain (different issuer, different signing keys).
+	// A pre-created client is the exception: it is kept whole.
 	if kindChanged {
-		s.dropPublisherApp(ctx, orgID, existing)
-		maps.Copy(updates, clearedPublisherIDs())
+		if kept := s.dropPublisherApp(ctx, orgID, existing); !kept {
+			maps.Copy(updates, clearedPublisherIDs())
+		}
 	}
 
 	if err := s.repo.UpdateProfileColumns(ctx, existing, orgID, updates); err != nil {
@@ -502,8 +504,9 @@ func (s *idpService) SetProfile(ctx context.Context, orgID, actor, kind, issuer,
 	// Clear publisher state when kind switches — the existing publisher app
 	// belongs to the previous IDP (see UpdateProfile).
 	if kindChanged {
-		s.dropPublisherApp(ctx, orgID, existing)
-		maps.Copy(updates, clearedPublisherIDs())
+		if kept := s.dropPublisherApp(ctx, orgID, existing); !kept {
+			maps.Copy(updates, clearedPublisherIDs())
+		}
 	}
 
 	if err := s.repo.UpdateProfileColumns(ctx, existing, orgID, updates); err != nil {
@@ -524,24 +527,27 @@ func (s *idpService) SetProfile(ctx context.Context, orgID, actor, kind, issuer,
 // best-effort, it deletes the Thunder app and then its ae-publisher-client
 // reference, so the build gate stops passing on credentials of a deleted app.
 // Skipped when thunder isn't configured (the caller just clears the ids).
-func (s *idpService) dropPublisherApp(ctx context.Context, orgID string, existing *OrganizationIDPProfile) {
+//
+// It answers kept when the client is pre-created on the platform IdP: that
+// client is not deleted and stays valid, so the caller leaves its ids on the
+// profile next to the reference this keeps.
+func (s *idpService) dropPublisherApp(ctx context.Context, orgID string, existing *OrganizationIDPProfile) (kept bool) {
 	if existing.Kind != "platform" || existing.PublisherClientID == "" || s.clients == nil {
-		return
+		return false
 	}
 	_, err := s.clients.DeletePublisherApp(ctx, orgID, existing.PublisherThunderAppID)
 	if errors.Is(err, ErrOrgClientNotManaged) {
-		// A pre-created client is not deleted and stays valid: its reference
-		// is kept, so builds do not stop for a client that still works.
 		slog.InfoContext(ctx, "idp_service: the publisher client is pre-created on the platform IdP; kept on kind switch",
 			"orgID", orgID)
-		return
+		return true
 	}
 	if err != nil {
 		slog.WarnContext(ctx, "idp_service: Thunder publisher cleanup on kind switch failed (ignored)",
 			"orgID", orgID, "error", err)
-		return
+		return false
 	}
 	s.forgetPublisherSecret(ctx, orgID)
+	return false
 }
 
 // audit writes one row into idp_audit_events. Best-effort — a failed

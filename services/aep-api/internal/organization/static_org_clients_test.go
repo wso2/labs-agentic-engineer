@@ -126,23 +126,46 @@ func TestStaticOrgClients_WritesAreNotAepApis(t *testing.T) {
 
 // A profile kind switch drops the publisher client where aep-api created it
 // (the app is deleted, so its credentials must stop passing the build gate).
-// A pre-created client is not deleted and stays valid, so its reference is
-// kept: dropping it would only block builds until GitHub is reconnected.
-func TestDropPublisherApp_StaticRegistryKeepsTheReference(t *testing.T) {
-	f := newStaticEnsureFixture(t)
-	if err := f.svc.EnsureClient(ensureCtx(), "default", ClientPublisher); err != nil {
-		t.Fatal(err)
-	}
-	ref := f.row(OrgSecretPublisherClient)
-	p := f.profile(t)
-	if p.Kind != "platform" || p.PublisherClientID == "" || ref == "" {
-		t.Fatalf("setup: kind %q client %q ref %q", p.Kind, p.PublisherClientID, ref)
-	}
+// A pre-created client is not deleted and stays valid, so the switch keeps
+// both halves of it: the reference and the ids on the profile. Dropping
+// either would only block builds until GitHub is reconnected.
+func TestKindSwitch_StaticRegistryKeepsThePublisher(t *testing.T) {
+	for name, switchKind := range map[string]func(*idpService) error{
+		"UpdateProfile": func(s *idpService) error {
+			_, err := s.UpdateProfile(ensureCtx(), "default", "", UpdateProfileRequest{Kind: "custom", Issuer: "https://idp.example.com"})
+			return err
+		},
+		"SetProfile": func(s *idpService) error {
+			_, err := s.SetProfile(ensureCtx(), "default", "", "custom", "https://idp.example.com", "")
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newStaticEnsureFixture(t)
+			if err := f.svc.EnsureClient(ensureCtx(), "default", ClientPublisher); err != nil {
+				t.Fatal(err)
+			}
+			ref := f.row(OrgSecretPublisherClient)
+			before := *f.profile(t)
+			if before.Kind != "platform" || before.PublisherClientID == "" || before.PublisherThunderAppID == "" || ref == "" {
+				t.Fatalf("setup: kind %q client %q app %q ref %q", before.Kind, before.PublisherClientID, before.PublisherThunderAppID, ref)
+			}
 
-	f.svc.dropPublisherApp(ensureCtx(), "default", p)
+			if err := switchKind(f.svc); err != nil {
+				t.Fatal(err)
+			}
 
-	if got := f.row(OrgSecretPublisherClient); got != ref || !f.vault.refs[ref] {
-		t.Fatalf("the publisher reference was dropped: row %q, live refs %v", got, f.vault.refs)
+			after := f.profile(t)
+			if after.Kind != "custom" {
+				t.Fatalf("kind = %q, want custom", after.Kind)
+			}
+			if after.PublisherClientID != before.PublisherClientID || after.PublisherThunderAppID != before.PublisherThunderAppID {
+				t.Fatalf("the publisher ids were cleared: client %q app %q", after.PublisherClientID, after.PublisherThunderAppID)
+			}
+			if got := f.row(OrgSecretPublisherClient); got != ref || !f.vault.refs[ref] {
+				t.Fatalf("the publisher reference was dropped: row %q, live refs %v", got, f.vault.refs)
+			}
+		})
 	}
 }
 
