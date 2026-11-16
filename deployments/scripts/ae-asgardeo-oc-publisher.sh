@@ -83,6 +83,9 @@ case "$context" in
   k3d-*) ;;
   *) die "the kubectl context is ${context}, not a k3d cluster: this script is for a local dev cluster only" ;;
 esac
+# Every call to the cluster names the context checked above, so a context
+# switched while the script runs cannot send the secret to another cluster.
+kube() { kubectl --context "$context" "$@"; }
 
 # The organization's token endpoint, as its discovery document names it.
 ISSUER="${BASE_URL%/}/t/${TENANT}/oauth2/token"
@@ -96,7 +99,7 @@ TOKEN_HOST="$(printf '%s' "$TOKEN_URL" | sed -E 's#^https://([^/]+).*#\1#')"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-kubectl get "$TEMPLATE" -o json > "${WORK}/template.json" \
+kube get "$TEMPLATE" -o json > "${WORK}/template.json" \
   || die "${TEMPLATE} is not in the cluster ${context}: is the workflow plane installed (WITH_BUILD=1)?"
 
 # Where each of the three inputs sits in the template; a template upstream has
@@ -132,10 +135,10 @@ jq -n --arg up "$url_path" --arg url "$TOKEN_URL" --arg hp "$host_path" --arg ho
   [ { op: "replace", path: $up, value: $url },
     { op: "replace", path: $hp, value: $host },
     { op: "replace", path: $sp, value: ($secret | gsub("\\s+$"; "")) } ]' > "${WORK}/patch.json"
-kubectl patch "$TEMPLATE" --type=json --patch-file "${WORK}/patch.json" >/dev/null \
+kube patch "$TEMPLATE" --type=json --patch-file "${WORK}/patch.json" >/dev/null \
   || die "patching ${TEMPLATE} failed"
 
-kubectl get "$TEMPLATE" -o json > "${WORK}/after.json"
+kube get "$TEMPLATE" -o json > "${WORK}/after.json"
 ok="$(jq -r --arg step "$STEP" --arg url "$TOKEN_URL" --arg host "$TOKEN_HOST" --rawfile secret "$SECRET_FILE" '
   [ .spec.templates[] | select(.name == $step) | .inputs.parameters[] | { (.name): (.default // "") } ] | add
   | (.["oauth-token-url"] == $url) and (.["oauth-host-header"] == $host)
