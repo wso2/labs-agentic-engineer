@@ -97,8 +97,12 @@ client lifecycle, into `aectl` and into the chart.
   ThunderID admin client's secret, which can create or reset any client.
 - The local Asgardeo dev-env leaves out what signs in with a client that
   exists only in ThunderID: OpenChoreo's portal, the observability plane,
-  Agent Manager, the SRE agent, and the last step of a build (OpenChoreo's
-  workload publisher client).
+  Agent Manager and the SRE agent.
+- On that dev-env a build finishes only when OpenChoreo's workload publisher
+  client is also on the organization. It is opt-in:
+  `ae-asgardeo-apps.sh --with-openchoreo-publisher` creates the client, and
+  the dev-env then puts its secret in a default value of the cluster-wide
+  build template, which is why this is for a local cluster only.
 - The settings that carry the IdP's endpoints keep their ThunderID names
   (`thunder.jwksURL`, `console.thunderPublicURL`, the vault path family
   `aep/thunder-clients/`).
