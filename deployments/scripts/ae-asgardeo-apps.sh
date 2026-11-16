@@ -227,6 +227,12 @@ app_id_of() {
   jq -r 'if (.totalResults // 0) > 1 then error("more than one application has this client id") else (.applications[0].id // "") end' "$BODY"
 }
 
+# JQ_RX is the jq filter rx, which escapes every regular-expression
+# metacharacter of a URL. create_app writes the console's redirect URLs with
+# it and check_app compares with it, so a redirect entry matches those URLs
+# and nothing else: an unescaped "." would also accept a look-alike host.
+JQ_RX='def rx: gsub("(?<c>[.+*?(){}|^$\\[\\]\\\\])"; "\\\(.c)");'
+
 # check_app CLIENT_ID KIND APP_ID: reads the application back and prints every
 # setting that is not what AE needs; prints nothing when all are right.
 check_app() {
@@ -242,21 +248,26 @@ check_app() {
     return
   fi
   # Asgardeo stores several redirect URLs as one entry, regexp=(a|b), which
-  # it matches as a regular expression; each alternative is unescaped here
-  # before it is compared.
-  jq -r --arg id "$id" --arg cb "$CALLBACK_URL" --arg logout "$POST_LOGOUT_URL" --arg origin "$CONSOLE_ORIGIN" --argjson attrs "$TOKEN_ATTRIBUTES" '
-    [ (.callbackURLs // [])[]
-      | if startswith("regexp=(") and endswith(")")
-        then (.[8:-1] | split("|"))[] | gsub("\\\\(?<c>.)"; "\(.c)")
-        else . end ] as $redirects
-    | [ (if .clientId != $id then "client id is \(.clientId)" else empty end),
+  # it matches as a regular expression. A URL counts as registered when it is
+  # a plain entry, or an alternative escaped as create_app escapes it. An
+  # alternative that names the URL with its metacharacters unescaped is
+  # reported: it also matches other hosts.
+  jq -r --arg id "$id" --arg cb "$CALLBACK_URL" --arg logout "$POST_LOGOUT_URL" --arg origin "$CONSOLE_ORIGIN" --argjson attrs "$TOKEN_ATTRIBUTES" "$JQ_RX"'
+    [ (.callbackURLs // [])[] | select((startswith("regexp=(") and endswith(")")) | not) ] as $plain
+    | [ (.callbackURLs // [])[] | select(startswith("regexp=(") and endswith(")")) | (.[8:-1] | split("|"))[] ] as $alternatives
+    | def redirect_problem($what; $url):
+        if ($plain | index($url)) != null or ($alternatives | index($url | rx)) != null then empty
+        elif ($alternatives | map(gsub("\\\\(?<c>.)"; "\(.c)")) | index($url)) != null
+        then "the \($what) redirect URL \($url) is registered as a regular expression with unescaped characters, which also matches look-alike hosts; register it as \($url | rx)"
+        else "the \($what) redirect URL \($url) is not registered" end;
+      [ (if .clientId != $id then "client id is \(.clientId)" else empty end),
       (if .accessToken.type != "JWT" then "access token type is \(.accessToken.type), not JWT" else empty end),
       (if .publicClient != true then "it is not a public client" else empty end),
       (if .pkce.mandatory != true then "PKCE is not mandatory" else empty end),
       (if ((.grantTypes // []) | index("authorization_code")) == null then "the authorization_code grant is off" else empty end),
       (if ((.grantTypes // []) | index("refresh_token")) == null then "the refresh_token grant is off" else empty end),
-      (if ($redirects | index($cb)) == null then "the sign-in redirect URL \($cb) is not registered" else empty end),
-      (if ($redirects | index($logout)) == null then "the sign-out redirect URL \($logout) is not registered" else empty end),
+      redirect_problem("sign-in"; $cb),
+      redirect_problem("sign-out"; $logout),
       (if ((.allowedOrigins // []) | index($origin)) == null then "the origin \($origin) is not allowed" else empty end),
       ($attrs - (.accessToken.accessTokenAttributes // []) | map("the access token lacks the attribute \(.)") | .[])
     ] | .[]' "$BODY"
@@ -278,12 +289,9 @@ create_app() {
       | api POST "${API}/applications" -H 'Content-Type: application/json' -d @-)
   else
     status=$(jq -n --arg id "$id" --arg template "$BROWSER_TEMPLATE" --arg cb "$CALLBACK_URL" --arg logout "$POST_LOGOUT_URL" --arg origin "$CONSOLE_ORIGIN" \
-        --argjson attrs "$TOKEN_ATTRIBUTES" --argjson claims "$REQUESTED_CLAIMS" '
+        --argjson attrs "$TOKEN_ATTRIBUTES" --argjson claims "$REQUESTED_CLAIMS" "$JQ_RX"'
         # The two redirect URLs go in one regexp entry, which Asgardeo matches
-        # as a regular expression. Every metacharacter is escaped, so the entry
-        # matches those two URLs and nothing else: an unescaped "." would also
-        # accept a look-alike host.
-        def rx: gsub("(?<c>[.+*?(){}|^$\\[\\]\\\\])"; "\\\(.c)");
+        # as a regular expression, each escaped with rx.
         { name: $id, templateId: $template,
           advancedConfigurations: { skipLoginConsent: true, skipLogoutConsent: true },
           claimConfiguration: {
