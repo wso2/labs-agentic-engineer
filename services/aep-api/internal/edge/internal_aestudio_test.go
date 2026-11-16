@@ -88,7 +88,7 @@ func TestInternalGate_AEStudio(t *testing.T) {
 				Audience:  jwt.ClaimStrings{aud},
 				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 			},
-			Raw: dialect.Raw{OuHandle: ouHandle},
+			Raw: dialect.Raw{OuHandle: ouHandle, GrantType: "client_credentials"},
 		})
 	}
 	studio := "Bearer " + stack.mintStudio("acme")
@@ -272,7 +272,7 @@ func TestInternalGate_AEStudioDependencyCompletions(t *testing.T) {
 				Audience:  jwt.ClaimStrings{aud},
 				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 			},
-			Raw: dialect.Raw{OuHandle: ouHandle},
+			Raw: dialect.Raw{OuHandle: ouHandle, GrantType: "client_credentials"},
 		})
 	}
 	studio := "Bearer " + stack.mintStudio("acme")
@@ -499,7 +499,7 @@ func TestInternalRoutes_AEStudioSkillsRepository(t *testing.T) {
 			Audience:  jwt.ClaimStrings{"aep-console"},
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		},
-		Raw: dialect.Raw{OuHandle: "acme"},
+		Raw: dialect.Raw{OuHandle: "acme", GrantType: "client_credentials"},
 	})
 	cases := []struct {
 		name, bearer string

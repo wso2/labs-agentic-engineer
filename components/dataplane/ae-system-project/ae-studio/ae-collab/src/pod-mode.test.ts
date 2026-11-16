@@ -363,7 +363,8 @@ test("pod config: defaults and lists", () => {
 
 test("pod config: the platform IdP kind is optional, and an unknown one is a boot error", () => {
   assert.equal(loadPodConfig(podEnv({ AE_IDP_KIND: "thunder" }))?.idpKind, "thunder");
-  assert.throws(() => loadPodConfig(podEnv({ AE_IDP_KIND: "asgardeo" })), /invalid AE_IDP_KIND/);
+  assert.equal(loadPodConfig(podEnv({ AE_IDP_KIND: "asgardeo" }))?.idpKind, "asgardeo");
+  assert.throws(() => loadPodConfig(podEnv({ AE_IDP_KIND: "okta" })), /invalid AE_IDP_KIND/);
 });
 
 test("pod config: AE_ORG_ID without the rest fails, naming every missing key and no value", () => {

@@ -1,3 +1,7 @@
+{{- /* Only where the platform IdP is the in-cluster Thunder: it targets
+Thunder's HTTPRoute in the thunder namespace, which an Asgardeo install does
+not have. */}}
+{{- if ne (default "thunder" .Values.idp.kind) "asgardeo" -}}
 ---
 # TrafficPolicy attaches wildcard CORS headers to Thunder's HTTPRoute so
 # browser OIDC flows (discovery-doc fetch + token exchange) succeed on
@@ -29,3 +33,4 @@ spec:
       - Content-Type
       - Authorization
     allowCredentials: false
+{{- end }}

@@ -71,12 +71,38 @@ describe("resolveOrgHandle", () => {
     expect(resolveOrgHandle({}, "thunder")).toBeNull();
   });
 
+  it("asgardeo: org_handle names the org, with no fallback", () => {
+    expect(
+      resolveOrgHandle({ org_handle: "h", org_name: "n", org_id: "i" }, "asgardeo"),
+    ).toBe("h");
+    expect(resolveOrgHandle({ org_name: "n", org_id: "i" }, "asgardeo")).toBeNull();
+    // Thunder's claims name no org under asgardeo, nor asgardeo's under thunder.
+    expect(resolveOrgHandle({ ouHandle: "h" }, "asgardeo")).toBeNull();
+    expect(resolveOrgHandle({ org_handle: "h" }, "thunder")).toBeNull();
+  });
+
   it("an IdP kind this build does not know names no org", () => {
-    expect(resolveOrgHandle({ ouHandle: "h", org_handle: "h" }, "asgardeo")).toBeNull();
+    expect(resolveOrgHandle({ ouHandle: "h", org_handle: "h" }, "okta")).toBeNull();
   });
 });
 
 describe("identityFromClaims", () => {
+  it("asgardeo: no name claim, so given and family name; the org from org_handle", () => {
+    // An Asgardeo access token's identity claims (names as issued, values made up).
+    const identity = identityFromClaims("asgardeo", {
+      sub: "u1",
+      aut: "APPLICATION_USER",
+      org_handle: "acme",
+      org_id: "org-1",
+      org_name: "Acme Inc",
+      given_name: "Ada",
+      family_name: "Lovelace",
+      email: "ada@acme.example",
+      username: "ada@acme.example",
+    });
+    expect(identity).toEqual({ name: "Ada Lovelace", email: "ada@acme.example", orgHandle: "acme" });
+  });
+
   it("prefers name, then given/family, then username, email, sub", () => {
     expect(identityFromClaims("thunder", { name: "N", given_name: "G" }).name).toBe("N");
     expect(

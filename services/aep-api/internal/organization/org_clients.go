@@ -18,6 +18,7 @@ package organization
 
 import (
 	"context"
+	"errors"
 
 	"github.com/wso2/aep/aep-api/internal/clients/thundersvc"
 )
@@ -44,3 +45,9 @@ type OrgClients interface {
 	// was none.
 	DeletePublisherApp(ctx context.Context, orgHandle, storedID string) (bool, error)
 }
+
+// ErrOrgClientNotManaged is the answer of an OrgClients that serves clients
+// it did not create (StaticOrgClients) to a write on one: setting its secret
+// or deleting it. The client is unchanged and still valid, so a caller that
+// only cleans up after a delete keeps what it has recorded of it.
+var ErrOrgClientNotManaged = errors.New("the org's clients are pre-created on this platform IdP and are not aep-api's to change")

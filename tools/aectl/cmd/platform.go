@@ -233,24 +233,27 @@ func aeStudioImageOverrides(designAgent, collab, studioTools string) []string {
 	return args
 }
 
-// aeStudioExtraEgress is the pod's egress to the in-cluster IdP (Thunder's
-// namespace and port, from thunder.namespace / thunder.url) and to aep-api.
+// aeStudioExtraEgress is the pod's egress to aep-api and, where the IdP is
+// the in-cluster Thunder, to its namespace and port (thunder.namespace /
+// thunder.url). An Asgardeo install opens no IdP rule: the pod's
+// NetworkPolicy already lets it reach public HTTPS endpoints.
 func aeStudioExtraEgress(platformNamespace string) string {
-	thunderNS := viper.GetString("thunder.namespace")
-	thunderPort := portOfURL(viper.GetString("thunder.url"), 8090)
-	rules := []map[string]any{
-		{
+	var rules []map[string]any
+	if !onAsgardeo() {
+		thunderNS := viper.GetString("thunder.namespace")
+		thunderPort := portOfURL(viper.GetString("thunder.url"), 8090)
+		rules = append(rules, map[string]any{
 			"to":    []any{map[string]any{"namespaceSelector": map[string]any{"matchLabels": map[string]string{"kubernetes.io/metadata.name": thunderNS}}}},
 			"ports": []any{map[string]any{"protocol": "TCP", "port": thunderPort}},
-		},
-		{
-			"to": []any{map[string]any{
-				"namespaceSelector": map[string]any{"matchLabels": map[string]string{"kubernetes.io/metadata.name": platformNamespace}},
-				"podSelector":       map[string]any{"matchLabels": map[string]string{"app": "aep-api"}},
-			}},
-			"ports": []any{map[string]any{"protocol": "TCP", "port": 9090}},
-		},
+		})
 	}
+	rules = append(rules, map[string]any{
+		"to": []any{map[string]any{
+			"namespaceSelector": map[string]any{"matchLabels": map[string]string{"kubernetes.io/metadata.name": platformNamespace}},
+			"podSelector":       map[string]any{"matchLabels": map[string]string{"app": "aep-api"}},
+		}},
+		"ports": []any{map[string]any{"protocol": "TCP", "port": 9090}},
+	})
 	b, _ := json.Marshal(rules)
 	return string(b)
 }
@@ -282,8 +285,15 @@ var initCmd = &cobra.Command{
   1. Validates the cluster config (imported via 'aectl platform config import')
   2. Seeds all platform secrets into OpenChoreo's built-in OpenBao instance
   3. Installs or upgrades the platform Helm chart (idempotent)
-  4. Waits for all platform pods to be ready
-  5. Registers AEP OAuth clients in Thunder
+  4. Registers AEP OAuth clients in Thunder
+  5. Waits for all platform pods to be ready
+
+With idp.kind asgardeo the platform IdP is an Asgardeo organization, on which
+aectl administers nothing: it asks for no admin credentials, generates no
+client secret and registers no client. It requires the client secrets the
+organization's admin imported (aep/thunder-clients/aep-api-client,
+ae-studio-internal, org-publisher, org-studio) and stops before Helm if one
+is missing.
 
 Run 'aectl platform config import --config <file>' before this command.
 All configuration values are read from the imported ConfigMap — no
@@ -407,28 +417,35 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 			ui.Success("Anthropic API key (from env)")
 		}
 
-		thunderSecret := strings.TrimSpace(os.Getenv("AEP_THUNDER_ADMIN_CLIENT_SECRET"))
-		if thunderSecret == "" {
-			var err error
-			thunderSecret, err = readMaskedInput("Thunder admin client secret")
-			if err != nil {
-				return fmt.Errorf("read Thunder admin client secret: %w", err)
-			}
-			if thunderSecret == "" {
-				return fmt.Errorf("a Thunder admin client secret is required")
-			}
+		// The Thunder admin credentials register the clients; on Asgardeo
+		// aectl registers none and asks for none.
+		var adminClientID, adminClientSecret string
+		if onAsgardeo() {
+			ui.Success("Platform IdP is Asgardeo: no admin credentials needed")
 		} else {
-			ui.Success("Thunder admin client secret (from env)")
-		}
-		viper.Set("thunder.admin_client_secret", thunderSecret)
+			thunderSecret := strings.TrimSpace(os.Getenv("AEP_THUNDER_ADMIN_CLIENT_SECRET"))
+			if thunderSecret == "" {
+				var err error
+				thunderSecret, err = readMaskedInput("Thunder admin client secret")
+				if err != nil {
+					return fmt.Errorf("read Thunder admin client secret: %w", err)
+				}
+				if thunderSecret == "" {
+					return fmt.Errorf("a Thunder admin client secret is required")
+				}
+			} else {
+				ui.Success("Thunder admin client secret (from env)")
+			}
+			viper.Set("thunder.admin_client_secret", thunderSecret)
 
-		adminClientID := viper.GetString("thunder.admin_client_id")
-		adminClientSecret := viper.GetString("thunder.admin_client_secret")
-		if adminClientID == "" {
-			return fmt.Errorf("thunder.admin_client_id is not set — run 'aectl platform config import' first or set it in ~/.aectl/config.yaml")
-		}
-		if adminClientSecret == "" {
-			return fmt.Errorf("thunder.admin_client_secret is not set — set it via AEP_THUNDER_ADMIN_CLIENT_SECRET or re-run without --reuse-secrets")
+			adminClientID = viper.GetString("thunder.admin_client_id")
+			adminClientSecret = viper.GetString("thunder.admin_client_secret")
+			if adminClientID == "" {
+				return fmt.Errorf("thunder.admin_client_id is not set — run 'aectl platform config import' first or set it in ~/.aectl/config.yaml")
+			}
+			if adminClientSecret == "" {
+				return fmt.Errorf("thunder.admin_client_secret is not set — set it via AEP_THUNDER_ADMIN_CLIENT_SECRET or re-run without --reuse-secrets")
+			}
 		}
 
 		fmt.Println()
@@ -444,7 +461,7 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 
 	// The in-cluster admin URL is thunder.url itself; the issuer is the one
 	// string the IdP's document names, so every `iss` check in the chart
-	// compares against exactly what the IdP stamps.
+	// compares against exactly what the IdP stamps (platformIDPInstallArgs).
 	thunderURL := viper.GetString("thunder.url")
 	consoleURL := consolePublicURL()
 	helmArgs := []string{
@@ -452,11 +469,10 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		"-n", initPlatformNamespace,
 		"--create-namespace",
 		"--set", "console.publicURL=" + consoleURL,
-		"--set", "console.thunderPublicURL=" + idp.Public.Issuer,
-		"--set", "thunder.adminURL=" + thunderURL,
 		"--set", "platformAPI.baseURL=" + viper.GetString("oc.api_url"),
 		"--set", fmt.Sprintf("dataPlaneGateway.tls=%t", viper.GetBool("oc.data_plane_gateway_tls")),
 	}
+	helmArgs = append(helmArgs, platformIDPInstallArgs(idp)...)
 	// Chart source: local path takes precedence, otherwise OCI registry.
 	// Must be inserted at index 3: after "upgrade", "--install", <release>.
 	chartLabel := "aep-platform"
@@ -519,15 +535,22 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	// deadlock whenever Thunder already has this client registered under a
 	// different secret, e.g. a reinstall against a Thunder that was never
 	// wiped.
+	//
+	// On Asgardeo there is nothing to register: the organization's admin
+	// created the clients and aectl holds no rights on it.
 	fmt.Println()
-	ui.Step("Registering Thunder OAuth clients")
-	if err := doThunderSetup(ctx, k8sClient, initPlatformNamespace,
-		viper.GetString("thunder.namespace"),
-		consoleURL, clientsReadingUnsynced(unsynced),
-	); err != nil {
-		return err
+	if onAsgardeo() {
+		ui.Success("Platform IdP is Asgardeo: its clients are pre-created, none registered")
+	} else {
+		ui.Step("Registering Thunder OAuth clients")
+		if err := doThunderSetup(ctx, k8sClient, initPlatformNamespace,
+			viper.GetString("thunder.namespace"),
+			consoleURL, clientsReadingUnsynced(unsynced),
+		); err != nil {
+			return err
+		}
+		ui.Success("Thunder configured")
 	}
-	ui.Success("Thunder configured")
 
 	if err := waitForAllPodsReady(ctx, k8sClient, initPlatformNamespace, platformPodsReadyTimeout); err != nil {
 		return err
@@ -544,7 +567,7 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		// targets the SAME Environment object those functions read and patch.
 		Org: ocOrgNamespace(), Env: ocPipelineSourceEnvironment(),
 		PlatformThunderURL: thunderURL,
-		PlatformIDP:        idp.Public,
+		PlatformIDP:        envIDPPlatformTrust(idp),
 		// Empty leaves envidp on the k3d convention. Both are browser-facing
 		// — the environment IdP is where a generated app sends its end users
 		// to sign in — so a cluster reachable by more than its own host has
@@ -963,11 +986,18 @@ func reconcileReusedOpenBaoSecrets(ctx context.Context, platformNamespace string
 		return err
 	}
 	st := s.seedStore(ctx, recover)
-	seeded, err := seedGeneratedSecrets(generatedThunderClientSecrets(), st)
+	// The client secrets: Thunder's are generated where missing; Asgardeo's
+	// are imported, restored from the cluster where the store lost them, and
+	// required.
+	restored, err := requireImportedClientSecrets(st)
 	if err != nil {
 		return err
 	}
-	for _, line := range describeSeeded(seeded) {
+	seeded, err := seedGeneratedSecrets(generatedClientSecrets(), st)
+	if err != nil {
+		return err
+	}
+	for _, line := range describeSeeded(append(restored, seeded...)) {
 		ui.Detail(line)
 	}
 	return topUpWebhookRelaySeed(st)
@@ -975,20 +1005,28 @@ func reconcileReusedOpenBaoSecrets(ctx context.Context, platformNamespace string
 
 // requiredOpenBaoPaths are the secrets an install seeds that aectl does not
 // generate on top-up. Missing any of them means the store was wiped (or never
-// installed), not that it predates one Thunder client.
-var requiredOpenBaoPaths = []string{
-	"aep/anthropic-api-key",
-	"aep/postgres-password",
-	"aep/opensearch-username",
-	"aep/opensearch-password",
-	"aep/thunder-admin/client-id",
-	"aep/thunder-admin/client-secret",
+// installed), not that it predates one Thunder client. The Thunder admin
+// credentials are among them only where the IdP is Thunder.
+func requiredOpenBaoPaths() []string {
+	paths := []string{
+		"aep/anthropic-api-key",
+		"aep/postgres-password",
+		"aep/opensearch-username",
+		"aep/opensearch-password",
+	}
+	if onAsgardeo() {
+		return paths
+	}
+	return append(paths,
+		"aep/thunder-admin/client-id",
+		"aep/thunder-admin/client-secret",
+	)
 }
 
 // missingRequiredPaths returns the requiredOpenBaoPaths absent from the store.
 func (s *openBaoSession) missingRequiredPaths(ctx context.Context) ([]string, error) {
 	var missing []string
-	for _, path := range requiredOpenBaoPaths {
+	for _, path := range requiredOpenBaoPaths() {
 		ok, err := s.pathExists(ctx, path)
 		if err != nil {
 			return nil, err
@@ -1066,14 +1104,26 @@ func provisionOpenBao(ctx context.Context, platformNamespace, anthropicKey, thun
 		return err
 	}
 
+	// On Asgardeo the client secrets are the admin's imports: checked (and
+	// restored where the store lost them) before anything is written, so a
+	// missing import stops the install with nothing changed.
+	if _, err := requireImportedClientSecrets(session.seedStore(ctx, recover)); err != nil {
+		sp.Fail("Imported client secrets missing")
+		return err
+	}
+
 	inputs := []platformInput{
 		{"aep/anthropic-api-key", anthropicKey},
 		{"aep/opensearch-username", "admin"},
-		{"aep/thunder-admin/client-id", thunderAdminClientID},
-		{"aep/thunder-admin/client-secret", thunderAdminClientSecret},
-		// system-client ID is a known constant but stored in OpenBao so the
-		// thunder-app-operator can source both credentials from the same ESO Secret.
-		{"aep/thunder-clients/system-client-id", "aep-system-client"},
+	}
+	if !onAsgardeo() {
+		inputs = append(inputs,
+			platformInput{"aep/thunder-admin/client-id", thunderAdminClientID},
+			platformInput{"aep/thunder-admin/client-secret", thunderAdminClientSecret},
+			// system-client ID is a known constant but stored in OpenBao so the
+			// thunder-app-operator can source both credentials from the same ESO Secret.
+			platformInput{"aep/thunder-clients/system-client-id", "aep-system-client"},
+		)
 	}
 	sp.Update("Writing secrets")
 	seeded, err := writePlatformSecrets(ctx, session, inputs, recover)

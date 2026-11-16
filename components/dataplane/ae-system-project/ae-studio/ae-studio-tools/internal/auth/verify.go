@@ -173,11 +173,13 @@ func UserGate(v *Verifier, audiences []string, orgID, orgHandle string) func(htt
 }
 
 // M2MGate admits only the pinned AE-only client: a machine token (by the
-// dialect) whose aud and client_id are clientID and which carries no org id.
-// Anything else is 401, except an IdP whose keys cannot be fetched: 503
-// idp_unavailable, so aep-api retries rather than reading a credential fault.
-// The X-Impersonate-Org header must then name the pod's org, else 403. It panics on a nil verifier or an empty clientID or orgID:
-// each would widen the gate.
+// dialect) whose aud and client_id are clientID and whose org is the one the
+// dialect expects on that client's token (Thunder: no org id; Asgardeo: the
+// pod's; dialect.InstallClientOrgOK). Anything else is 401, except an IdP
+// whose keys cannot be fetched: 503 idp_unavailable, so aep-api retries
+// rather than reading a credential fault. The X-Impersonate-Org header must
+// then name the pod's org, else 403. It panics on a nil verifier or an empty
+// clientID or orgID: each would widen the gate.
 func M2MGate(v *Verifier, clientID, orgID string) func(http.Handler) http.Handler {
 	if v == nil || clientID == "" || orgID == "" {
 		panic("auth.M2MGate: verifier, clientID and orgID are required")
@@ -190,7 +192,7 @@ func M2MGate(v *Verifier, clientID, orgID string) func(http.Handler) http.Handle
 				writeIdPUnavailable(w, "m2m")
 				return
 			}
-			if err != nil || c.ClientID != clientID || !c.MachineKnown || !c.Machine || c.Org.ID != "" {
+			if err != nil || c.ClientID != clientID || !c.MachineKnown || !c.Machine || !v.dialect.InstallClientOrgOK(c.Org, orgID) {
 				writeUnauthenticated(w)
 				return
 			}

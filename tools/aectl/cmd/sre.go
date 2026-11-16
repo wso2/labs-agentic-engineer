@@ -221,6 +221,17 @@ func sreInstallPreflight() error {
 	return requireAEStudioConfig()
 }
 
+// sreIDPSupported refuses `sre install` where the platform IdP is Asgardeo.
+// The install registers OpenChoreo's observer and RCA clients on the platform
+// IdP and points the observability plane at it; on Asgardeo those clients
+// are the cluster owner's, and aectl registers nothing there.
+func sreIDPSupported() error {
+	if onAsgardeo() {
+		return fmt.Errorf("sre install is not supported with idp.kind asgardeo: it registers OpenChoreo's observer and RCA clients on the platform IdP, and aectl registers no client on an Asgardeo organization")
+	}
+	return nil
+}
+
 func runSreInstall(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
@@ -229,6 +240,9 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := sreInstallPreflight(); err != nil {
+		return err
+	}
+	if err := sreIDPSupported(); err != nil {
 		return err
 	}
 

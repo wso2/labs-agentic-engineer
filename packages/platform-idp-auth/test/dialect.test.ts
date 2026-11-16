@@ -25,7 +25,8 @@ test("parseDialectKind: empty is thunder; a kind this build does not know throws
   assert.equal(parseDialectKind(undefined), "thunder");
   assert.equal(parseDialectKind(""), "thunder");
   assert.equal(parseDialectKind(" Thunder "), "thunder");
-  assert.throws(() => parseDialectKind("asgardeo"), /unknown platform IdP kind/);
+  assert.equal(parseDialectKind("asgardeo"), "asgardeo");
+  assert.equal(parseDialectKind(" Asgardeo "), "asgardeo");
   assert.throws(() => parseDialectKind("okta"), /unknown platform IdP kind/);
 });
 
@@ -54,4 +55,39 @@ test("thunder: a machine's token by grant_type", () => {
   assert.equal(d.machine({ grant_type: "authorization_code" }), false);
   assert.equal(d.machine({ grant_type: "refresh_token" }), false);
   assert.equal(d.machine({ ouHandle: "acme" }), undefined);
+});
+
+// Asgardeo names the org in org_handle / org_id / org_name, with no fallback.
+test("asgardeo: the org and whether its handle was declared", () => {
+  const d = dialectFor("asgardeo");
+  assert.deepEqual(d.org({ org_handle: "acme", org_name: "Acme Inc", org_id: "org-1" }), {
+    handle: "acme",
+    id: "org-1",
+    name: "Acme Inc",
+    handleDeclared: true,
+  });
+  assert.deepEqual(d.org({ org_name: "Acme Inc", org_id: "org-1" }), { handle: "", id: "org-1", name: "Acme Inc", handleDeclared: false });
+  // Thunder's claims name no org here, and a non-string claim is no claim.
+  assert.deepEqual(d.org({ ouHandle: "acme", ouId: "ou-1", ouName: "Acme Inc" }), { handle: "", id: "", name: "", handleDeclared: false });
+  assert.equal(d.org({ org_handle: 42 }).handleDeclared, false);
+});
+
+// aut has two values: APPLICATION is a machine's, APPLICATION_USER a user's.
+// No claim, or a value that is neither, answers neither.
+test("asgardeo: a machine's token by aut", () => {
+  const d = dialectFor("asgardeo");
+  assert.equal(d.machine({ aut: "APPLICATION" }), true);
+  assert.equal(d.machine({ aut: "APPLICATION_USER" }), false);
+  assert.equal(d.machine({ org_handle: "acme" }), undefined);
+  assert.equal(d.machine({ aut: "DEVICE" }), undefined);
+  assert.equal(d.machine({ aut: "application" }), undefined);
+  // Thunder's grant_type is not read.
+  assert.equal(d.machine({ grant_type: "authorization_code" }), undefined);
+});
+
+test("thunder does not read asgardeo's claims", () => {
+  const d = dialectFor("thunder");
+  const claims = { org_handle: "acme", org_id: "org-1", org_name: "Acme Inc", aut: "APPLICATION_USER" };
+  assert.deepEqual(d.org(claims), { handle: "", id: "", name: "", handleDeclared: false });
+  assert.equal(d.machine(claims), undefined);
 });

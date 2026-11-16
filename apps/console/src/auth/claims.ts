@@ -42,13 +42,14 @@ function str(value: unknown): string | undefined {
 }
 
 // The claims that name a token's org, per platform IdP kind (the kind is
-// env.idpKind), in the order the server reads them. Thunder's is the Thunder
-// token dialect of aep-api (internal/platform/auth/dialect/dialect.go):
-// ouHandle, else ouName, else ouId. The console must agree with the server
-// on which org a token addresses, so a change here lands on both sides at
-// once.
+// env.idpKind), in the order the server reads them: the token dialects of
+// aep-api (internal/platform/auth/dialect/dialect.go). Thunder: ouHandle,
+// else ouName, else ouId. Asgardeo: org_handle alone. The console must agree
+// with the server on which org a token addresses, so a change here lands on
+// both sides at once.
 const ORG_HANDLE_CLAIMS: Readonly<Record<string, readonly string[]>> = {
   thunder: ["ouHandle", "ouName", "ouId"],
+  asgardeo: ["org_handle"],
 };
 
 // The org a token addresses under the given IdP kind; null when it names
@@ -69,8 +70,8 @@ export interface SessionIdentity {
 }
 
 // Builds the display identity from token claim sets in precedence order
-// (ID token first, access token as fallback — Thunder puts the org claims
-// on the access token). `kind` is the platform IdP's token dialect
+// (ID token first, access token as fallback: the org claims are on the
+// access token). `kind` is the platform IdP's token dialect
 // (env.idpKind), which says which claims name the org.
 export function identityFromClaims(kind: string, ...sources: TokenClaims[]): SessionIdentity {
   const first = (pick: (c: TokenClaims) => string | undefined) => {

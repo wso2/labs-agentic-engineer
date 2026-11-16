@@ -169,7 +169,7 @@ func (s *idpService) EnsureClient(ctx context.Context, orgID string, kind Client
 func (s *idpService) storeClientSecret(ctx context.Context, l *OrgSecretLocked, c orgClient) (string, error) {
 	if c.app.Created {
 		if c.app.Secret == "" {
-			return "", errors.New("thunder created the app without returning its secret")
+			return "", errors.New("the platform IdP's client came without its secret")
 		}
 		return "created", c.write(c.app.Secret, nil)
 	}

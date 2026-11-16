@@ -73,7 +73,7 @@ func newStudioVerifierStack(t *testing.T, clients StudioClientLookup) (*StudioCl
 				Audience:  jwt.ClaimStrings{aud},
 				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 			},
-			Raw: dialect.Raw{OuHandle: ouHandle},
+			Raw: dialect.Raw{OuHandle: ouHandle, GrantType: "client_credentials"},
 		})
 		tok.Header["kid"] = kid
 		signed, err := tok.SignedString(priv)

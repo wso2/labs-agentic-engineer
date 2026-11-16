@@ -12,3 +12,5 @@ dist/
 *.test
 *.out
 vendor/
+# The aectl config `make dev-env AE_IDP_KIND=asgardeo` generates (names the developer's organization).
+.aectl-asgardeo.yaml

@@ -234,7 +234,13 @@ func (s *Service) desired(ctx context.Context, org string) (desiredState, error)
 	d.Params.Images.Collab = cfg.Images.Collab
 	d.Params.Images.StudioTools = cfg.Images.StudioTools
 	d.Params.Org.ID = o.ThunderOrgUUID.String()
+	// The handle the pod checks a token's org against and names its Rooms
+	// by: the org's name, unless the IdP names the org by a handle of its
+	// own, in which case that one (the console builds Room names from it).
 	d.Params.Org.Handle = org
+	if cfg.IDP.OrgHandle != "" {
+		d.Params.Org.Handle = cfg.IDP.OrgHandle
+	}
 	if d.Params.ModelConnection, err = s.modelConnection(ctx, org); err != nil {
 		return d, err
 	}

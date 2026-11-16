@@ -141,7 +141,7 @@ func newInternalStack(t *testing.T) internalStack {
 				Audience:  jwt.ClaimStrings{pubAudPrefix + org},
 				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 			},
-			Raw: dialect.Raw{OuHandle: org},
+			Raw: dialect.Raw{OuHandle: org, GrantType: "client_credentials"},
 		})
 	}
 	mintStudio := func(org string) string {
@@ -151,7 +151,7 @@ func newInternalStack(t *testing.T) internalStack {
 				Audience:  jwt.ClaimStrings{"ae-studio-" + org},
 				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 			},
-			Raw: dialect.Raw{OuHandle: org},
+			Raw: dialect.Raw{OuHandle: org, GrantType: "client_credentials"},
 		})
 	}
 	studioClients := auth.NewStudioClientVerifier(jwtassertion.NewJWKSCache(jwks.URL), pubIssuer, thunderDialect(), recordedStudioClients{})

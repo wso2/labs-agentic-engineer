@@ -113,6 +113,22 @@
 #                           `aectl platform install`. Off by default: a bare
 #                           `aectl` install brings its own bootstrap client some
 #                           other way and must not silently pick this one up.
+#   AE_IDP_KIND=asgardeo    make an Asgardeo organization the platform IdP in
+#                           place of the in-cluster ThunderID: OpenChoreo's
+#                           control plane is pointed at the organization's
+#                           endpoints (read from its OIDC discovery document),
+#                           step 3b (the platform ThunderID) is skipped, and
+#                           OpenChoreo's portal and the observability plane are
+#                           left out, since their clients exist only in
+#                           ThunderID. Needs ASGARDEO_TENANT. Default "thunder".
+#   ASGARDEO_TENANT         the Asgardeo organization's handle (asgardeo only).
+#                           Its applications are created beforehand with
+#                           ae-asgardeo-apps.sh.
+#   AE_ASGARDEO_SECRETS_DIR the directory ae-asgardeo-apps.sh wrote its secret
+#                           files to (asgardeo only, optional). When it holds
+#                           oc-workload-publisher, OpenChoreo's build template
+#                           is pointed at the organization so builds can finish
+#                           (ae-asgardeo-oc-publisher.sh).
 
 set -euo pipefail
 set -o errtrace
@@ -181,6 +197,38 @@ THUNDER_ADMIN_PASSWORD="Admin@123"
 WITH_BUILD="${WITH_BUILD:-1}"
 WITH_OBSERVABILITY="${WITH_OBSERVABILITY:-1}"
 WITH_SKAFFOLD_CLIENT="${WITH_SKAFFOLD_CLIENT:-0}"
+
+# ============================================================================
+# AE_IDP_KIND — which platform IdP OpenChoreo and AE trust
+# ============================================================================
+#
+# "thunder" (the default) is the ThunderID this script installs in step 3b.
+# "asgardeo" is an Asgardeo organization: nothing is installed for it, and
+# OpenChoreo's control plane is given the organization's endpoints instead of
+# ThunderID's. OpenChoreo's portal (Backstage) and the observability plane
+# each sign in with a client that this script registers in ThunderID and that
+# an Asgardeo organization does not have, so both are left out there.
+AE_IDP_KIND="${AE_IDP_KIND:-thunder}"
+ASGARDEO_BASE_URL="${ASGARDEO_BASE_URL:-https://api.asgardeo.io}"
+case "$AE_IDP_KIND" in
+    thunder) ;;
+    asgardeo)
+        if ! [[ "${ASGARDEO_TENANT:-}" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+            echo "❌ AE_IDP_KIND=asgardeo needs ASGARDEO_TENANT, the organization's handle (lowercase letters, digits, hyphens)" >&2
+            exit 1
+        fi
+        if ! [[ "$ASGARDEO_BASE_URL" =~ ^https:// ]]; then
+            echo "❌ ASGARDEO_BASE_URL must be an https:// URL" >&2
+            exit 1
+        fi
+        WITH_OC_PORTAL=0
+        WITH_OBSERVABILITY=0
+        ;;
+    *)
+        echo "❌ AE_IDP_KIND must be thunder or asgardeo, not '${AE_IDP_KIND}'" >&2
+        exit 1
+        ;;
+esac
 
 # ============================================================================
 # AE_DOMAIN — the DNS suffix every hostname on this cluster is published under
@@ -298,7 +346,11 @@ AE_INSTALL_CLIENT_SECRET_FILE="${AE_INSTALL_CLIENT_SECRET_FILE:-/root/.ae-instal
 RAW="https://raw.githubusercontent.com/openchoreo/openchoreo/${OC_BRANCH}"
 
 echo "============================================"
-echo "  OpenChoreo ${OC_VERSION} on k3d — Thunder swapped for ThunderID ${THUNDER_VERSION}"
+if [ "$AE_IDP_KIND" = "asgardeo" ]; then
+    echo "  OpenChoreo ${OC_VERSION} on k3d — platform IdP: Asgardeo organization ${ASGARDEO_TENANT}"
+else
+    echo "  OpenChoreo ${OC_VERSION} on k3d — Thunder swapped for ThunderID ${THUNDER_VERSION}"
+fi
 echo "============================================"
 
 # ============================================================================
@@ -308,6 +360,31 @@ for bin in docker k3d kubectl helm; do
     command -v "$bin" >/dev/null 2>&1 || { echo "❌ $bin not found on PATH"; exit 1; }
 done
 docker info >/dev/null 2>&1 || { echo "❌ Docker is not running"; exit 1; }
+
+# The Asgardeo organization's endpoints, from its own OIDC discovery document
+# (the document `aectl` reads at install): fetched before the first object is
+# created, so an organization that cannot be reached, or a document that is
+# not the organization's, stops here with nothing built. OpenChoreo's control
+# plane is given these four in step 3.
+if [ "$AE_IDP_KIND" = "asgardeo" ]; then
+    ASGARDEO_ISSUER="${ASGARDEO_BASE_URL%/}/t/${ASGARDEO_TENANT}/oauth2/token"
+    if ! asgardeo_discovery="$(curl -fsSL --max-time 15 "${ASGARDEO_ISSUER}/.well-known/openid-configuration")"; then
+        echo "❌ could not read ${ASGARDEO_ISSUER}/.well-known/openid-configuration — is ASGARDEO_TENANT the organization's handle?" >&2
+        exit 1
+    fi
+    if ! asgardeo_endpoints="$(printf '%s' "$asgardeo_discovery" | python3 -c '
+import json, sys
+doc = json.load(sys.stdin)
+values = [doc.get(k, "") for k in ("issuer", "jwks_uri", "authorization_endpoint", "token_endpoint")]
+ok = all(values) and values[0].rstrip("/") == sys.argv[1].rstrip("/") and all(v.startswith("https://") for v in values)
+print(" ".join(values)) if ok else sys.exit(1)
+' "$ASGARDEO_ISSUER")"; then
+        echo "❌ the discovery document at ${ASGARDEO_ISSUER} does not name that issuer, or lacks an https jwks_uri, authorization_endpoint or token_endpoint" >&2
+        exit 1
+    fi
+    read -r OIDC_ISSUER OIDC_JWKS_URL OIDC_AUTHORIZE_URL OIDC_TOKEN_URL <<<"$asgardeo_endpoints"
+    echo "✅ Asgardeo organization ${ASGARDEO_TENANT}: issuer ${OIDC_ISSUER}"
+fi
 
 # ============================================================================
 # Step 1: Create the cluster (official page, Step 1; K3D_FIX_DNS=0 on Colima)
@@ -781,6 +858,13 @@ spec:
 EOF
 
 # ── 3b. ThunderID 1.0.0 (REPLACES the official page's asgardeo/thunder:0.28.0 step) ──
+# Skipped whole when the platform IdP is an Asgardeo organization: every
+# document below registers something in the platform ThunderID, and there is
+# none. The block is closed, unindented, just before 3c's entitlement claim.
+if [ "$AE_IDP_KIND" = "asgardeo" ]; then
+echo ""
+echo "   ⏭️  Platform ThunderID not installed (AE_IDP_KIND=asgardeo: the platform IdP is ${OIDC_ISSUER})"
+else
 echo ""
 step "3️⃣.2  Installing ThunderID ${THUNDER_VERSION} (replaces the official 0.28.0 step)"
 
@@ -1446,6 +1530,7 @@ echo "⏳ Waiting for ThunderID..."
 kubectl wait -n thunder --for=condition=available --timeout=300s deployment -l app.kubernetes.io/name=thunderid
 
 echo "✅ ThunderID ready at ${SCHEME}://thunder.${OC_DOMAIN}:${CP_PORT} (${THUNDER_ADMIN_USER} / ${THUNDER_ADMIN_PASSWORD})"
+fi  # AE_IDP_KIND: the end of step 3b, the platform ThunderID
 
 # ── 3c. Entitlement claim: sub -> client_id ──────────────────────────────
 # ThunderID 1.0.0 puts a client_credentials token's subject in the `client_id`
@@ -1492,6 +1577,19 @@ if [ "${WITH_OC_PORTAL:-1}" != "1" ]; then
     echo "   ⏭️  OpenChoreo portal (Backstage) disabled (WITH_OC_PORTAL=0)"
 fi
 
+# The IdP whose tokens openchoreo-api accepts. The upstream values name the
+# local ThunderID's four URLs; an Asgardeo organization's replace them, as its
+# discovery document names them. The issuer must equal the `iss` of the token
+# aep-api presents (minted at the same organization) or every call 401s.
+OC_OIDC_SET=()
+if [ "$AE_IDP_KIND" = "asgardeo" ]; then
+    OC_OIDC_SET=(--set-string "security.oidc.issuer=${OIDC_ISSUER}"
+        --set-string "security.oidc.jwksUrl=${OIDC_JWKS_URL}"
+        --set-string "security.oidc.authorizationUrl=${OIDC_AUTHORIZE_URL}"
+        --set-string "security.oidc.tokenUrl=${OIDC_TOKEN_URL}")
+    echo "   🔐 OpenChoreo trusts the Asgardeo organization ${ASGARDEO_TENANT}"
+fi
+
 helm upgrade --install openchoreo-control-plane \
     oci://ghcr.io/openchoreo/helm-charts/openchoreo-control-plane \
     --version "${OC_VERSION}" \
@@ -1499,6 +1597,7 @@ helm upgrade --install openchoreo-control-plane \
     --values "$(oc_values single-cluster/values-cp.yaml)" \
     ${DEV_GATEWAY_TLS_SET[@]+"${DEV_GATEWAY_TLS_SET[@]}"} \
     ${OC_PORTAL_SET[@]+"${OC_PORTAL_SET[@]}"} \
+    ${OC_OIDC_SET[@]+"${OC_OIDC_SET[@]}"} \
     --wait --timeout 600s
 
 echo "⏳ Waiting for Control Plane..."
@@ -1794,6 +1893,24 @@ if [ "$WITH_BUILD" = "1" ]; then
       -f "$(oc_manifest samples/getting-started/workflow-templates/publish-image-k3d.yaml)" \
       -f "$(oc_manifest samples/getting-started/workflow-templates/generate-workload-k3d.yaml)"
 
+    # The build's last step signs in as OpenChoreo's own workload publisher
+    # client, and upstream's template names ThunderID's token address for it.
+    # On an Asgardeo organization that client is created by
+    # `ae-asgardeo-apps.sh --with-openchoreo-publisher`; with its secret file
+    # at hand, point the template at the organization. Without it the cluster
+    # still comes up, and a build stops at that step.
+    if [ "$AE_IDP_KIND" = "asgardeo" ]; then
+        oc_publisher_secret="${AE_ASGARDEO_SECRETS_DIR:+${AE_ASGARDEO_SECRETS_DIR}/oc-workload-publisher}"
+        if [ -n "$oc_publisher_secret" ] && [ -s "$oc_publisher_secret" ]; then
+            ASGARDEO_TENANT="$ASGARDEO_TENANT" ASGARDEO_BASE_URL="$ASGARDEO_BASE_URL" \
+                bash "${SCRIPT_DIR}/ae-asgardeo-oc-publisher.sh" "$oc_publisher_secret"
+        else
+            echo "   ⚠️  No oc-workload-publisher secret file (AE_ASGARDEO_SECRETS_DIR): builds will stop at their last step."
+            echo "      Create OpenChoreo's publisher client with ae-asgardeo-apps.sh --with-openchoreo-publisher,"
+            echo "      then run ae-asgardeo-oc-publisher.sh on this cluster."
+        fi
+    fi
+
     kubectl wait -n openchoreo-workflow-plane --for=condition=Ready certificate/cluster-agent-workflowplane-tls --timeout=120s
     AGENT_CA=$(kubectl get secret cluster-agent-tls -n openchoreo-workflow-plane -o jsonpath='{.data.ca\.crt}' | base64 -d)
     kubectl apply -f - <<EOF
@@ -1954,11 +2071,20 @@ echo "  Serving now"
 if [ "${WITH_OC_PORTAL:-1}" = "1" ]; then
     printf "    %-16s%-50s(%s / %s)\n" "OpenChoreo" "${SCHEME}://${OC_DOMAIN}:${CP_PORT}" "${THUNDER_ADMIN_USER}" "${THUNDER_ADMIN_PASSWORD}"
 fi
+if [ "$AE_IDP_KIND" = "asgardeo" ]; then
+    printf "    %-16s%-50s%s\n" "Platform IdP" "${OIDC_ISSUER}" "Asgardeo organization ${ASGARDEO_TENANT}"
+    echo ""
+    echo "  Left out on Asgardeo: OpenChoreo's portal, the observability plane, Agent Manager, the SRE agent"
+    echo ""
+    echo "  Still to install — \`make dev-env\` runs this next"
+    printf "    %-16s%-50s%s\n" "AEP" "${SCHEME}://console.${AE_CONSOLE_DOMAIN}:${CP_PORT}" "aectl platform install"
+else
 printf "    %-16s%-50s(%s / %s)\n" "ThunderID" "${SCHEME}://thunder.${OC_DOMAIN}:${CP_PORT}/console" "${THUNDER_ADMIN_USER}" "${THUNDER_ADMIN_PASSWORD}"
 echo ""
 echo "  Still to install — \`make dev-env\` runs both of these next"
 printf "    %-16s%-50s%s\n" "AEP" "${SCHEME}://console.${AE_CONSOLE_DOMAIN}:${CP_PORT}" "aectl platform install"
 printf "    %-16s%-50s%s\n" "Agent Manager" "${SCHEME}://console.amp.${AE_DOMAIN}:${CP_PORT}" "setup-agent-manager.sh"
+fi
 
 # aectl reads its own config file, which AE_DOMAIN cannot reach — so the same
 # suffix lives in seven keys there as well. Printing them already composed is

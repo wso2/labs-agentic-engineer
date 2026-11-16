@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -60,9 +61,68 @@ type generatedSecret struct {
 }
 
 // importedPlatformSecrets are keys an operator imports that the platform reads
-// through ESO, restored like the generated ones after an OpenBao restart.
-var importedPlatformSecrets = []generatedSecret{
-	{path: "aep/jev-api-key"},
+// through ESO, restored like the generated ones after an OpenBao restart: the
+// Jev key and, on Asgardeo, the client secrets.
+func importedPlatformSecrets() []generatedSecret {
+	return append([]generatedSecret{{path: "aep/jev-api-key"}}, importedClientSecrets()...)
+}
+
+// importedClientNames are the clients of an Asgardeo install whose secrets
+// the organization's admin creates (deployments/scripts/ae-asgardeo-apps.sh)
+// and imports under aep/thunder-clients/<name>: aep-api's own client, the
+// AE-only client aep-api calls every org's pod with, and the one org's
+// publisher and AE Studio clients.
+var importedClientNames = []string{
+	"aep-api-client",
+	"ae-studio-internal",
+	"org-publisher",
+	"org-studio",
+}
+
+// importedClientSecrets are the client secrets an install imports and never
+// generates: those of importedClientNames on Asgardeo, none on Thunder
+// (where aectl generates every client secret).
+func importedClientSecrets() []generatedSecret {
+	if !onAsgardeo() {
+		return nil
+	}
+	out := make([]generatedSecret, 0, len(importedClientNames))
+	for _, name := range importedClientNames {
+		out = append(out, generatedSecret{path: "aep/thunder-clients/" + name})
+	}
+	return out
+}
+
+// requireImportedClientSecrets is the Asgardeo install's check that each
+// imported client secret is in the vault. One the vault lost and the cluster
+// still holds (the local OpenBao is in memory) is restored first, and
+// returned. One that nothing holds is an error naming the command that
+// imports it; it is never generated, since only the IdP's admin has it.
+func requireImportedClientSecrets(st seedStore) ([]seededSecret, error) {
+	secrets := importedClientSecrets()
+	restored, err := seedGeneratedSecrets(secrets, st)
+	if err != nil {
+		return restored, err
+	}
+	var missing []string
+	for _, s := range secrets {
+		ok, err := st.exists(s.path)
+		if err != nil {
+			return restored, fmt.Errorf("check secret %s: %w", s.path, err)
+		}
+		if !ok {
+			missing = append(missing, s.path)
+		}
+	}
+	if len(missing) == 0 {
+		return restored, nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d client secret(s) of the Asgardeo organization are not in OpenBao. aectl creates no client there: the organization's admin creates them with deployments/scripts/ae-asgardeo-apps.sh, which writes one file per secret. Import each:", len(missing))
+	for _, path := range missing {
+		fmt.Fprintf(&b, "\n  aectl platform secret import --path %s --value-file <file>", path)
+	}
+	return restored, errors.New(b.String())
 }
 
 // generatedThunderClientSecrets are the Thunder clients' generated secrets.
@@ -80,13 +140,22 @@ func generatedThunderClientSecrets() []generatedSecret {
 // webhookRelaySeedSecret is the per-org relay channels' seed.
 var webhookRelaySeedSecret = generatedSecret{path: webhookRelaySeedPath, generate: webhookRelaySeed}
 
+// generatedClientSecrets are the client secrets this install generates: the
+// Thunder clients' on Thunder, none on Asgardeo (they are imported).
+func generatedClientSecrets() []generatedSecret {
+	if onAsgardeo() {
+		return nil
+	}
+	return generatedThunderClientSecrets()
+}
+
 // generatedPlatformSecrets is every secret an install generates.
 func generatedPlatformSecrets() []generatedSecret {
 	return append([]generatedSecret{
 		{path: "aep/postgres-password", generate: func() (string, error) { return bootstrap.GeneratePassword(32) }},
 		{path: "aep/opensearch-password", generate: func() (string, error) { return bootstrap.GeneratePassword(24) }},
 		webhookRelaySeedSecret,
-	}, generatedThunderClientSecrets()...)
+	}, generatedClientSecrets()...)
 }
 
 // seededSecret is a key seedGeneratedSecrets wrote. value is held only to
@@ -177,7 +246,7 @@ func writePlatformSecrets(ctx context.Context, s *openBaoSession, inputs []platf
 			return nil, fmt.Errorf("write %s: %w", in.path, err)
 		}
 	}
-	return seedGeneratedSecrets(append(generatedPlatformSecrets(), importedPlatformSecrets...), s.seedStore(ctx, recover))
+	return seedGeneratedSecrets(append(generatedPlatformSecrets(), importedPlatformSecrets()...), s.seedStore(ctx, recover))
 }
 
 // externalSecretAPIVersion is the ESO API the chart's ExternalSecrets use.
@@ -278,23 +347,37 @@ func newClusterSecretRecovery(ctx context.Context, platformNamespace string) (re
 	return clusterSecretRecovery(ctx, a, c, platformNamespace)
 }
 
-// platformSecretPaths is every OpenBao path an install writes: its inputs and
-// the generated secrets.
+// platformSecretPaths is every OpenBao path the platform's pods read through
+// ESO that an install writes or requires: its inputs, the generated secrets,
+// and on Asgardeo the imported client secrets. Their Secrets are synced
+// before anything reads them.
 func platformSecretPaths() []string {
-	paths := append([]string(nil), platformInputPaths...)
+	paths := append([]string(nil), platformInputPaths()...)
 	for _, g := range generatedPlatformSecrets() {
+		paths = append(paths, g.path)
+	}
+	for _, g := range importedClientSecrets() {
 		paths = append(paths, g.path)
 	}
 	return paths
 }
 
-// platformInputPaths are the paths an install writes from its inputs.
-var platformInputPaths = []string{
-	"aep/anthropic-api-key",
-	"aep/opensearch-username",
-	"aep/thunder-admin/client-id",
-	"aep/thunder-admin/client-secret",
-	"aep/thunder-clients/system-client-id",
+// platformInputPaths are the paths an install writes from its inputs. The
+// Thunder admin credentials and the system client's id are inputs only where
+// the IdP is Thunder.
+func platformInputPaths() []string {
+	paths := []string{
+		"aep/anthropic-api-key",
+		"aep/opensearch-username",
+	}
+	if onAsgardeo() {
+		return paths
+	}
+	return append(paths,
+		"aep/thunder-admin/client-id",
+		"aep/thunder-admin/client-secret",
+		"aep/thunder-clients/system-client-id",
+	)
 }
 
 // externalSecretSyncTimeout bounds the wait for ESO to re-read OpenBao.

@@ -37,7 +37,8 @@ import (
 //
 // Used by the runner-callback handler (validation context) and the internal
 // MCP gate to accept per-org publisher cc tokens, and over the ae-studio- prefix by
-// StudioClientVerifier (the same checks, another per-org client).
+// StudioClientVerifier (the same checks, another per-org client). The token
+// must also be a machine's by the dialect.
 type PublisherTokenVerifier struct {
 	jwks           *jwtassertion.JWKSCache
 	expectedIssuer string
@@ -146,6 +147,18 @@ func (v *PublisherTokenVerifier) Verify(tokenString string) (*PublisherClaims, e
 	}
 	if org.Handle != orgHandle {
 		return nil, fmt.Errorf("org %q does not match audience org %q", org.Handle, orgHandle)
+	}
+
+	// A per-org client holds a machine's token, by the dialect, as the org's
+	// pod requires of the same clients. The audience already names a client
+	// only a machine grant can mint for; this refuses the token that says
+	// otherwise, or says nothing, rather than rest on that alone.
+	machine, err := v.dialect.Machine(claims.Raw)
+	if err != nil {
+		return nil, fmt.Errorf("not a machine token: %w", err)
+	}
+	if !machine {
+		return nil, fmt.Errorf("not a machine token: the token was issued to a user")
 	}
 	claims.OrgHandle = orgHandle
 	return claims, nil

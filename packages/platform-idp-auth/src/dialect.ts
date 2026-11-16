@@ -27,7 +27,7 @@
 import type { JWTPayload } from "jose";
 
 /** The platform IdP kinds this build reads tokens of. */
-export type DialectKind = "thunder";
+export type DialectKind = "thunder" | "asgardeo";
 
 /**
  * Reads the configured kind (`AE_IDP_KIND`). Empty is thunder, the default a
@@ -38,7 +38,8 @@ export type DialectKind = "thunder";
 export function parseDialectKind(value: string | undefined): DialectKind {
   const kind = (value ?? "").trim().toLowerCase();
   if (kind === "" || kind === "thunder") return "thunder";
-  throw new Error(`unknown platform IdP kind "${value}" (supported: thunder)`);
+  if (kind === "asgardeo") return "asgardeo";
+  throw new Error(`unknown platform IdP kind "${value}" (supported: thunder, asgardeo)`);
 }
 
 /**
@@ -46,8 +47,9 @@ export function parseDialectKind(value: string | undefined): DialectKind {
  * the platform knows the org by, `id` the IdP's own id for it, `name` a
  * display name; each is `""` when the token carries no such claim.
  * `handleDeclared` is true when `handle` came from the handle claim itself
- * (Thunder: `ouHandle`), false when it was filled from a fallback (`ouName`,
- * `ouId`) or is empty. The pod's rules require the declared handle.
+ * (Thunder: `ouHandle`; Asgardeo: `org_handle`), false when it was filled
+ * from a fallback (Thunder's `ouName`, `ouId`) or is empty. The pod's rules
+ * require the declared handle.
  */
 export interface OrgIdentity {
   handle: string;
@@ -60,7 +62,7 @@ export interface OrgIdentity {
 export interface Dialect {
   readonly kind: DialectKind;
   org(payload: JWTPayload): OrgIdentity;
-  /** `true` for a machine's token, `false` for a user's, `undefined` when the token says nothing. */
+  /** `true` for a machine's token, `false` for a user's, `undefined` when the token does not say in a way the dialect knows. */
   machine(payload: JWTPayload): boolean | undefined;
 }
 
@@ -87,7 +89,28 @@ const thunder: Dialect = {
   },
 };
 
-const DIALECTS: Record<DialectKind, Dialect> = { thunder };
+/**
+ * Asgardeo: the org is the tenant's organization carried as org_handle /
+ * org_id / org_name, with no fallback for the handle (every token carries
+ * it), and every token says who it was issued to in aut. aut has two values:
+ * APPLICATION is a machine's, APPLICATION_USER a user's, and with only two to
+ * know, any other value is placed as neither rather than taken for a user's.
+ */
+const asgardeo: Dialect = {
+  kind: "asgardeo",
+  org(payload) {
+    const handle = str(payload["org_handle"]);
+    return { handle, id: str(payload["org_id"]), name: str(payload["org_name"]), handleDeclared: handle !== "" };
+  },
+  machine(payload) {
+    const aut = str(payload["aut"]);
+    if (aut === "APPLICATION") return true;
+    if (aut === "APPLICATION_USER") return false;
+    return undefined;
+  },
+};
+
+const DIALECTS: Record<DialectKind, Dialect> = { thunder, asgardeo };
 
 /** The dialect of a parsed kind. */
 export function dialectFor(kind: DialectKind): Dialect {

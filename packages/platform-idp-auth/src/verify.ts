@@ -144,7 +144,7 @@ export function createVerifier(opts: {
     const claims = toPlatformClaims(payload, dialect);
     // A token the dialect cannot place is refused, never taken for a user's.
     const machine = dialect.machine(payload);
-    if (machine === undefined) throw new UnauthenticatedError("token says nothing about its grant");
+    if (machine === undefined) throw new UnauthenticatedError("token is neither a user's nor a machine's by the dialect");
     if (kind.name === "user") {
       if (machine) throw new UnauthenticatedError("client token on a user route");
       const { sub } = claims;

@@ -50,7 +50,7 @@ function getEnv(key: keyof RuntimeEnv): string | undefined {
 // as the pods read AE_IDP_KIND (trimmed, lowercased, empty is thunder); an
 // unknown kind fails at load, as the pod fails at boot, rather than sign the
 // user in with no org and nothing naming the cause.
-const IDP_KINDS = ["thunder"];
+const IDP_KINDS = ["thunder", "asgardeo"];
 function idpKind(): string {
   const kind = (getEnv("VITE_IDP_KIND") ?? "").trim().toLowerCase() || "thunder";
   if (!IDP_KINDS.includes(kind)) {

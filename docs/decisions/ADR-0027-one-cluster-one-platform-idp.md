@@ -2,7 +2,9 @@
 
 **Status:** Accepted · 2026-08-30 · naming amended by
 [ADR-0028](ADR-0028-the-platform-idp-is-neutral-infrastructure.md); the second
-tier settled by [ADR-0029](ADR-0029-environment-identity-is-bound-by-a-record.md)
+tier settled by [ADR-0029](ADR-0029-environment-identity-is-bound-by-a-record.md);
+"unconditionally" scoped to kind `thunder` by
+[ADR-0054](ADR-0054-the-platform-idp-is-a-setup-choice.md)
 **Context:** running AEP and the WSO2 Agent Management Platform on the same
 local k3d cluster.
 
@@ -10,6 +12,10 @@ local k3d cluster.
 > merge. What ADR-0028 changed is **who owns it** — the release and namespace
 > named `amp-thunder` here are now `platform-idp`, and the singleton bootstrap
 > documents are composed by the installer rather than carried by one product.
+>
+> ADR-0054 adds a second kind of platform IdP. On an install whose `idp.kind`
+> is `asgardeo` the one platform IdP is an Asgardeo organization, and no
+> ThunderID is installed for it.
 > Read the two together; where they disagree on a name, ADR-0028 is current.
 
 ## Context

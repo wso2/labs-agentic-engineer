@@ -1,6 +1,8 @@
 # ADR-0029 — Environment Thunders and gateways are platform infrastructure bound by a record
 
-**Status:** Accepted · 2026-09-05
+**Status:** Accepted · 2026-09-05 · on an Asgardeo platform IdP an environment
+Thunder is not given the platform IdP as a trusted issuer
+([ADR-0054](ADR-0054-the-platform-idp-is-a-setup-choice.md), decision 6)
 **Context:** the second identity tier, after [ADR-0028](ADR-0028-the-platform-idp-is-neutral-infrastructure.md)
 settled ownership of the first.
 
