@@ -30,11 +30,9 @@ package organization_test
 // It is taken from the caller's token: the token is signed by the platform
 // IdP and, under the one-org mapping, names the install's org.
 //
-// External test package: ou_validation_test.go (unit tier, package
-// organization) imports dbtest, which imports migrate, which imports
-// organization — an in-package dbtest file would be an import cycle.
-// fakeOUValidator is duplicated from ou_validation_test.go below (single
-// consumer here). TestEnsureForOuHandle_CacheExpiryReverifies_DB previously
+// External test package: dbtest imports migrate, which imports organization,
+// so an in-package dbtest file would be an import cycle.
+// TestEnsureForOuHandle_CacheExpiryReverifies_DB previously
 // simulated TTL expiry by writing straight into the unexported
 // organizationService.ensureCache map; that's unreachable from a black-box
 // test, so it now drives the SAME observable (OC-hit count before/after

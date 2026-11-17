@@ -38,13 +38,13 @@ type OrganizationIDPProfile struct {
 	JWKSURL             string `gorm:"column:jwks_url;not null" json:"jwksUrl"`
 	AdminCredsSecretRef string `gorm:"column:admin_creds_secret_ref" json:"adminCredsSecretRef,omitempty"`
 	PublisherClientID   string `gorm:"column:publisher_client_id" json:"publisherClientId,omitempty"`
-	// PublisherThunderAppID is the Thunder entity id of aep-publisher-<org>,
-	// recorded by the client ensure. Thunder has no lookup by clientId, so
-	// every later read goes by this id and scans the app list only on a miss.
+	// PublisherThunderAppID holds the client id of aep-publisher-<org> again:
+	// only the IdP has an entity id, and aep-api looks no client up on it.
+	// The column keeps its name.
 	PublisherThunderAppID string `gorm:"column:publisher_thunder_app_id" json:"-"`
 	// StudioClientID and StudioThunderAppID are the AE Studio client
-	// (ae-studio-<org>): its clientId and Thunder entity id. Its secret lives
-	// only in the org's ae-studio-client SecretReference, never in a column.
+	// (ae-studio-<org>): both hold its client id. Its secret lives only in
+	// the org's ae-studio-client SecretReference, never in a column.
 	StudioClientID     string    `gorm:"column:studio_client_id" json:"-"`
 	StudioThunderAppID string    `gorm:"column:studio_thunder_app_id" json:"-"`
 	CreatedAt          time.Time `gorm:"column:created_at" json:"createdAt"`

@@ -20,10 +20,10 @@ package organization
 // reachable with NO database and NO Thunder — the pure helpers
 // (coalesceActor, profileSummary) and the entry-guard /
 // error-classification branches that fire BEFORE any I/O. Every mutating
-// method rejects a missing orgID before touching anything, and the
-// Thunder-backed mutations (EnsureClient, RevokeOrgPublisher) short-circuit
-// with ErrIDPThunderUnavailable when the admin client is nil — so a nil db +
-// nil thunder is enough to prove the ordering (reaching either would panic).
+// method rejects a missing orgID before touching anything, and EnsureClient
+// fails before any I/O when the service has no clients record, so a nil db
+// and no record are enough to prove the ordering (reaching either would
+// panic).
 // The SQL-shaped behavior lives in idp_dbtest_test.go; the HTTP contract in
 // idp_component_test.go.
 
