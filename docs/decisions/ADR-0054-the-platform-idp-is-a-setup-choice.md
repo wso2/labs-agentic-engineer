@@ -57,6 +57,9 @@ Two separate things differ between IdPs, and the kind tied them together:
    - Every reader of the IdP's tokens is given the values and knows no IdP.
      The mandatory four have no default in any reader: one that is missing
      stops aep-api, the pod's containers and the console's image at start.
+     The console's local dev server runs without the image's entrypoint and
+     keeps a default for the handle claim, the dev ThunderID's, as it does
+     for its other settings: the console has no dev config file.
    - With a user value set, any third value is refused. With none, any value
      other than the machine's is a user's, which is what ThunderID needs: it
      has several user grants.
