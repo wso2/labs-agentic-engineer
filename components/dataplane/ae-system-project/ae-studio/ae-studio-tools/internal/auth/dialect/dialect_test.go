@@ -168,32 +168,6 @@ func TestThunder_DoesNotReadAsgardeoClaims(t *testing.T) {
 	}
 }
 
-// The install-wide client's token: Thunder registers that client outside any
-// org, so its token must carry none; Asgardeo stamps the tenant's org on
-// every token, so there it must be the pod's.
-func TestInstallClientOrgOK(t *testing.T) {
-	for name, tc := range map[string]struct {
-		d    Dialect
-		org  Org
-		want bool
-	}{
-		"thunder: no org":             {d: ForKind(KindThunder), org: Org{}, want: true},
-		"thunder: the pod's org":      {d: ForKind(KindThunder), org: Org{ID: "org-1"}, want: false},
-		"thunder: another org":        {d: ForKind(KindThunder), org: Org{ID: "org-2"}, want: false},
-		"asgardeo: the pod's org":     {d: ForKind(KindAsgardeo), org: Org{ID: "org-1", Handle: "acme", HandleDeclared: true}, want: true},
-		"asgardeo: another org":       {d: ForKind(KindAsgardeo), org: Org{ID: "org-2"}, want: false},
-		"asgardeo: no org":            {d: ForKind(KindAsgardeo), org: Org{}, want: false},
-		"unknown kind: no org":        {d: Dialect{}, org: Org{}, want: false},
-		"unknown kind: the pod's org": {d: Dialect{}, org: Org{ID: "org-1"}, want: false},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if got := tc.d.InstallClientOrgOK(tc.org, "org-1"); got != tc.want {
-				t.Fatalf("InstallClientOrgOK(%+v) = %v, want %v", tc.org, got, tc.want)
-			}
-		})
-	}
-}
-
 // A Dialect nobody gave a kind and a kind this build does not know read
 // nothing, so every gate that asks refuses.
 func TestUnknownKind_ReadsNothing(t *testing.T) {

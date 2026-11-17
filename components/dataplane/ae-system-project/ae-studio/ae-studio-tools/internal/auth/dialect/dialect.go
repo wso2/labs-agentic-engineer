@@ -179,25 +179,3 @@ func (d Dialect) Machine(r Raw) (bool, error) {
 		return false, ErrNoMachineClaim
 	}
 }
-
-// InstallClientOrgOK reports whether org, read from a token of the
-// install-wide client (the one client every org's pod accepts aep-api's
-// calls from), is what that client's token carries for a pod of podOrgID.
-//
-// Thunder registers the client outside any org, so its token carries no org
-// id; one that does is some org's own client. Asgardeo stamps the tenant's
-// org on every token, the install-wide client's included, so there the org id
-// must be the pod's.
-//
-// aep-api's dialect has no such question: only the pod has a gate for this
-// client.
-func (d Dialect) InstallClientOrgOK(org Org, podOrgID string) bool {
-	switch d.kind {
-	case KindThunder:
-		return org.ID == ""
-	case KindAsgardeo:
-		return podOrgID != "" && org.ID == podOrgID
-	default:
-		return false
-	}
-}

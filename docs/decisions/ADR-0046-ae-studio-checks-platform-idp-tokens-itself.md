@@ -39,9 +39,13 @@ group, and the org is the only claim it checks.**
    container changes in that one function.
 
 2. **`/internal/v1` on `ae-studio-tools`: the AE-only client.** A
-   client-credentials token of one install-wide client that carries no org
-   claim, plus `X-Impersonate-Org` naming the pod's org (its Platform IdP OU
-   id, the pod's `AE_ORG_ID`). Locally the client is
+   client-credentials token of one install-wide client, plus
+   `X-Impersonate-Org` naming the pod's org (its Platform IdP org id, the
+   pod's `AE_ORG_ID`). The header says which org a call is for; the gate does
+   not read the token's own org claim, because what an install-wide client's
+   token carries there depends on the IdP: ThunderID puts none on it,
+   Asgardeo puts the organization's
+   ([ADR-0054](ADR-0054-the-platform-idp-is-a-setup-choice.md)). Locally the client is
    `ae-studio-internal-client`, which `aep-api` reads from
    `AE_STUDIO_INTERNAL_CLIENT_ID` / `AE_STUDIO_INTERNAL_CLIENT_SECRET`; Cloud
    provisions its own client (APP_FACTORY_BFF_TO_AE_STUDIO) under the same

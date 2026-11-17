@@ -100,8 +100,9 @@ func TestGate_Table(t *testing.T) {
 	otherIss := kp.sign(t, jwt.MapClaims{"iss": "http://evil", "aud": "aep-console-client", "grant_type": "authorization_code", "ouId": "ou-1", "ouHandle": "default", "exp": time.Now().Add(time.Hour).Unix()})
 	// Hardening rows beyond the plan's table: a user-audience token minted by
 	// client_credentials, an M2M token whose aud matches but whose client_id
-	// does not, one carrying an org claim, a token with no exp, and an
-	// unsigned (alg none) token.
+	// does not, one carrying an org claim (which the gate does not read: the
+	// impersonation header says which org a call is for), a token with no
+	// exp, and an unsigned (alg none) token.
 	m2mUserAud := kp.sign(t, jwt.MapClaims{"iss": "http://idp", "aud": "aep-console-client", "client_id": "aep-console-client",
 		"grant_type": "client_credentials", "ouId": "ou-1", "ouHandle": "default", "exp": time.Now().Add(time.Hour).Unix()})
 	m2mOtherClient := kp.sign(t, jwt.MapClaims{"iss": "http://idp", "aud": "ae-studio-internal-client", "client_id": "someone-else",
@@ -158,7 +159,8 @@ func TestGate_Table(t *testing.T) {
 		{"user on internal", m2mGate, user("default", "ou-1"), "ou-1", 401},
 		{"publisher on internal", m2mGate, pub, "ou-1", 401},
 		{"other client id on internal", m2mGate, m2mOtherClient, "ou-1", 401},
-		{"m2m with org claim on internal", m2mGate, m2mWithOrg, "ou-1", 401},
+		{"m2m with an org claim: the header decides", m2mGate, m2mWithOrg, "ou-1", 204},
+		{"m2m with an org claim, foreign impersonation", m2mGate, m2mWithOrg, "ou-2", 403},
 		{"no token on internal", m2mGate, "", "ou-1", 401},
 	}
 	for _, c := range cases {
@@ -250,8 +252,11 @@ func TestGate_Table_Asgardeo(t *testing.T) {
 		{"m2m ok", m2mGate, machine(internalClient, nil), "org-1", 204},
 		{"m2m no impersonation", m2mGate, machine(internalClient, nil), "", 403},
 		{"m2m foreign impersonation", m2mGate, machine(internalClient, nil), "org-2", 403},
-		{"m2m of another org on internal", m2mGate, machine(internalClient, map[string]any{"org_id": "org-2"}), "org-1", 401},
-		{"m2m without an org on internal", m2mGate, machine(internalClient, map[string]any{"org_id": nil, "org_handle": nil, "org_name": nil}), "org-1", 401},
+		// The client is install-wide: its token's own org claim is not read,
+		// the impersonation header says which org a call is for.
+		{"m2m whose token names another org: the header decides", m2mGate, machine(internalClient, map[string]any{"org_id": "org-2"}), "org-1", 204},
+		{"m2m whose token names another org, impersonating it", m2mGate, machine(internalClient, map[string]any{"org_id": "org-2"}), "org-2", 403},
+		{"m2m without an org: the header decides", m2mGate, machine(internalClient, map[string]any{"org_id": nil, "org_handle": nil, "org_name": nil}), "org-1", 204},
 		{"m2m without aut on internal", m2mGate, machine(internalClient, map[string]any{"aut": nil}), "org-1", 401},
 		{"other client id on internal", m2mGate, machine(internalClient, map[string]any{"client_id": "someone-else"}), "org-1", 401},
 		{"the org's publisher on internal", m2mGate, machine("aep-publisher-acme", nil), "org-1", 401},
