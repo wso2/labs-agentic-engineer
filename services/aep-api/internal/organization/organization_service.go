@@ -74,24 +74,9 @@ type OrganizationService interface {
 // `seed-admin-org.sh` did not run.
 var ErrOrganizationNotProvisioned = errors.New("organization namespace not provisioned")
 
-// OUValidator confirms a Thunder OU id exists. The org feature uses it to
-// reject a stale/phantom JWT `ouId` before persisting it as the org's
-// thunder_org_uuid — a non-existent OU poisons wc- namespace derivation,
-// impersonation, and the publisher app's OU binding. Satisfied by
-// clients/thundersvc.Client; nil disables the check (dev/tests without a
-// Thunder admin client fall back to trusting the JWT, as before).
-type OUValidator interface {
-	OUExists(ctx context.Context, ouID string) (bool, error)
-}
-
 type organizationService struct {
 	repo  OrganizationRepository
 	nsCli openchoreo.NamespaceClient
-
-	// ouValidator (optional) validates a JWT `ouId` against Thunder before the
-	// org→OU mapping is (over)written. nil = trust the JWT (pre-existing
-	// behavior, for dev/tests without a Thunder admin client).
-	ouValidator OUValidator
 
 	// ensureCache memoises EnsureForOuHandle's "yes, verified" result
 	// for ensureCacheTTL so the auth middleware doesn't pay a DB+OC
@@ -118,10 +103,6 @@ func NewOrganizationService(repo OrganizationRepository, nsCli openchoreo.Namesp
 	}
 }
 
-// SetOUValidator wires the Thunder OU-existence checker (composition root,
-// after the Thunder admin client is constructed).
-func (s *organizationService) SetOUValidator(v OUValidator) { s.ouValidator = v }
-
 // WithEnsureCacheTTL overrides the ensure-cache TTL (default ensureCacheTTL).
 // Test-only: production composition never calls this.
 func (s *organizationService) WithEnsureCacheTTL(d time.Duration) *organizationService {
@@ -136,22 +117,6 @@ func (s *organizationService) cacheTTL() time.Duration {
 		return s.ensureCacheTTLOverride
 	}
 	return ensureCacheTTL
-}
-
-// ouIsTrustworthy returns false ONLY when a wired validator positively reports
-// the OU does not exist. Empty id, no validator, or a transient validation
-// error all return true (fail-open — never block org-ensure on a Thunder
-// hiccup; the publisher self-heal carries its own guard).
-func (s *organizationService) ouIsTrustworthy(ctx context.Context, ouID string) bool {
-	if ouID == "" || s.ouValidator == nil {
-		return true
-	}
-	exists, err := s.ouValidator.OUExists(ctx, ouID)
-	if err != nil {
-		slog.WarnContext(ctx, "org OU validation failed — trusting the JWT ouId (fail-open)", "ouID", ouID, "error", err)
-		return true
-	}
-	return exists
 }
 
 // List returns every namespace the BFF can see in OC, joined with the local
@@ -300,22 +265,8 @@ func (s *organizationService) ensureThunderUUID(ctx context.Context, ouHandle, t
 	if row.ThunderOrgUUID != nil && *row.ThunderOrgUUID == parsed {
 		return
 	}
-	// Trust-check BEFORE any write — both the fresh-org NULL→set path and the
-	// overwrite path. A just-backfilled NULL row must not be poisoned with a
-	// phantom (Thunder-unknown) ouId any more than an existing value may be
-	// overwritten by one; a phantom OU poisons wc- namespace derivation + the
-	// publisher OU binding (runner cc-token would 401).
-	if !s.ouIsTrustworthy(ctx, parsed.String()) {
-		current := "<null>"
-		if row.ThunderOrgUUID != nil {
-			current = row.ThunderOrgUUID.String()
-		}
-		slog.ErrorContext(ctx, "ensureThunderUUID: JWT ouId is NOT a known Thunder OU — REFUSING to persist a phantom onto thunder_org_uuid (keeping current).",
-			"ouHandle", ouHandle, "current", current, "phantomFromJWT", parsed.String())
-		return
-	}
 	if row.ThunderOrgUUID != nil {
-		slog.WarnContext(ctx, "ensureThunderUUID: row UUID differs from JWT — overwriting (new OU validated against Thunder)",
+		slog.WarnContext(ctx, "ensureThunderUUID: row UUID differs from JWT — overwriting",
 			"ouHandle", ouHandle, "current", row.ThunderOrgUUID.String(), "newFromJWT", parsed.String())
 	}
 	if err := s.repo.SetThunderOrgUUID(ctx, ouHandle, parsed); err != nil {
@@ -337,9 +288,6 @@ func (s *organizationService) backfillRow(ctx context.Context, name string, view
 	if thunderOrgUUID != "" {
 		if parsed, perr := uuid.Parse(thunderOrgUUID); perr != nil {
 			slog.WarnContext(ctx, "backfillRow: invalid Thunder UUID in JWT — leaving column NULL", "name", name, "thunderOrgUUID", thunderOrgUUID, "error", perr)
-		} else if !s.ouIsTrustworthy(ctx, parsed.String()) {
-			slog.ErrorContext(ctx, "backfillRow: JWT ouId is NOT a known Thunder OU — creating row with NULL thunder_org_uuid (will re-backfill from a valid login); a phantom OU would poison wc- namespace + publisher binding",
-				"name", name, "phantomFromJWT", parsed.String())
 		} else {
 			row.ThunderOrgUUID = &parsed
 		}

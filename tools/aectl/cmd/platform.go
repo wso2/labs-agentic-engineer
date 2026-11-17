@@ -1064,9 +1064,11 @@ var generatedThunderClientNames = []string{
 	"bff-git-service",
 	"bff-remote-worker",
 	"local-dev-seeder",
-	"system-client",
 	"openchoreo-rca-agent",
 	"ae-studio-internal",
+	// The org's two clients (orgThunderClients).
+	"org-publisher",
+	"org-studio",
 }
 
 // fixedThunderClientSecrets: clients whose secret an OpenChoreo component
@@ -1120,9 +1122,6 @@ func provisionOpenBao(ctx context.Context, platformNamespace, anthropicKey, thun
 		inputs = append(inputs,
 			platformInput{"aep/thunder-admin/client-id", thunderAdminClientID},
 			platformInput{"aep/thunder-admin/client-secret", thunderAdminClientSecret},
-			// system-client ID is a known constant but stored in OpenBao so the
-			// thunder-app-operator can source both credentials from the same ESO Secret.
-			platformInput{"aep/idp-clients/system-client-id", "aep-system-client"},
 		)
 	}
 	sp.Update("Writing secrets")

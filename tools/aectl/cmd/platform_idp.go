@@ -81,10 +81,12 @@ func discoverPlatformIDP(ctx context.Context) (platformIDP, error) {
 	if err != nil {
 		return platformIDP{}, fmt.Errorf("platform IdP (%s): %w", key, err)
 	}
-	idp := platformIDP{Kind: platformIDPKind(), Public: pub, InCluster: pub}
+	idp := platformIDP{
+		Kind: platformIDPKind(), Public: pub, InCluster: pub,
+		OrgHandle:    strings.TrimSpace(viper.GetString("idp.org_handle")),
+		OrgNamespace: ocOrgNamespace(),
+	}
 	if onAsgardeo() {
-		idp.OrgHandle = strings.TrimSpace(viper.GetString("idp.org_handle"))
-		idp.OrgNamespace = ocOrgNamespace()
 		return idp, nil
 	}
 	if base := viper.GetString("thunder.url"); base != "" {
@@ -119,13 +121,11 @@ func platformIDPOverrides(idp platformIDP) []string {
 		"--set", "aeStudio.idp.jwksUrl=" + idp.InCluster.JWKSURL,
 		"--set", "aeStudio.idp.tokenUrl=" + idp.InCluster.TokenURL,
 	}
-	if idp.OrgHandle != "" {
-		// The one org of an IdP that names it by a handle of its own.
-		args = append(args,
-			"--set", "idp.orgHandle="+idp.OrgHandle,
-			"--set", "idp.orgNamespace="+idp.OrgNamespace)
-	}
-	return args
+	// The one org the IdP serves: the handle its tokens name the org by,
+	// and the org's namespace.
+	return append(args,
+		"--set", "idp.orgHandle="+idp.OrgHandle,
+		"--set", "idp.orgNamespace="+idp.OrgNamespace)
 }
 
 // envIDPPlatformTrust is the platform IdP an environment ThunderID is told
@@ -141,14 +141,9 @@ func envIDPPlatformTrust(idp platformIDP) oidc.Endpoints {
 	return idp.Public
 }
 
-// platformIDPInstallArgs returns the IdP pairs only `platform install` sets:
+// platformIDPInstallArgs returns the IdP pair only `platform install` sets:
 // the issuer the console signs in at and aep-api expects in iss (the one
-// string the IdP's document names), and, where the IdP is the in-cluster
-// Thunder, its admin address (thunder.url). An upgrade keeps both.
+// string the IdP's document names). An upgrade keeps it.
 func platformIDPInstallArgs(idp platformIDP) []string {
-	args := []string{"--set", "console.thunderPublicURL=" + idp.Public.Issuer}
-	if idp.Kind != config.IDPKindAsgardeo {
-		args = append(args, "--set", "thunder.adminURL="+viper.GetString("thunder.url"))
-	}
-	return args
+	return []string{"--set", "console.thunderPublicURL=" + idp.Public.Issuer}
 }

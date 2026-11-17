@@ -2,7 +2,7 @@
 
 > **L2 · a domain.** Part of the [aep-api architecture](../../README.md).
 
-Bring a tenant org onto the platform (JIT onboarding + the phantom-OU trust guard) and own every
+Bring a tenant org onto the platform (JIT onboarding) and own every
 per-org, org-keyed record that configures its integrations — GitHub credential, the AI agents card
 (the model connection, coding runtime, Claude subscription), IDP publisher — all fronted by the
 consolidated `/config` resource.
@@ -19,7 +19,6 @@ flowchart LR
   end
   CORE -->|IdentityOps · IssueService| SC[[sourcecontrol]]
   CORE -->|org secrets: SecretReference + vault write| SM[[clients/secretmanagersvc]]
-  CORE -->|publisher app · OU| THUNDER(["Thunder"])
   CORE -->|model probe, netguard, no redirects| MODEL(["the org's model endpoint"])
 ```
 
@@ -41,7 +40,6 @@ model-connection / idp services.*
 |---|---|---|
 | `IdentityOps` · `IssueService` | needs | `sourcecontrol` — the validator's PAT probe (the gitpat's GitHub user, read through the org's pod), disconnect issue cascade |
 | `OwnerLookup` | offers | `sourcecontrol` — `CredentialService.GitHubOwner`, the connected login new repositories are created under |
-| `OrgClients` · `OUValidator` | needs | the org's publisher and AE Studio client lifecycle · the org-unit check. On Thunder the platform IdP's admin client (`thundersvc.Client`) satisfies both. On Asgardeo `OrgClients` is `StaticOrgClients` and there is no `OUValidator` (the composition root picks by `PLATFORM_IDP_KIND`) |
 | `secretmanagersvc` | needs | secret-ref mirror |
 | `OrganizationService` · `CredentialService` · `AnthropicCredentialService` · `IDPService` | offers | `delivery` (coding identity/publisher) · `sourcecontrol` (credential resolution) |
 | `ModelConnectionService` — `ConnectionReader` · `CodingCredentialResolver` | offers | the app root (the governor's and AE Studio's keyless `Connection`) · `projects` (ai-agent model access: `KeyPathRef`) · `delivery` (the coding credential and the connection's model; the evaluation key's reference) |
@@ -63,9 +61,10 @@ model-connection / idp services.*
   this domain (`entity_*.go` over `repository_*.go`), single write-authority.
 
 ## Invariants — don't break
-- **The phantom-OU trust guard** (`ouIsTrustworthy`): reject a JWT `ouId` ONLY when a wired validator
-  positively reports it does not exist; empty id / no validator / transient error all fail-open. A phantom
-  OU poisons `wc-` namespace derivation + the publisher OU binding. Both write paths are guarded.
+- **The org's IdP org id (`thunder_org_uuid`) is taken from the caller's token.** The token is signed by
+  the platform IdP and, under the one-org mapping (`platform/auth`), names the install's org; a
+  differing id overwrites the stored one. It must be a UUID. aep-api asks no IdP whether it exists:
+  it holds no management rights on the platform IdP.
 - **This domain is FAIL-LOUD**, not nil-tolerant: a nil collaborator panics, unlike sourcecontrol's
   503 — the edge assigns it directly, no `OrEmpty`.
 - The `/config` PATCH is an **atomic multi-section** apply; sections are three-state `patch.Field`.
@@ -180,12 +179,8 @@ model-connection / idp services.*
   refuses an `asgardeo` or `custom` profile with a blank issuer: 400 `validation_failed` at
   `body.idp`. The deploy pins protected APIs to that issuer, and with none they would trust every
   keymanager on the cluster. `platform` takes the cluster's issuer, so it needs none.
-- **Thunder org apps are read by their stored entity id.** Thunder has no lookup by clientId, so the
-  profile keeps `publisher_thunder_app_id` (and `studio_thunder_app_id` for `ae-studio-<org>`); every
-  ensure and delete passes it to `thundersvc`, which falls back to one full list scan only on a
-  miss. A revoke or IDP-kind switch clears it with `publisher_client_id`, and removes the
-  `ae-publisher-client` reference once the Thunder app is deleted, so the build gate stops passing on
-  a deleted app's credentials.
+- **The profile's `publisher_thunder_app_id` and `studio_thunder_app_id` hold the client id.** Only the
+  IdP has an entity id, and aep-api looks no client up on it, so the client id stands in for it.
 - **The org secrets are written as a new reference per write** (`OrgSecretWriter`): new
   reference → row (compare-and-swap) → repoint → delete the previous one by its stored name, under
   a per-(org, secret) advisory lock taken after any caller lock and never inside a repoint. The
@@ -201,11 +196,11 @@ model-connection / idp services.*
     uses these secrets.
 - **A gitpat submit is: validate → Connect → `github-pat` reference → `github-webhook-secret` (made
   once, under the lock) → `EnsureClient` publisher, then studio → converge trigger** (`gitpat_submit.go`).
-  Connect writes no reference itself, and the setup runs after the patch's other sections (an idp
-  kind switch's publisher revoke cannot undo it). Every vault path derives from the request's `ouId`
-  (the Secret Manager API derives namespaces from the JWT); a client's Thunder OU is the org row's
-  `thunder_org_uuid`, and `EnsureClient` refuses when they differ. A failed step fails `gitProvider`
-  with code `ae_studio_setup_incomplete` (502, or 409 for a concurrent write, a foreign-OU client or a
+  Connect writes no reference itself, and the setup runs after the patch's other sections. Every
+  vault path derives from the request's `ouId` (the Secret Manager API derives namespaces from the
+  JWT); the org's own IdP org id is the org row's `thunder_org_uuid`, and `EnsureClient` refuses
+  when they differ. A failed step fails `gitProvider`
+  with code `ae_studio_setup_incomplete` (502, or 409 for a concurrent write or a
   missing or disagreeing OU): the connection is saved, and saving the token again retries every failure
   but the OU ones, whose message names the operator action. OUs compare as UUIDs, whatever their case. With no converger or no secrets
   delivery the submit succeeds and logs `ae_studio_not_configured`. Nothing waits for the pod.
@@ -251,24 +246,18 @@ model-connection / idp services.*
   `error` for every other failed path (AE Studio not configured: a missing secret, OU, client or
   reference; no write target; a recent converge failure; a terminal Ready reason; any other not-Ready
   reason past the bound, such as an apply failure).
-- **`EnsureClient` keeps Thunder and the vault agreeing** (`client_ensure.go`): a created app is
-  stored with the secret Thunder returns once; a found app with no reference row is healed with a new
-  secret written to the vault before Thunder's `PUT` (inside the repoint, so a failed `PUT` rolls the
-  reference back); a found app with its row is left alone. An `ae-studio-<org>` app under another OU
-  fails the ensure and is never touched. The whole ensure (Thunder ensure, row check, write, `PUT`)
-  holds the client secret's lock (`OrgSecretWriter.WithLock`). Thunder calls and profile updates take
-  no advisory lock, so the lock order holds.
-- **On an IdP aep-api cannot administer, the org's clients are static** (`StaticOrgClients`, kind
-  `asgardeo`). The tenant's admin creates `aep-publisher-<org>` and `ae-studio-<org>` for the one org
-  and imports their secrets, which reach aep-api as `PLATFORM_IDP_ORG_PUBLISHER_SECRET` and
-  `PLATFORM_IDP_ORG_STUDIO_SECRET`. The registry answers every ensure with the fixed client id, the
-  imported secret and `Created`, so `EnsureClient` stores the secret in the org's reference on each
-  GitHub connect, with no call to the IdP: that is how a secret rotated in the IdP and imported again
-  reaches the org. Its client id stands in for the Thunder entity id on the profile. It refuses
-  another org and any other app name. `SetAppSecret` and `DeletePublisherApp` answer
-  `ErrOrgClientNotManaged`: the client is the IdP admin's to rotate or remove. On an IDP-kind switch
-  the client is therefore not deleted and stays valid, so its `ae-publisher-client` reference and its
-  ids on the profile are both kept and builds go on. The port keeps `thundersvc`'s `OrgApp` and `OrgAppSpec` as its data types.
+- **The org's two clients are created before aep-api runs** (`OrgClients`, `org_clients.go`). aep-api
+  holds no management rights on the platform IdP. `aep-publisher-<org>` and `ae-studio-<org>` are
+  created for the one org by aectl on a ThunderID it administers and by the IdP's admin otherwise,
+  and their secrets reach aep-api as `PLATFORM_IDP_ORG_PUBLISHER_SECRET` and
+  `PLATFORM_IDP_ORG_STUDIO_SECRET`. `OrgClients` is that record: it answers the client id, derived
+  from the org's name, and the secret, refuses any other org, and calls nothing.
+- **`EnsureClient` stores a client's secret on every GitHub connect** (`client_ensure.go`): it writes
+  the secret as a new reference of the org and records the client's ids on the profile, under the
+  client secret's lock (`OrgSecretWriter.WithLock`). That is how a secret rotated in the IdP and
+  stored again reaches the org: restart aep-api, then reconnect GitHub. aep-api never creates,
+  changes or deletes a client, so an IDP-kind switch leaves the publisher's reference and its ids
+  as they are and builds go on.
 - **`OrgCatalogVaultKey` reconstructs a Registered External's org-catalog vault path from the
   request JWT `ouId`** — a read, not a second write. Used after aep-api restart when the
   process-local value plane is empty (ADR-0021). A missing `ouId` cannot invent a path.

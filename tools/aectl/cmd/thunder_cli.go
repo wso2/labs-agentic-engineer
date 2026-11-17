@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"slices"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -59,9 +60,14 @@ type thunderClientDef struct {
 	// vaultName is the generated vault key aep/idp-clients/<vaultName>
 	// the ExternalSecret syncs into secretKey (empty: not a generated key).
 	vaultName string
+	// orgOUHandle marks one of the org's own clients: it is registered under
+	// the organization unit with this handle (thunder.DesiredApp.OrgOUHandle).
+	orgOUHandle string
 }
 
-// aepThunderClients is the canonical list of AEP OAuth clients to register in Thunder.
+// aepThunderClients is the canonical list of AEP's platform OAuth clients to
+// register in Thunder. The org's own two clients are orgThunderClients; the
+// registration takes both lists (thunderClients).
 // Confidential clients read their pre-generated secret from a K8s Secret: the
 // shared aep-idp-client-secrets unless the client names its own (secretName).
 // Public (PKCE) clients use the redirect URIs supplied at registration time.
@@ -72,12 +78,31 @@ var aepThunderClients = []thunderClientDef{
 	{clientID: "bff-git-service", clientType: "confidential", vaultName: "bff-git-service", secretKey: "BFF_TO_GIT_SERVICE_SECRET"},
 	{clientID: "bff-remote-worker", clientType: "confidential", vaultName: "bff-remote-worker", secretKey: "BFF_TO_REMOTE_WORKER_SECRET"},
 	{clientID: "local-dev-seeder", clientType: "confidential", vaultName: "local-dev-seeder", secretKey: "LOCAL_DEV_SEEDER_SECRET"},
-	{clientID: "aep-system-client", clientType: "confidential", vaultName: "system-client", secretKey: "THUNDER_SYSTEM_CLIENT_SECRET"},
 	{clientID: "openchoreo-rca-agent", clientType: "confidential", vaultName: "openchoreo-rca-agent", secretKey: "OC_RCA_AGENT_SECRET"},
 	{clientID: "ae-studio-internal-client", clientType: "confidential", secretKey: "AE_STUDIO_INTERNAL_CLIENT_SECRET", secretName: aeStudioInternalSecretsName, noUserAttributes: true, optional: true, vaultName: "ae-studio-internal"},
 	// Public PKCE clients — redirect URIs are filled in by doThunderSetup.
 	{clientID: "aep-console-client", clientType: "public"},
 	{clientID: "aep-cli-client", clientType: "public", redirectURIs: []string{"http://localhost", "http://127.0.0.1"}},
+}
+
+// orgThunderClients are the two clients of the one org the install serves:
+// its publisher client (the coding and validation runners' identity) and its
+// AE Studio client (its pod's identity). aep-api holds no rights to create
+// them, so aectl registers both here, under the org's organization unit
+// (idp.org_handle), and aep-api reads their secrets from their own Secret.
+// The client ids are the ones aep-api derives from the org's namespace.
+func orgThunderClients() []thunderClientDef {
+	org, handle := ocOrgNamespace(), viper.GetString("idp.org_handle")
+	return []thunderClientDef{
+		{clientID: "aep-publisher-" + org, clientType: "confidential", vaultName: "org-publisher", secretKey: "PLATFORM_IDP_ORG_PUBLISHER_SECRET", secretName: orgClientSecretsName, orgOUHandle: handle},
+		{clientID: "ae-studio-" + org, clientType: "confidential", vaultName: "org-studio", secretKey: "PLATFORM_IDP_ORG_STUDIO_SECRET", secretName: orgClientSecretsName, orgOUHandle: handle},
+	}
+}
+
+// thunderClients is every client aectl registers on the platform ThunderID:
+// the platform's, then the org's.
+func thunderClients() []thunderClientDef {
+	return append(slices.Clone(aepThunderClients), orgThunderClients()...)
 }
 
 func (d thunderClientDef) secretNameOrDefault() string {
@@ -90,7 +115,7 @@ func (d thunderClientDef) secretNameOrDefault() string {
 // secretOptional reports whether every client reading the K8s Secret name is
 // optional, i.e. the run may continue without it.
 func secretOptional(name string) bool {
-	for _, d := range aepThunderClients {
+	for _, d := range thunderClients() {
 		if d.clientType == "confidential" && d.secretNameOrDefault() == name && !d.optional {
 			return false
 		}
@@ -120,7 +145,7 @@ func clientsToRegister(defs []thunderClientDef, secretsByName map[string]map[str
 func thunderSecretNames() []string {
 	var names []string
 	seen := map[string]bool{}
-	for _, d := range aepThunderClients {
+	for _, d := range thunderClients() {
 		if d.clientType != "confidential" || seen[d.secretNameOrDefault()] {
 			continue
 		}
@@ -135,7 +160,9 @@ const (
 	// aeStudioInternalSecretsName holds only the AE-only client secret, so a
 	// missing vault key degrades nothing else.
 	aeStudioInternalSecretsName = "aep-ae-studio-internal-secrets"
-	thunderSystemClient         = "aep-system-client"
+	// orgClientSecretsName holds the secrets of the org's two clients, which
+	// aep-api reads (the chart's ExternalSecret of the same name).
+	orgClientSecretsName = "aep-org-client-secrets"
 )
 
 // doThunderSetup registers all AEP OAuth clients in Thunder. It port-forwards
@@ -212,7 +239,7 @@ func doThunderSetup(
 	for id, reason := range skipClients {
 		ui.Warn(fmt.Sprintf("Skipped %s: %s", id, reason))
 	}
-	toRegister := clientsToRegister(aepThunderClients, secretsByName, skipClients)
+	toRegister := clientsToRegister(thunderClients(), secretsByName, skipClients)
 	for i, def := range toRegister {
 		clientSp := ui.NewSpinner(fmt.Sprintf("Registering OAuth clients (%d/%d) — %s", i+1, len(toRegister), def.clientID))
 		clientSp.Start()
@@ -221,6 +248,7 @@ func doThunderSetup(
 			ClientID:         def.clientID,
 			ClientType:       def.clientType,
 			NoUserAttributes: def.noUserAttributes,
+			OrgOUHandle:      def.orgOUHandle,
 		}
 		if def.clientType == "confidential" {
 			secretName := def.secretNameOrDefault()
@@ -260,15 +288,6 @@ func doThunderSetup(
 			syncObserverClientSecret(ctx, k8sClient)
 		}
 	}
-
-	// 5. Ensure the system client is assigned to the aep-system role so it can manage resources.
-	sp = ui.NewSpinner("Assigning system client to aep-system role")
-	sp.Start()
-	if err := client.AssignAdminRole(ctx, thunderSystemClient); err != nil {
-		sp.Fail("Role assignment failed")
-		return fmt.Errorf("assign admin role to %q: %w", thunderSystemClient, err)
-	}
-	sp.Success("System client role assigned")
 
 	ui.Detail("Thunder setup complete")
 	return nil

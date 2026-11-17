@@ -160,7 +160,6 @@ func TestAssemble_Degradations(t *testing.T) {
 		// path (AGENT_RUNNER_IMAGE unset and no secrets provider).
 		for _, want := range []string{
 			"m2m-service-auth", "cycle-log-archive", "secrets-delivery",
-			"idp-mutations",
 			"coding-dispatch-oc", "run-temporal", "ae-studio-tools",
 		} {
 			if !hasCapability(degs, want) {
@@ -236,6 +235,8 @@ func TestAssemble_SREHandoff(t *testing.T) {
 		cfg.SREHandoff.Token = key
 		cfg.Observability.BaseURL = "http://observer"
 		cfg.JWKSURL, cfg.JWTAllowedIssuer, cfg.JWTAllowedAudience = jwksURL, testUserIssuer, testUserAudience
+		// The one org the IdP serves: the test user's token names it.
+		cfg.PlatformIDP.OrgHandle, cfg.PlatformIDP.OrgNamespace = "acme", "acme"
 		return cfg
 	}
 	serveAs := func(t *testing.T, h http.Handler, bearer, method, path, body string) int {

@@ -19,7 +19,7 @@ package organization
 // RequirePublisherForBuild: the POST /build gate is a read of the org's
 // ae-publisher-client row and nothing else. package organization (not
 // organization_test) because these tests and client_ensure_test.go share the
-// unexported in-memory fixtures below and fakeThunder from idp_service_test.go.
+// unexported in-memory fixtures below.
 
 import (
 	"context"
@@ -145,18 +145,9 @@ func (failingOrgSecretRows) Get(context.Context, string, OrgSecret) (*OrgSecretR
 	return nil, errors.New("db down")
 }
 
-// assertNoThunderCalls fails the test when the gate reached Thunder.
-func assertNoThunderCalls(t *testing.T, th *fakeThunder) {
-	t.Helper()
-	if n := len(th.ensureCalls) + len(th.deleteCalls) + len(th.setSecretCalls); n != 0 {
-		t.Fatalf("the build gate made %d Thunder calls; it only reads the row", n)
-	}
-}
-
-func TestRequirePublisherForBuild_NoRowFailsClosedWithoutThunder(t *testing.T) {
+func TestRequirePublisherForBuild_NoRowFailsClosed(t *testing.T) {
 	t.Parallel()
-	th := &fakeThunder{}
-	svc := NewIDPService(newMemIDPRepo(), stubOrgRepo{}, th, PlatformIDPConfig{}).
+	svc := NewIDPService(newMemIDPRepo(), stubOrgRepo{}, nil, PlatformIDPConfig{}).
 		WithOrgSecretRefs(newMemOrgSecretRepo()) // no ae-publisher-client row
 
 	err := svc.RequirePublisherForBuild(context.Background(), "acme")
@@ -166,20 +157,17 @@ func TestRequirePublisherForBuild_NoRowFailsClosedWithoutThunder(t *testing.T) {
 	if !strings.Contains(err.Error(), "Reconnect GitHub to set up this organization's build credentials") {
 		t.Fatalf("err = %v: the message must send the user to reconnect GitHub", err)
 	}
-	assertNoThunderCalls(t, th)
 }
 
-func TestRequirePublisherForBuild_RowPresentPassesWithoutThunder(t *testing.T) {
+func TestRequirePublisherForBuild_RowPresentPasses(t *testing.T) {
 	t.Parallel()
-	th := &fakeThunder{}
 	rows := newMemOrgSecretRepo()
 	rows.rows[memOrgSecretKey("acme", OrgSecretPublisherClient)] = OrgSecretRef{Secret: OrgSecretPublisherClient, Name: "acme-ae-publisher-client-1a2b"}
-	svc := NewIDPService(newMemIDPRepo(), stubOrgRepo{}, th, PlatformIDPConfig{}).WithOrgSecretRefs(rows)
+	svc := NewIDPService(newMemIDPRepo(), stubOrgRepo{}, nil, PlatformIDPConfig{}).WithOrgSecretRefs(rows)
 
 	if err := svc.RequirePublisherForBuild(context.Background(), "acme"); err != nil {
 		t.Fatalf("a recorded ae-publisher-client row passes the gate: %v", err)
 	}
-	assertNoThunderCalls(t, th)
 }
 
 // Another org's row does not open this org's build.
@@ -187,7 +175,7 @@ func TestRequirePublisherForBuild_AnotherOrgsRowDoesNotCount(t *testing.T) {
 	t.Parallel()
 	rows := newMemOrgSecretRepo()
 	rows.rows[memOrgSecretKey("other", OrgSecretPublisherClient)] = OrgSecretRef{Secret: OrgSecretPublisherClient, Name: "other-ae-publisher-client-1a2b"}
-	svc := NewIDPService(newMemIDPRepo(), stubOrgRepo{}, &fakeThunder{}, PlatformIDPConfig{}).WithOrgSecretRefs(rows)
+	svc := NewIDPService(newMemIDPRepo(), stubOrgRepo{}, nil, PlatformIDPConfig{}).WithOrgSecretRefs(rows)
 
 	if err := svc.RequirePublisherForBuild(context.Background(), "acme"); !errors.Is(err, delivery.ErrPublisherCredentialsMissing) {
 		t.Fatalf("err = %v, want ErrPublisherCredentialsMissing", err)
@@ -198,31 +186,27 @@ func TestRequirePublisherForBuild_AnotherOrgsRowDoesNotCount(t *testing.T) {
 // answers a server error rather than telling the user to reconnect GitHub.
 func TestRequirePublisherForBuild_ReadErrorIsNotMissing(t *testing.T) {
 	t.Parallel()
-	th := &fakeThunder{}
-	svc := NewIDPService(newMemIDPRepo(), stubOrgRepo{}, th, PlatformIDPConfig{}).WithOrgSecretRefs(failingOrgSecretRows{})
+	svc := NewIDPService(newMemIDPRepo(), stubOrgRepo{}, nil, PlatformIDPConfig{}).WithOrgSecretRefs(failingOrgSecretRows{})
 
 	err := svc.RequirePublisherForBuild(context.Background(), "acme")
 	if err == nil || errors.Is(err, delivery.ErrPublisherCredentialsMissing) || !strings.Contains(err.Error(), "db down") {
 		t.Fatalf("err = %v, want the read failure, not a missing row", err)
 	}
-	assertNoThunderCalls(t, th)
 }
 
 // No row reader wired fails closed: there is no other source to fall back to.
 func TestRequirePublisherForBuild_NoReaderFailsClosed(t *testing.T) {
 	t.Parallel()
-	th := &fakeThunder{}
-	svc := NewIDPService(newMemIDPRepo(), stubOrgRepo{}, th, PlatformIDPConfig{})
+	svc := NewIDPService(newMemIDPRepo(), stubOrgRepo{}, nil, PlatformIDPConfig{})
 
 	if err := svc.RequirePublisherForBuild(context.Background(), "acme"); err == nil {
 		t.Fatal("an unwired row reader must fail the build")
 	}
-	assertNoThunderCalls(t, th)
 }
 
 func TestRequirePublisherForBuild_EmptyOrgID(t *testing.T) {
 	t.Parallel()
-	svc := NewIDPService(newMemIDPRepo(), stubOrgRepo{}, &fakeThunder{}, PlatformIDPConfig{}).
+	svc := NewIDPService(newMemIDPRepo(), stubOrgRepo{}, nil, PlatformIDPConfig{}).
 		WithOrgSecretRefs(newMemOrgSecretRepo())
 	if err := svc.RequirePublisherForBuild(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "orgID") {
 		t.Fatalf("err = %v, want an orgID error", err)

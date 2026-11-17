@@ -27,9 +27,9 @@
 #   [base URL]              default https://api.asgardeo.io
 #
 # It edits three lines of the base's `idp:` block, which must be in the shape
-# skaffold/defaults.yaml ships them: `  kind: "thunder"`, and the commented
-# `  # issuer: ""` and `  # org_handle: ""`. A base without them is refused,
-# not guessed at.
+# skaffold/defaults.yaml ships them: `  kind: "thunder"`,
+# `  org_handle: "default"` and the commented `  # issuer: ""`. A base
+# without them is refused, not guessed at.
 set -euo pipefail
 
 base="${1:?usage: ae-asgardeo-aectl-config.sh <base config> <organization handle> [base URL]}"
@@ -44,7 +44,7 @@ issuer="${url%/}/t/${tenant}/oauth2/token"
 out="$(sed \
     -e 's|^  kind: "thunder"$|  kind: "asgardeo"|' \
     -e 's|^  # issuer: ""$|  issuer: "'"${issuer}"'"|' \
-    -e 's|^  # org_handle: ""$|  org_handle: "'"${tenant}"'"|' \
+    -e 's|^  org_handle: "default"$|  org_handle: "'"${tenant}"'"|' \
     "$base")"
 
 for line in '  kind: "asgardeo"' "  issuer: \"${issuer}\"" "  org_handle: \"${tenant}\""; do

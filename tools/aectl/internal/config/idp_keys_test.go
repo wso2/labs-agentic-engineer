@@ -39,6 +39,7 @@ var thunderKeys = map[string]string{
 	"thunder.url":             "http://thunder-service.thunder.svc.cluster.local:8090",
 	"thunder.admin_client_id": "ae-install-client",
 	"thunder.public_url":      "http://thunder.openchoreo.localhost:8080",
+	"idp.org_handle":          "default",
 }
 
 var asgardeoKeys = map[string]string{
@@ -72,8 +73,8 @@ func hasErrorNaming(errs []string, key string) bool {
 	return false
 }
 
-// A Thunder install is what it always was: the four thunder.* keys are
-// required whether idp.kind is unset or says thunder.
+// A Thunder install needs the four thunder.* keys and the handle of the org
+// it serves, whether idp.kind is unset or says thunder.
 func TestValidate_ThunderKeysRequiredUnderThunder(t *testing.T) {
 	for _, kind := range []string{"", "thunder"} {
 		if errs := validateViper(idpConfig(with(thunderKeys, "idp.kind", kind))); len(errs) != 0 {
@@ -102,14 +103,12 @@ func TestValidate_AsgardeoNeedsItsOwnKeysAndNoThunderKeys(t *testing.T) {
 	}
 }
 
-// The Asgardeo keys are refused on a Thunder install, where nothing reads
-// them: a value there would look as if it took effect.
-func TestValidate_AsgardeoKeysRefusedUnderThunder(t *testing.T) {
-	for _, key := range []string{"idp.issuer", "idp.org_handle"} {
-		errs := validateViper(idpConfig(with(thunderKeys, key, asgardeoKeys[key])))
-		if !hasErrorNaming(errs, key) {
-			t.Errorf("%s under thunder: errors %v do not refuse it", key, errs)
-		}
+// The Asgardeo issuer is refused on a Thunder install, where nothing reads
+// it: a value there would look as if it took effect.
+func TestValidate_AsgardeoIssuerRefusedUnderThunder(t *testing.T) {
+	errs := validateViper(idpConfig(with(thunderKeys, "idp.issuer", asgardeoKeys["idp.issuer"])))
+	if !hasErrorNaming(errs, "idp.issuer") {
+		t.Errorf("idp.issuer under thunder: errors %v do not refuse it", errs)
 	}
 }
 

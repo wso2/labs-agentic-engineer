@@ -90,8 +90,8 @@ func TestDiscoverPlatformIDP_Asgardeo(t *testing.T) {
 	}
 }
 
-// The chart is told the kind, the public endpoints and the one org; a Thunder
-// install is told no org.
+// The chart is told the kind, the public endpoints and the one org. Every
+// install is told its org, a Thunder one included.
 func TestPlatformIDPOverrides_Asgardeo(t *testing.T) {
 	got := strings.Join(platformIDPOverrides(testAsgardeoIDP), " ")
 	for _, want := range []string{
@@ -108,31 +108,28 @@ func TestPlatformIDPOverrides_Asgardeo(t *testing.T) {
 			t.Errorf("missing %s in %s", want, got)
 		}
 	}
-	if thunder := strings.Join(platformIDPOverrides(testPlatformIDP), " "); strings.Contains(thunder, "idp.org") {
-		t.Errorf("a Thunder install sets an org: %s", thunder)
-	}
-}
-
-// The install's own IdP pairs: the issuer the console and aep-api use, and
-// Thunder's in-cluster admin address only where there is a Thunder.
-func TestPlatformIDPInstallArgs(t *testing.T) {
-	t.Cleanup(viper.Reset)
-	viper.Set("thunder.url", "http://thunder-service.thunder.svc.cluster.local:8090")
-	thunder := strings.Join(platformIDPInstallArgs(testPlatformIDP), " ")
-	for _, want := range []string{
-		"--set console.thunderPublicURL=http://thunder.openchoreo.localhost:8080",
-		"--set thunder.adminURL=http://thunder-service.thunder.svc.cluster.local:8090",
-	} {
+	thunder := strings.Join(platformIDPOverrides(testPlatformIDP), " ")
+	for _, want := range []string{"--set idp.orgHandle=default", "--set idp.orgNamespace=default"} {
 		if !strings.Contains(thunder, want) {
 			t.Errorf("thunder: missing %s in %s", want, thunder)
 		}
 	}
-	asgardeo := strings.Join(platformIDPInstallArgs(testAsgardeoIDP), " ")
-	if !strings.Contains(asgardeo, "--set console.thunderPublicURL=https://api.asgardeo.io/t/acmecorp/oauth2/token") {
-		t.Errorf("asgardeo: no issuer in %s", asgardeo)
-	}
-	if strings.Contains(asgardeo, "thunder.adminURL") {
-		t.Errorf("asgardeo: sets a Thunder admin URL: %s", asgardeo)
+}
+
+// The install's own IdP pair: the issuer the console and aep-api use. No
+// install gives the chart an IdP admin address: aep-api administers no IdP.
+func TestPlatformIDPInstallArgs(t *testing.T) {
+	for name, tc := range map[string]struct {
+		idp  platformIDP
+		want string
+	}{
+		"thunder":  {testPlatformIDP, "--set console.thunderPublicURL=http://thunder.openchoreo.localhost:8080"},
+		"asgardeo": {testAsgardeoIDP, "--set console.thunderPublicURL=https://api.asgardeo.io/t/acmecorp/oauth2/token"},
+	} {
+		got := strings.Join(platformIDPInstallArgs(tc.idp), " ")
+		if got != tc.want {
+			t.Errorf("%s: install args = %s, want %s", name, got, tc.want)
+		}
 	}
 }
 
@@ -182,8 +179,17 @@ func TestPlatformSecrets_ByIDPKind(t *testing.T) {
 
 	t.Run("thunder", func(t *testing.T) {
 		t.Cleanup(viper.Reset)
-		if got := paths(generatedPlatformSecrets()); !strings.Contains(got, "aep/idp-clients/system-client") {
-			t.Errorf("no generated Thunder client secrets: %s", got)
+		got := paths(generatedPlatformSecrets())
+		// aectl creates the org's two clients on Thunder, so it generates
+		// their secrets like any other client's.
+		for _, want := range []string{"aep/idp-clients/aep-api-client", "aep/idp-clients/org-publisher", "aep/idp-clients/org-studio"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("no generated secret %s in: %s", want, got)
+			}
+		}
+		// aep-api administers no IdP, so there is no system client.
+		if strings.Contains(got, "system-client") {
+			t.Errorf("a system client secret is generated: %s", got)
 		}
 		if got := strings.Join(platformInputPaths(), " "); !strings.Contains(got, "aep/thunder-admin/client-secret") {
 			t.Errorf("no Thunder admin input: %s", got)

@@ -637,10 +637,10 @@ Never `bao kv get` a multi-field document without `-field=<name>` piped to
    |---|---|---|
    | `aep/thunder-admin/client-id`, `.../client-secret` | `aep-thunder-admin-creds` | `client-id`, `client-secret` |
    | `aep/postgres-password` | `postgres-secrets` | `POSTGRES_PASSWORD` |
-   | `aep/idp-clients/<name>` | `aep-idp-client-secrets` (and `aep-ae-studio-internal-secrets` for `ae-studio-internal`) | `OC_WORKLOAD_PUBLISHER_SECRET`, `OC_OBSERVER_READER_SECRET`, `AEP_API_CLIENT_SECRET`, `BFF_TO_GIT_SERVICE_SECRET`, `BFF_TO_REMOTE_WORKER_SECRET`, `LOCAL_DEV_SEEDER_SECRET`, `THUNDER_SYSTEM_CLIENT_SECRET`, `OC_RCA_AGENT_SECRET`, `AE_STUDIO_INTERNAL_CLIENT_SECRET` (for `oc-workload-publisher`, `oc-observer-reader`, `aep-api-client`, `bff-git-service`, `bff-remote-worker`, `local-dev-seeder`, `system-client`, `openchoreo-rca-agent`, `ae-studio-internal`, in that order) |
+   | `aep/idp-clients/<name>` | `aep-idp-client-secrets` (and `aep-ae-studio-internal-secrets` for `ae-studio-internal`) | `OC_WORKLOAD_PUBLISHER_SECRET`, `OC_OBSERVER_READER_SECRET`, `AEP_API_CLIENT_SECRET`, `BFF_TO_GIT_SERVICE_SECRET`, `BFF_TO_REMOTE_WORKER_SECRET`, `LOCAL_DEV_SEEDER_SECRET`, `OC_RCA_AGENT_SECRET`, `AE_STUDIO_INTERNAL_CLIENT_SECRET` (for `oc-workload-publisher`, `oc-observer-reader`, `aep-api-client`, `bff-git-service`, `bff-remote-worker`, `local-dev-seeder`, `openchoreo-rca-agent`, `ae-studio-internal`, in that order) |
    | `aep/webhook-relay-seed` | `aep-webhook-relay` | `AE_STUDIO_WEBHOOK_RELAY_SEED` |
    | `aep/jev-api-key` (only with `aeStudio.jev.enabled`) | `aep-jev` | `AE_STUDIO_JEV_API_KEY` |
-   | `aep/idp-clients/org-publisher`, `.../org-studio` (only with `idp.kind: asgardeo`) | `aep-org-client-secrets` | `PLATFORM_IDP_ORG_PUBLISHER_SECRET`, `PLATFORM_IDP_ORG_STUDIO_SECRET`: the secrets of the org's two pre-created clients, imported by the tenant's admin |
+   | `aep/idp-clients/org-publisher`, `.../org-studio` | `aep-org-client-secrets` | `PLATFORM_IDP_ORG_PUBLISHER_SECRET`, `PLATFORM_IDP_ORG_STUDIO_SECRET`: the secrets of the org's two pre-created clients. `aectl` generates them on a ThunderID it administers; with `idp.kind: asgardeo` the organization's admin imports them |
 
    For `idp.kind: asgardeo`, the organization's admin creates the five
    applications and their secret files with

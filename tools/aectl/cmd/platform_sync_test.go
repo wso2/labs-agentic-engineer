@@ -23,6 +23,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/spf13/viper"
 )
 
 type syncRecorder struct {
@@ -116,10 +118,10 @@ func TestSyncClients_PostgresErrorStopsBeforeThunder(t *testing.T) {
 func TestClientsToRegister_OptionalSecretMissing(t *testing.T) {
 	secrets := map[string]map[string]string{thunderSecretsName: {"x": "y"}}
 	var ids []string
-	for _, d := range clientsToRegister(aepThunderClients, secrets, nil) {
+	for _, d := range clientsToRegister(thunderClients(), secrets, nil) {
 		ids = append(ids, d.clientID)
 	}
-	if len(ids) != len(aepThunderClients)-1 {
+	if len(ids) != len(thunderClients())-1 {
 		t.Fatalf("got %v", ids)
 	}
 	for _, id := range ids {
@@ -128,7 +130,7 @@ func TestClientsToRegister_OptionalSecretMissing(t *testing.T) {
 		}
 	}
 	skip := map[string]string{"aep-api-client": "stale"}
-	for _, d := range clientsToRegister(aepThunderClients, secrets, skip) {
+	for _, d := range clientsToRegister(thunderClients(), secrets, skip) {
 		if d.clientID == "aep-api-client" {
 			t.Fatal("skipped client registered")
 		}
@@ -137,7 +139,7 @@ func TestClientsToRegister_OptionalSecretMissing(t *testing.T) {
 
 func TestGeneratedNamesMatchClientVaultNames(t *testing.T) {
 	have := map[string]bool{}
-	for _, d := range aepThunderClients {
+	for _, d := range thunderClients() {
 		if d.vaultName != "" {
 			have[d.vaultName] = true
 		}
@@ -168,5 +170,37 @@ func TestPathExists_FailsClosed(t *testing.T) {
 		if ok != want.ok || (err != nil) != want.err {
 			t.Errorf("status %d: ok=%v err=%v", status, ok, err)
 		}
+	}
+}
+
+// The org's two clients carry the client ids aep-api derives from the org's
+// namespace, are placed under the org's organization unit, and read their
+// secrets from the Secret aep-api reads them from.
+func TestOrgThunderClients(t *testing.T) {
+	t.Cleanup(viper.Reset)
+	viper.Set("oc.default_org_namespace", "acme")
+	viper.Set("idp.org_handle", "acme-unit")
+
+	got := map[string]thunderClientDef{}
+	for _, d := range orgThunderClients() {
+		got[d.clientID] = d
+	}
+	for id, want := range map[string]struct{ vaultName, secretKey string }{
+		"aep-publisher-acme": {"org-publisher", "PLATFORM_IDP_ORG_PUBLISHER_SECRET"},
+		"ae-studio-acme":     {"org-studio", "PLATFORM_IDP_ORG_STUDIO_SECRET"},
+	} {
+		d, ok := got[id]
+		if !ok {
+			t.Fatalf("no org client %s in %v", id, got)
+		}
+		if d.clientType != "confidential" || d.orgOUHandle != "acme-unit" {
+			t.Errorf("%s: type %q under OU handle %q, want confidential under acme-unit", id, d.clientType, d.orgOUHandle)
+		}
+		if d.vaultName != want.vaultName || d.secretKey != want.secretKey || d.secretName != orgClientSecretsName {
+			t.Errorf("%s: vault name %q, key %q in %q", id, d.vaultName, d.secretKey, d.secretName)
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("org clients = %d, want 2", len(got))
 	}
 }

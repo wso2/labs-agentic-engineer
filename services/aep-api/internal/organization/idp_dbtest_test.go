@@ -17,17 +17,15 @@
 package organization_test
 
 // DBTEST tier (skips under -short; `make test-db` runs it): the REAL idpService
-// over a pristine per-test Postgres (dbtest.New) with a fake Thunder admin
-// client and a fake vault — the SQL-shaped behavior under pin:
+// over a pristine per-test Postgres (dbtest.New) with the org's pre-created
+// clients record and a fake vault — the SQL-shaped behavior under pin:
 // GetOrCreateProfile's create-then-get idempotency + platform-field self-heal,
-// the publisher lifecycle's row writes (the client ensure records the app's
-// ids and the ae-publisher-client row, and never a secret column; Revoke
-// clears the ids and the row), the read-only build gate, the append-only
-// idp_audit_events trail with the right action per mutation, org scoping
-// across many decoy orgs (mutation-verified — a dropped WHERE would coin-flip
-// with 2 rows under random UUID PKs), and the thunder-nil "no partial damage"
-// contract. The Organization OU lookup that feeds EnsurePublisherApp is
-// exercised over real rows. The
+// the publisher's row writes (the client ensure records the client's ids and
+// the ae-publisher-client row, and never a secret column), the read-only
+// build gate, the append-only idp_audit_events trail with the right action
+// per mutation, org scoping across many decoy orgs (mutation-verified — a
+// dropped WHERE would coin-flip with 2 rows under random UUID PKs), and the
+// "no partial damage" contract of an ensure with no clients record. The
 // audit trail is READ directly off idp_audit_events (the table the service
 // wrote) — the service has no audit reader, so this is not a hand-copied
 // production query, it is the incident-response view of a table production owns.
@@ -35,15 +33,11 @@ package organization_test
 // External test package: idp_service_test.go (unit tier, package
 // organization) imports dbtest, which imports migrate, which imports
 // organization — an in-package dbtest file would be an import cycle.
-// idpDBFakeThunder is a local duplicate of idp_service_test.go's fakeThunder
-// (renamed to avoid colliding with config_actions_component_test.go's
-// simpler, same-package fakeThunder). The vault is gitpat_submit's
-// submitVault.
+// The vault is gitpat_submit's submitVault.
 
 import (
 	"context"
 	"errors"
-	"slices"
 	"sort"
 	"testing"
 	"time"
@@ -52,7 +46,6 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/wso2/aep/aep-api/internal/clients/thundersvc"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
@@ -65,29 +58,33 @@ var idpDBPlatform = organization.PlatformIDPConfig{
 	JWKSURL: "http://thunder.test:8090/oauth2/jwks",
 }
 
-// idpDBService wires the real service: per-test Postgres + the given Thunder
-// admin client. Pass a literal nil (a true nil interface, not a typed-nil
-// *idpDBFakeThunder) to exercise the ErrIDPThunderUnavailable path. The
-// *gorm.DB is returned so tests can read the audit table the service writes.
+// idpDBService wires the real service: per-test Postgres + the given record
+// of the org's pre-created clients (nil: no record). The *gorm.DB is
+// returned so tests can read the audit table the service writes.
 // Returns the exported IDPService interface (NewIDPService's concrete return
 // type is unexported and unreachable from this package).
 //
 // The service writes the org clients' credentials through a fake vault
 // (submitVault) and records their references in the real org_secrets table,
 // as production does; the vault path comes from idpDBCtx's ouId claim.
-func idpDBService(t *testing.T, thunder thundersvc.Client) (organization.IDPService, *gorm.DB) {
+func idpDBService(t *testing.T, clients *organization.OrgClients) (organization.IDPService, *gorm.DB) {
 	t.Helper()
 	db := dbtest.New(t)
 	vault := &submitVault{log: &submitLog{}, live: map[string]bool{}, data: map[string]map[string]string{}, writes: map[string]int{}}
 	rows := organization.NewOrgSecretRepository(db)
 	writer := organization.NewSecretRefWriter(vault, organization.NewIDPRepository(db)).
 		WithOrgSecretWriter(organization.NewOrgSecretWriter(vault, rows, organization.NewOrgSecretLock(db), time.Now))
-	svc := organization.NewIDPService(organization.NewIDPRepository(db), organization.NewOrganizationRepository(db), thunder, idpDBPlatform).
+	svc := organization.NewIDPService(organization.NewIDPRepository(db), organization.NewOrganizationRepository(db), clients, idpDBPlatform).
 		WithSecretRefWriter(writer).WithOrgSecretRefs(rows)
 	return svc, db
 }
 
-// idpDBOU is the Thunder OU of the requests below (their ouId claim).
+// idpDBAcme is the install's clients record when it serves org "acme".
+func idpDBAcme() *organization.OrgClients {
+	return organization.NewOrgClients("acme", "publisher-secret-acme", "studio-secret-acme")
+}
+
+// idpDBOU is the IdP org id of the requests below (their ouId claim).
 var idpDBOU = uuid.MustParse("6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b")
 
 // idpDBCtx is a user request whose ouId claim names idpDBOU: the vault path
@@ -108,58 +105,6 @@ func publisherRef(t *testing.T, db *gorm.DB, org string) string {
 		return ""
 	}
 	return ref.Name
-}
-
-// idpDBFakeThunder is idp_service_test.go's fakeThunder, duplicated under a
-// different name (this package already has a simpler fakeThunder in
-// config_actions_component_test.go). The publisher path calls
-// EnsurePublisherApp and DeletePublisherApp (an app this fake reports is
-// always created, so no heal PUT); OUExists is irrelevant to this feature, so
-// a call to it is a test bug — it panics.
-type idpDBFakeThunder struct {
-	// The directory half of thundersvc.Client (groups + users) belongs to the
-	// identity domain, not this test. Embedding satisfies the interface without
-	// a wall of stubs; an accidental call panics on the nil rather than passing.
-	thundersvc.Client
-
-	ensureFn func(ctx context.Context, orgHandle, orgOUID string) (string, string, bool, error)
-	deleteFn func(ctx context.Context, orgHandle string) (bool, error)
-
-	ensureCalls []idpDBEnsureCall
-	deleteCalls []string
-	// storedIDs is the stored Thunder entity id each Delete got.
-	storedIDs []string
-}
-
-type idpDBEnsureCall struct{ orgHandle, orgOUID, storedID string }
-
-var _ thundersvc.Client = (*idpDBFakeThunder)(nil)
-
-// EnsurePublisherApp answers through ensureFn; the entity id it reports is
-// "app-<org>", so a test can see the id recorded on the profile.
-func (f *idpDBFakeThunder) EnsurePublisherApp(ctx context.Context, orgHandle, orgOUID, storedID string) (thundersvc.OrgApp, error) {
-	f.ensureCalls = append(f.ensureCalls, idpDBEnsureCall{orgHandle, orgOUID, storedID})
-	clientID, secret, created, err := "cid-"+orgHandle, "secret-"+orgHandle, true, error(nil)
-	if f.ensureFn != nil {
-		clientID, secret, created, err = f.ensureFn(ctx, orgHandle, orgOUID)
-	}
-	if err != nil {
-		return thundersvc.OrgApp{}, err
-	}
-	return thundersvc.OrgApp{EntityID: "app-" + orgHandle, ClientID: clientID, Secret: secret, Created: created}, nil
-}
-
-func (f *idpDBFakeThunder) DeletePublisherApp(ctx context.Context, orgHandle, storedID string) (bool, error) {
-	f.deleteCalls = append(f.deleteCalls, orgHandle)
-	f.storedIDs = append(f.storedIDs, storedID)
-	if f.deleteFn == nil {
-		return true, nil
-	}
-	return f.deleteFn(ctx, orgHandle)
-}
-
-func (f *idpDBFakeThunder) OUExists(context.Context, string) (bool, error) {
-	panic("idpDBFakeThunder: OUExists is not part of the idp feature")
 }
 
 // auditActions returns the ordered action list for an org from idp_audit_events
@@ -191,7 +136,7 @@ func auditRows(t *testing.T, db *gorm.DB, org string) []organization.IDPAuditEve
 
 func TestGetOrCreateProfile_CreateThenGetIdempotent_DB(t *testing.T) {
 	t.Parallel()
-	svc, gormDB := idpDBService(t, &idpDBFakeThunder{})
+	svc, gormDB := idpDBService(t, nil)
 	ctx := context.Background()
 
 	// No row yet: GetProfile returns (nil, nil).
@@ -242,7 +187,7 @@ func TestGetOrCreateProfile_SelfHealsPlatformFields_DB(t *testing.T) {
 	ctx := context.Background()
 
 	// Seed a profile with the OLD cluster config.
-	old := organization.NewIDPService(organization.NewIDPRepository(gormDB), organization.NewOrganizationRepository(gormDB), &idpDBFakeThunder{}, organization.PlatformIDPConfig{
+	old := organization.NewIDPService(organization.NewIDPRepository(gormDB), organization.NewOrganizationRepository(gormDB), nil, organization.PlatformIDPConfig{
 		Issuer:  "http://old-issuer:8080",
 		JWKSURL: "http://old-jwks:8090/oauth2/jwks",
 	})
@@ -252,7 +197,7 @@ func TestGetOrCreateProfile_SelfHealsPlatformFields_DB(t *testing.T) {
 
 	// A service running the NEW cluster config self-heals the cached fields on
 	// the next GetOrCreate (issuer/jwks are cluster config, not per-org data).
-	fresh := organization.NewIDPService(organization.NewIDPRepository(gormDB), organization.NewOrganizationRepository(gormDB), &idpDBFakeThunder{}, organization.PlatformIDPConfig{
+	fresh := organization.NewIDPService(organization.NewIDPRepository(gormDB), organization.NewOrganizationRepository(gormDB), nil, organization.PlatformIDPConfig{
 		Issuer:  "http://new-issuer:8080",
 		JWKSURL: "http://new-jwks:8090/oauth2/jwks",
 	})
@@ -274,25 +219,21 @@ func TestGetOrCreateProfile_SelfHealsPlatformFields_DB(t *testing.T) {
 
 func TestEnsurePublisherClient_RecordsIDsAndRowAndAudits_DB(t *testing.T) {
 	t.Parallel()
-	thunder := &idpDBFakeThunder{
-		ensureFn: func(_ context.Context, org, _ string) (string, string, bool, error) {
-			return "aep-publisher-" + org, "secret-xyz", true, nil
-		},
-	}
-	svc, gormDB := idpDBService(t, thunder)
+	svc, gormDB := idpDBService(t, idpDBAcme())
 	ctx := idpDBCtx()
 
 	if err := svc.EnsureClient(ctx, "acme", organization.ClientPublisher); err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
 
-	// The profile records the app's ids; the secret is only in the reference
-	// the ae-publisher-client row names, never in a column.
+	// The profile records the client's id (which stands in for the entity id
+	// column too); the secret is only in the reference the
+	// ae-publisher-client row names, never in a column.
 	row, err := svc.GetProfile(ctx, "acme")
 	if err != nil {
 		t.Fatalf("get after ensure: %v", err)
 	}
-	if row.PublisherClientID != "aep-publisher-acme" || row.PublisherThunderAppID != "app-acme" {
+	if row.PublisherClientID != "aep-publisher-acme" || row.PublisherThunderAppID != "aep-publisher-acme" {
 		t.Fatalf("publisher ids not persisted: %+v", row)
 	}
 	if publisherRef(t, gormDB, "acme") == "" {
@@ -312,110 +253,48 @@ func TestEnsurePublisherClient_RecordsIDsAndRowAndAudits_DB(t *testing.T) {
 	}
 }
 
-func TestEnsurePublisherClient_ThunderErrorAuditsFailure_DB(t *testing.T) {
+// An org the install has no pre-created clients for is refused, and the
+// refusal is audited.
+func TestEnsurePublisherClient_AnotherOrgAuditsFailure_DB(t *testing.T) {
 	t.Parallel()
-	thunder := &idpDBFakeThunder{
-		ensureFn: func(context.Context, string, string) (string, string, bool, error) {
-			return "", "", false, errors.New("thunder boom")
-		},
-	}
-	svc, gormDB := idpDBService(t, thunder)
+	svc, gormDB := idpDBService(t, idpDBAcme())
 	ctx := idpDBCtx()
 
-	if err := svc.EnsureClient(ctx, "acme", organization.ClientPublisher); err == nil {
-		t.Fatalf("ensure must surface the thunder error")
+	if err := svc.EnsureClient(ctx, "globex", organization.ClientPublisher); err == nil {
+		t.Fatalf("ensure must refuse an org with no pre-created clients")
 	}
 
-	// The profile row WAS created (GetOrCreateProfile runs before the Thunder
-	// call) but stays publisher-less, and no reference is recorded.
-	row, err := svc.GetProfile(ctx, "acme")
+	// The profile row WAS created (GetOrCreateProfile runs first) but stays
+	// publisher-less, and no reference is recorded.
+	row, err := svc.GetProfile(ctx, "globex")
 	if err != nil || row == nil {
-		t.Fatalf("profile row should still exist after a thunder failure: %+v err %v", row, err)
+		t.Fatalf("profile row should still exist after a refused ensure: %+v err %v", row, err)
 	}
-	if row.PublisherClientID != "" || publisherRef(t, gormDB, "acme") != "" {
-		t.Fatalf("failed ensure must not record a publisher: %+v", row)
+	if row.PublisherClientID != "" || publisherRef(t, gormDB, "globex") != "" {
+		t.Fatalf("refused ensure must not record a publisher: %+v", row)
 	}
 
 	// The failure is audited with the error message.
-	rows := auditRows(t, gormDB, "acme")
+	rows := auditRows(t, gormDB, "globex")
 	if len(rows) != 1 || rows[0].Action != organization.IDPAuditEnsurePublisher || rows[0].ErrorMessage == "" {
-		t.Fatalf("thunder failure must be audited with an error: %+v", rows)
+		t.Fatalf("the refusal must be audited with an error: %+v", rows)
 	}
 }
 
-func TestEnsurePublisherClient_ResolvesOrgOU_DB(t *testing.T) {
+// A profile row from before the id columns existed (NULL) reads as "no id".
+func TestProfile_NullIDColumnsReadAsEmpty_DB(t *testing.T) {
 	t.Parallel()
-	thunder := &idpDBFakeThunder{}
-	svc, gormDB := idpDBService(t, thunder)
-	ctx := idpDBCtx()
-
-	// Org row carrying a Thunder OU id → the publisher app is registered under it.
-	ou := idpDBOU
-	if err := gormDB.Create(&organization.Organization{UUID: uuid.New(), Name: "acme", ThunderOrgUUID: &ou}).Error; err != nil {
-		t.Fatalf("seed org: %v", err)
-	}
-	if err := svc.EnsureClient(ctx, "acme", organization.ClientPublisher); err != nil {
-		t.Fatalf("ensure acme: %v", err)
-	}
-
-	// Org with NO row → the OU falls back to "" (default OU).
-	if err := svc.EnsureClient(ctx, "noou", organization.ClientPublisher); err != nil {
-		t.Fatalf("ensure noou: %v", err)
-	}
-
-	if len(thunder.ensureCalls) != 2 {
-		t.Fatalf("want two EnsurePublisherApp calls, got %d", len(thunder.ensureCalls))
-	}
-	byOrg := map[string]string{}
-	for _, c := range thunder.ensureCalls {
-		byOrg[c.orgHandle] = c.orgOUID
-	}
-	if byOrg["acme"] != ou.String() {
-		t.Fatalf("acme OU: got %q, want the seeded org OU %q", byOrg["acme"], ou.String())
-	}
-	if byOrg["noou"] != "" {
-		t.Fatalf("noou OU: got %q, want empty (default OU fallback)", byOrg["noou"])
-	}
-}
-
-// The publisher's Thunder entity id is recorded on the profile and handed back
-// on every later call, so Thunder is read by id instead of scanned. A row from
-// before the column existed (NULL) reads as "no stored id".
-func TestPublisherThunderAppID_StoredAndPassedBack_DB(t *testing.T) {
-	t.Parallel()
-	thunder := &idpDBFakeThunder{}
-	svc, gormDB := idpDBService(t, thunder)
+	svc, gormDB := idpDBService(t, idpDBAcme())
 	ctx := idpDBCtx()
 
 	if err := svc.EnsureClient(ctx, "acme", organization.ClientPublisher); err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
-	row, err := svc.GetProfile(ctx, "acme")
-	if err != nil || row.PublisherThunderAppID != "app-acme" {
-		t.Fatalf("entity id not stored: %+v err %v", row, err)
-	}
-	if err := svc.EnsureClient(ctx, "acme", organization.ClientPublisher); err != nil {
-		t.Fatalf("second ensure: %v", err)
-	}
-	if got := thunder.ensureCalls[1].storedID; got != "app-acme" {
-		t.Fatalf("second ensure got stored id %q, want app-acme", got)
-	}
-	if _, err := svc.RevokeOrgPublisher(ctx, "acme", "ada@x.io"); err != nil {
-		t.Fatalf("revoke: %v", err)
-	}
-	if want := []string{"app-acme"}; !slices.Equal(thunder.storedIDs, want) {
-		t.Fatalf("delete stored ids = %v, want %v", thunder.storedIDs, want)
-	}
-	row, err = svc.GetProfile(ctx, "acme")
-	if err != nil || row.PublisherThunderAppID != "" {
-		t.Fatalf("revoke must clear the entity id: %+v err %v", row, err)
-	}
-
 	if err := gormDB.Exec(`UPDATE organization_idp_profiles SET publisher_thunder_app_id = NULL,
 		studio_client_id = NULL, studio_thunder_app_id = NULL WHERE org_id = 'acme'`).Error; err != nil {
 		t.Fatalf("null the id columns: %v", err)
 	}
-	row, err = svc.GetProfile(ctx, "acme")
+	row, err := svc.GetProfile(ctx, "acme")
 	if err != nil || row.PublisherThunderAppID != "" || row.StudioClientID != "" || row.StudioThunderAppID != "" {
 		t.Fatalf("NULL id columns must read as empty: %+v err %v", row, err)
 	}
@@ -423,20 +302,15 @@ func TestPublisherThunderAppID_StoredAndPassedBack_DB(t *testing.T) {
 
 // --- RequirePublisherForBuild ----------------------------------------------
 
-// The build gate follows the ae-publisher-client row over the publisher's
-// lifecycle — missing before the ensure, present after, missing again after a
-// revoke — and never calls Thunder itself.
+// The build gate follows the ae-publisher-client row: missing before the
+// ensure, present after.
 func TestRequirePublisherForBuild_FollowsTheRow_DB(t *testing.T) {
 	t.Parallel()
-	thunder := &idpDBFakeThunder{deleteFn: func(context.Context, string) (bool, error) { return true, nil }}
-	svc, _ := idpDBService(t, thunder)
+	svc, _ := idpDBService(t, idpDBAcme())
 	ctx := idpDBCtx()
 
 	if err := svc.RequirePublisherForBuild(ctx, "acme"); !errors.Is(err, delivery.ErrPublisherCredentialsMissing) {
 		t.Fatalf("before the ensure: want ErrPublisherCredentialsMissing, got %v", err)
-	}
-	if len(thunder.ensureCalls)+len(thunder.deleteCalls) != 0 {
-		t.Fatalf("the gate called Thunder: ensure %d delete %d", len(thunder.ensureCalls), len(thunder.deleteCalls))
 	}
 	if err := svc.EnsureClient(ctx, "acme", organization.ClientPublisher); err != nil {
 		t.Fatalf("ensure: %v", err)
@@ -444,77 +318,13 @@ func TestRequirePublisherForBuild_FollowsTheRow_DB(t *testing.T) {
 	if err := svc.RequirePublisherForBuild(ctx, "acme"); err != nil {
 		t.Fatalf("after the ensure: %v", err)
 	}
-	if _, err := svc.RevokeOrgPublisher(ctx, "acme", "ada@x.io"); err != nil {
-		t.Fatalf("revoke: %v", err)
-	}
-	if err := svc.RequirePublisherForBuild(ctx, "acme"); !errors.Is(err, delivery.ErrPublisherCredentialsMissing) {
-		t.Fatalf("after the revoke: want ErrPublisherCredentialsMissing, got %v", err)
-	}
-}
-
-// --- RevokeOrgPublisher -----------------------------------------------------
-
-func TestRevokeOrgPublisher_ClearsAndAudits_DB(t *testing.T) {
-	t.Parallel()
-	thunder := &idpDBFakeThunder{
-		ensureFn: func(_ context.Context, org, _ string) (string, string, bool, error) {
-			return "aep-publisher-" + org, "secret-v1", true, nil
-		},
-		deleteFn: func(context.Context, string) (bool, error) { return true, nil },
-	}
-	svc, gormDB := idpDBService(t, thunder)
-	ctx := idpDBCtx()
-
-	if err := svc.EnsureClient(ctx, "acme", organization.ClientPublisher); err != nil {
-		t.Fatalf("ensure: %v", err)
-	}
-	deleted, err := svc.RevokeOrgPublisher(ctx, "acme", "ada@x.io")
-	if err != nil || !deleted {
-		t.Fatalf("revoke: deleted=%v err=%v", deleted, err)
-	}
-
-	// The publisher ids and its reference are gone; the row itself survives
-	// (kind stays).
-	row, err := svc.GetProfile(ctx, "acme")
-	if err != nil || row == nil {
-		t.Fatalf("profile row must survive revoke: %+v err %v", row, err)
-	}
-	if row.PublisherClientID != "" || row.PublisherThunderAppID != "" || publisherRef(t, gormDB, "acme") != "" {
-		t.Fatalf("revoke must clear the publisher ids and its reference: %+v", row)
-	}
-
-	if got := auditActions(t, gormDB, "acme"); !equalStrings(got, []string{
-		organization.IDPAuditEnsurePublisher, organization.IDPAuditRevokePublisher,
-	}) {
-		t.Fatalf("audit actions drifted: %v", got)
-	}
-}
-
-func TestRevokeOrgPublisher_NoProfileIsNoop_DB(t *testing.T) {
-	t.Parallel()
-	svc, gormDB := idpDBService(t, &idpDBFakeThunder{})
-	ctx := idpDBCtx()
-
-	// Nothing to revoke (no row) → (false, nil), no Thunder call, no audit.
-	deleted, err := svc.RevokeOrgPublisher(ctx, "acme", "ada@x.io")
-	if err != nil || deleted {
-		t.Fatalf("no-profile revoke: want (false,nil), got (%v,%v)", deleted, err)
-	}
-	if got := auditActions(t, gormDB, "acme"); len(got) != 0 {
-		t.Fatalf("no-op revoke must not audit, got %v", got)
-	}
 }
 
 // --- UpdateProfile ----------------------------------------------------------
 
 func TestUpdateProfile_IssuerOnlyPreservesPublisher_DB(t *testing.T) {
 	t.Parallel()
-	thunder := &idpDBFakeThunder{
-		ensureFn: func(_ context.Context, org, _ string) (string, string, bool, error) {
-			return "aep-publisher-" + org, "secret-v1", true, nil
-		},
-	}
-	svc, gormDB := idpDBService(t, thunder)
+	svc, gormDB := idpDBService(t, idpDBAcme())
 	ctx := idpDBCtx()
 
 	if err := svc.EnsureClient(ctx, "acme", organization.ClientPublisher); err != nil {
@@ -522,7 +332,7 @@ func TestUpdateProfile_IssuerOnlyPreservesPublisher_DB(t *testing.T) {
 	}
 	ref := publisherRef(t, gormDB, "acme")
 
-	// Same kind, new issuer/jwks → publisher app preserved (no kind switch).
+	// Same kind, new issuer/jwks → publisher preserved.
 	updated, err := svc.UpdateProfile(ctx, "acme", "ada@x.io", organization.UpdateProfileRequest{
 		Kind:    "platform",
 		Issuer:  "http://new-issuer:8080",
@@ -537,10 +347,6 @@ func TestUpdateProfile_IssuerOnlyPreservesPublisher_DB(t *testing.T) {
 	if updated.PublisherClientID != "aep-publisher-acme" || publisherRef(t, gormDB, "acme") != ref {
 		t.Fatalf("same-kind update must preserve the publisher and its reference: %+v", updated)
 	}
-	// No Thunder cleanup on a same-kind update.
-	if len(thunder.deleteCalls) != 0 {
-		t.Fatalf("same-kind update must not call Thunder delete, got %v", thunder.deleteCalls)
-	}
 	if got := auditActions(t, gormDB, "acme"); !equalStrings(got, []string{
 		organization.IDPAuditEnsurePublisher, organization.IDPAuditUpdateProfile,
 	}) {
@@ -548,24 +354,19 @@ func TestUpdateProfile_IssuerOnlyPreservesPublisher_DB(t *testing.T) {
 	}
 }
 
-func TestUpdateProfile_KindChangeClearsPublisherAndCallsThunder_DB(t *testing.T) {
+// platform → custom: the publisher client is the platform IdP's whatever the
+// org's own IdP kind is, so its ids and its reference are kept and the build
+// gate still passes.
+func TestUpdateProfile_KindChangeKeepsThePublisher_DB(t *testing.T) {
 	t.Parallel()
-	thunder := &idpDBFakeThunder{
-		ensureFn: func(_ context.Context, org, _ string) (string, string, bool, error) {
-			return "aep-publisher-" + org, "secret-v1", true, nil
-		},
-		deleteFn: func(context.Context, string) (bool, error) { return true, nil },
-	}
-	svc, gormDB := idpDBService(t, thunder)
+	svc, gormDB := idpDBService(t, idpDBAcme())
 	ctx := idpDBCtx()
 
 	if err := svc.EnsureClient(ctx, "acme", organization.ClientPublisher); err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
+	ref := publisherRef(t, gormDB, "acme")
 
-	// platform → custom: the previous publisher app belongs to the old IDP, so
-	// it is best-effort deleted on Thunder, its ids cleared and its reference
-	// removed (the build gate must not pass on a deleted app's credentials).
 	updated, err := svc.UpdateProfile(ctx, "acme", "ada@x.io", organization.UpdateProfileRequest{
 		Kind:    "custom",
 		Issuer:  "https://byo-idp.example",
@@ -577,14 +378,11 @@ func TestUpdateProfile_KindChangeClearsPublisherAndCallsThunder_DB(t *testing.T)
 	if updated.Kind != "custom" {
 		t.Fatalf("kind not switched: %+v", updated)
 	}
-	if updated.PublisherClientID != "" || updated.PublisherThunderAppID != "" || publisherRef(t, gormDB, "acme") != "" {
-		t.Fatalf("kind switch must clear the publisher ids and its reference: %+v", updated)
+	if updated.PublisherClientID != "aep-publisher-acme" || updated.PublisherThunderAppID != "aep-publisher-acme" || publisherRef(t, gormDB, "acme") != ref {
+		t.Fatalf("kind switch must keep the publisher ids and its reference: %+v", updated)
 	}
-	if err := svc.RequirePublisherForBuild(ctx, "acme"); !errors.Is(err, delivery.ErrPublisherCredentialsMissing) {
-		t.Fatalf("after the kind switch the build gate must refuse, got %v", err)
-	}
-	if len(thunder.deleteCalls) != 1 || thunder.deleteCalls[0] != "acme" {
-		t.Fatalf("kind switch must call Thunder delete once for the org: %v", thunder.deleteCalls)
+	if err := svc.RequirePublisherForBuild(ctx, "acme"); err != nil {
+		t.Fatalf("after the kind switch the build gate must still pass, got %v", err)
 	}
 	if got := auditActions(t, gormDB, "acme"); !equalStrings(got, []string{
 		organization.IDPAuditEnsurePublisher, organization.IDPAuditUpdateProfile,
@@ -593,32 +391,28 @@ func TestUpdateProfile_KindChangeClearsPublisherAndCallsThunder_DB(t *testing.T)
 	}
 }
 
-// --- Thunder-unavailable: no partial damage ---------------------------------
+// --- no clients record: no partial damage -----------------------------------
 
-func TestMutations_ThunderNilNoPartialDamage_DB(t *testing.T) {
+func TestEnsureClient_NoClientsRecordNoPartialDamage_DB(t *testing.T) {
 	t.Parallel()
-	// A real db but no Thunder: every mutating call must fail with the sentinel
-	// BEFORE creating a profile row or writing an audit event.
+	// A real db but no clients record: the ensure must fail BEFORE creating a
+	// profile row or writing an audit event.
 	svc, gormDB := idpDBService(t, nil)
 	ctx := idpDBCtx()
 
-	if err := svc.EnsureClient(ctx, "acme", organization.ClientPublisher); !errors.Is(err, organization.ErrIDPThunderUnavailable) {
-		t.Fatalf("ensure: want ErrIDPThunderUnavailable, got %v", err)
-	}
-	if _, err := svc.RevokeOrgPublisher(ctx, "acme", "ada@x.io"); !errors.Is(err, organization.ErrIDPThunderUnavailable) {
-		t.Fatalf("revoke: want ErrIDPThunderUnavailable, got %v", err)
+	if err := svc.EnsureClient(ctx, "acme", organization.ClientPublisher); err == nil {
+		t.Fatal("ensure passed with no clients record")
 	}
 
-	// No profile row, no audit row — the sentinel fires before any write.
 	if p, err := svc.GetProfile(ctx, "acme"); err != nil || p != nil {
-		t.Fatalf("thunder-nil mutation must not create a profile row: %+v err %v", p, err)
+		t.Fatalf("a refused ensure must not create a profile row: %+v err %v", p, err)
 	}
 	var n int64
 	if err := gormDB.Model(&organization.IDPAuditEvent{}).Where("org_id = ?", "acme").Count(&n).Error; err != nil {
 		t.Fatalf("count audit: %v", err)
 	}
 	if n != 0 {
-		t.Fatalf("thunder-nil mutation must not write an audit row, got %d", n)
+		t.Fatalf("a refused ensure must not write an audit row, got %d", n)
 	}
 }
 
@@ -626,30 +420,25 @@ func TestMutations_ThunderNilNoPartialDamage_DB(t *testing.T) {
 
 func TestOrgScoping_ManyDecoys_DB(t *testing.T) {
 	t.Parallel()
-	svc, gormDB := idpDBService(t, &idpDBFakeThunder{
-		ensureFn: func(_ context.Context, org, _ string) (string, string, bool, error) {
-			return "pub-" + org, "sec-" + org, true, nil
-		},
-		deleteFn: func(context.Context, string) (bool, error) { return true, nil },
-	})
+	svc, gormDB := idpDBService(t, nil)
 	ctx := idpDBCtx()
 
-	// Eight orgs, each with a per-org publisher client id. Random UUID primary
+	// Eight orgs, each a BYO profile with its own issuer. Random UUID primary
 	// keys mean a dropped org_id filter in GetProfile would return an arbitrary
 	// row — with eight decoys that reliably mismatches (a 2-row test would
-	// coin-flip). This is the mutation-verification target. (Issuer/jwksUrl are
-	// NOT usable discriminators here: GetOrCreateProfile self-heals them back to
-	// the shared platform config, so org_id + publisher_client_id are the
-	// per-org fields that survive.)
+	// coin-flip). This is the mutation-verification target. (A custom-kind
+	// profile keeps its issuer: only platform-kind rows self-heal to the shared
+	// platform config.)
 	orgs := []string{"acme", "globex", "initech", "umbrella", "hooli", "stark", "wayne", "cyberdyne"}
+	issuerOf := func(o string) string { return "https://idp." + o + ".example" }
 
 	for _, o := range orgs {
-		if err := svc.EnsureClient(ctx, o, organization.ClientPublisher); err != nil {
-			t.Fatalf("ensure %s: %v", o, err)
+		if _, err := svc.UpdateProfile(ctx, o, "ada@x.io", organization.UpdateProfileRequest{Kind: "custom", Issuer: issuerOf(o)}); err != nil {
+			t.Fatalf("seed %s: %v", o, err)
 		}
 	}
 
-	// Every org resolves to its OWN row — org_id and client id both agree.
+	// Every org resolves to its OWN row — org_id and issuer both agree.
 	for _, o := range orgs {
 		row, err := svc.GetProfile(ctx, o)
 		if err != nil || row == nil {
@@ -658,38 +447,34 @@ func TestOrgScoping_ManyDecoys_DB(t *testing.T) {
 		if row.OrgID != o {
 			t.Fatalf("GetProfile(%s) returned another org's row: org_id=%q", o, row.OrgID)
 		}
-		if row.PublisherClientID != "pub-"+o {
-			t.Fatalf("GetProfile(%s) client id=%q, want pub-%s (cross-org bleed)", o, row.PublisherClientID, o)
+		if row.Issuer != issuerOf(o) {
+			t.Fatalf("GetProfile(%s) issuer=%q, want %s (cross-org bleed)", o, row.Issuer, issuerOf(o))
 		}
 	}
 
-	// A mutation on ONE org (revoke) touches only its own row + audit trail.
-	if _, err := svc.RevokeOrgPublisher(ctx, "acme", "ada@x.io"); err != nil {
-		t.Fatalf("revoke acme: %v", err)
+	// A mutation on ONE org touches only its own row + audit trail.
+	if _, err := svc.UpdateProfile(ctx, "acme", "ada@x.io", organization.UpdateProfileRequest{Issuer: "https://moved.acme.example"}); err != nil {
+		t.Fatalf("update acme: %v", err)
 	}
-	if row, _ := svc.GetProfile(ctx, "acme"); row.PublisherClientID != "" {
-		t.Fatalf("acme publisher should be cleared: %q", row.PublisherClientID)
+	if row, _ := svc.GetProfile(ctx, "acme"); row.Issuer != "https://moved.acme.example" {
+		t.Fatalf("acme issuer should have moved: %q", row.Issuer)
 	}
 	for _, o := range orgs[1:] {
-		if row, _ := svc.GetProfile(ctx, o); row.PublisherClientID != "pub-"+o {
-			t.Fatalf("acme revoke bled into %s: client id now %q", o, row.PublisherClientID)
-		}
-		if publisherRef(t, gormDB, o) == "" {
-			t.Fatalf("acme revoke removed %s's ae-publisher-client row", o)
+		if row, _ := svc.GetProfile(ctx, o); row.Issuer != issuerOf(o) {
+			t.Fatalf("acme's update bled into %s: issuer now %q", o, row.Issuer)
 		}
 	}
 
-	// Audit isolation: acme carries ensure+revoke; a decoy carries only ensure
-	// (acme's revoke did not fan out).
+	// Audit isolation: acme carries two updates; a decoy carries only its own.
 	if got := auditActions(t, gormDB, "acme"); !equalStrings(got, []string{
-		organization.IDPAuditEnsurePublisher, organization.IDPAuditRevokePublisher,
+		organization.IDPAuditUpdateProfile, organization.IDPAuditUpdateProfile,
 	}) {
 		t.Fatalf("acme audit drifted: %v", got)
 	}
 	if got := auditActions(t, gormDB, "globex"); !equalStrings(got, []string{
-		organization.IDPAuditEnsurePublisher,
+		organization.IDPAuditUpdateProfile,
 	}) {
-		t.Fatalf("globex audit should not see acme's revoke: %v", got)
+		t.Fatalf("globex audit should not see acme's update: %v", got)
 	}
 }
 

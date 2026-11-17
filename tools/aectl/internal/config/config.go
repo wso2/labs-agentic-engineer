@@ -117,13 +117,15 @@ var keyRegistry = map[string]configKeyMeta{
 	// claim names and rules every reader of its tokens uses: aep-api, the AE
 	// Studio pod, the console). Optional; unset is thunder.
 	"idp.kind": {required: false, kind: kindEnum, enumValues: []string{IDPKindThunder, IDPKindAsgardeo}},
-	// Asgardeo only, both required there. idp.issuer is the organization's
-	// issuer (https://api.asgardeo.io/t/<handle>/oauth2/token): the iss of
-	// every token, and where the discovery document is read. idp.org_handle
-	// is the organization's handle, which its tokens name the one org by and
-	// aep-api maps to oc.default_org_namespace.
-	"idp.issuer":     {idpKind: IDPKindAsgardeo, exclusive: true, kind: kindHTTPSURL},
-	"idp.org_handle": {idpKind: IDPKindAsgardeo, exclusive: true, kind: kindString},
+	// Asgardeo only, required there. idp.issuer is the organization's issuer
+	// (https://api.asgardeo.io/t/<handle>/oauth2/token): the iss of every
+	// token, and where the discovery document is read.
+	"idp.issuer": {idpKind: IDPKindAsgardeo, exclusive: true, kind: kindHTTPSURL},
+	// The handle the IdP's tokens name the one org by: a ThunderID
+	// organization unit's handle, an Asgardeo organization's handle. aep-api
+	// maps it to oc.default_org_namespace, and on ThunderID aectl registers
+	// the org's two clients under that organization unit.
+	"idp.org_handle": {required: true, kind: kindString},
 	// The platform's three browser-facing origins. All optional: each is bound
 	// to a flag carrying the local default, so a file that omits them installs
 	// the same cluster it always did. Set them together — re-domaining one and

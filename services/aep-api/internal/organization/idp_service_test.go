@@ -30,12 +30,9 @@ package organization
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"sort"
 	"strings"
 	"testing"
-
-	"github.com/wso2/aep/aep-api/internal/clients/thundersvc"
 )
 
 // sortedKeys returns the sorted JSON keys of a decoded object.
@@ -46,67 +43,6 @@ func sortedKeys(m map[string]any) []string {
 	}
 	sort.Strings(ks)
 	return ks
-}
-
-// --- shared fake Thunder admin client ---------------------------------------
-//
-// idpService's publisher path calls EnsurePublisherApp, DeletePublisherApp and
-// SetAppSecret of thundersvc.Client; OUExists is
-// irrelevant to this feature, so a call to it is a test bug — it panics
-// (moq-style). Each fake is built per-test and driven by a single synchronous
-// httptest request, so no mutex is needed for the capture slices.
-type fakeThunder struct {
-	// The directory half of thundersvc.Client (groups + users) belongs to the
-	// identity domain, not the IDP service under test here. Embedding the
-	// interface satisfies it without a wall of stubs, and any accidental call
-	// panics on the nil rather than passing silently.
-	thundersvc.Client
-
-	ensureFn func(ctx context.Context, orgHandle, orgOUID string) (string, string, bool, error)
-	deleteFn func(ctx context.Context, orgHandle string) (bool, error)
-
-	ensureCalls    []ensureCall
-	deleteCalls    []string
-	setSecretCalls []string // entity ids SetAppSecret was given a secret for
-	// storedIDs is the stored Thunder entity id each Delete got.
-	storedIDs []string
-}
-
-type ensureCall struct{ orgHandle, orgOUID, storedID string }
-
-var _ thundersvc.Client = (*fakeThunder)(nil)
-
-// EnsurePublisherApp answers through ensureFn; the entity id it reports is
-// "app-<org>", so a test can see the id recorded on the profile.
-func (f *fakeThunder) EnsurePublisherApp(ctx context.Context, orgHandle, orgOUID, storedID string) (thundersvc.OrgApp, error) {
-	f.ensureCalls = append(f.ensureCalls, ensureCall{orgHandle, orgOUID, storedID})
-	clientID, secret, created, err := "cid-"+orgHandle, "secret-"+orgHandle, true, error(nil)
-	if f.ensureFn != nil {
-		clientID, secret, created, err = f.ensureFn(ctx, orgHandle, orgOUID)
-	}
-	if err != nil {
-		return thundersvc.OrgApp{}, err
-	}
-	return thundersvc.OrgApp{EntityID: "app-" + orgHandle, ClientID: clientID, Secret: secret, Created: created}, nil
-}
-
-func (f *fakeThunder) DeletePublisherApp(ctx context.Context, orgHandle, storedID string) (bool, error) {
-	f.deleteCalls = append(f.deleteCalls, orgHandle)
-	f.storedIDs = append(f.storedIDs, storedID)
-	if f.deleteFn == nil {
-		return true, nil
-	}
-	return f.deleteFn(ctx, orgHandle)
-}
-
-// SetAppSecret is the heal's PUT: recorded by entity id, always succeeds.
-func (f *fakeThunder) SetAppSecret(_ context.Context, entityID, _ string) error {
-	f.setSecretCalls = append(f.setSecretCalls, entityID)
-	return nil
-}
-
-func (f *fakeThunder) OUExists(context.Context, string) (bool, error) {
-	panic("fakeThunder: OUExists is not part of the idp feature")
 }
 
 // --- coalesceActor ----------------------------------------------------------
@@ -169,7 +105,7 @@ func TestProfileSummary_ProjectsAuditFields(t *testing.T) {
 
 func TestMethods_RejectEmptyOrgIDBeforeIO(t *testing.T) {
 	t.Parallel()
-	// nil db + nil thunder: any I/O would panic, so a clean "orgID required"
+	// nil db + nil clients: any I/O would panic, so a clean "orgID required"
 	// error proves the guard fires first on every method.
 	svc := NewIDPService(nil, nil, nil, PlatformIDPConfig{})
 	ctx := context.Background()
@@ -192,38 +128,30 @@ func TestMethods_RejectEmptyOrgIDBeforeIO(t *testing.T) {
 	err = svc.RequirePublisherForBuild(ctx, "")
 	assertOrgIDRequired("RequirePublisherForBuild", err)
 
-	_, err = svc.RevokeOrgPublisher(ctx, "", "actor")
-	assertOrgIDRequired("RevokeOrgPublisher", err)
-
 	_, err = svc.UpdateProfile(ctx, "", "actor", UpdateProfileRequest{})
 	assertOrgIDRequired("UpdateProfile", err)
 }
 
-// --- ErrIDPThunderUnavailable: nil admin client short-circuits mutations ----
+// --- no clients record: the ensure fails before any I/O ----------------------
 
-func TestMutations_ThunderNilYieldsSentinel(t *testing.T) {
+func TestEnsureClient_NoClientsRecordFailsBeforeIO(t *testing.T) {
 	t.Parallel()
-	// nil db proves the sentinel is returned BEFORE any profile read/write:
-	// each Thunder-backed mutation checks s.thunder == nil first.
+	// nil db proves the error is returned BEFORE any profile read/write.
 	svc := NewIDPService(nil, nil, nil, PlatformIDPConfig{})
-	ctx := context.Background()
-
-	if err := svc.EnsureClient(ctx, "acme", ClientPublisher); !errors.Is(err, ErrIDPThunderUnavailable) {
-		t.Fatalf("EnsureClient: want ErrIDPThunderUnavailable, got %v", err)
-	}
-	if _, err := svc.RevokeOrgPublisher(ctx, "acme", "actor"); !errors.Is(err, ErrIDPThunderUnavailable) {
-		t.Fatalf("RevokeOrgPublisher: want ErrIDPThunderUnavailable, got %v", err)
+	err := svc.EnsureClient(context.Background(), "acme", ClientPublisher)
+	if err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Fatalf("EnsureClient: want a 'not configured' error, got %v", err)
 	}
 }
 
-func TestEnsure_EmptyOrgIDBeatsThunderNilCheck(t *testing.T) {
+func TestEnsureClient_EmptyOrgIDBeatsTheClientsCheck(t *testing.T) {
 	t.Parallel()
-	// Ordering pin: orgID is validated before the thunder-nil check, so an
-	// empty org yields "orgID required", NOT the thunder sentinel.
+	// Ordering pin: orgID is validated first, so an empty org yields
+	// "orgID required".
 	svc := NewIDPService(nil, nil, nil, PlatformIDPConfig{})
 	err := svc.EnsureClient(context.Background(), "", ClientPublisher)
-	if err == nil || errors.Is(err, ErrIDPThunderUnavailable) || !strings.Contains(err.Error(), "orgID required") {
-		t.Fatalf("empty orgID must beat the thunder-nil check, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "orgID required") {
+		t.Fatalf("empty orgID must beat the clients check, got %v", err)
 	}
 }
 
@@ -231,7 +159,7 @@ func TestEnsure_EmptyOrgIDBeatsThunderNilCheck(t *testing.T) {
 
 func TestUpdateProfile_InvalidKindRejectedBeforeIO(t *testing.T) {
 	t.Parallel()
-	// nil db + nil thunder: the kind guard runs before GetOrCreateProfile, so
+	// nil db + nil clients: the kind guard runs before GetOrCreateProfile, so
 	// an invalid kind returns cleanly without a panic.
 	svc := NewIDPService(nil, nil, nil, PlatformIDPConfig{})
 	_, err := svc.UpdateProfile(context.Background(), "acme", "actor", UpdateProfileRequest{Kind: "bogus"})

@@ -113,7 +113,9 @@ func TestAEStudioOverrides(t *testing.T) {
 // in-cluster endpoints on thunder.url: the values every install so far wrote
 // by appending the paths by hand.
 var testPlatformIDP = platformIDP{
-	Kind: "thunder",
+	Kind:         "thunder",
+	OrgHandle:    "default",
+	OrgNamespace: "default",
 	Public: oidc.Endpoints{
 		Issuer:   "http://thunder.openchoreo.localhost:8080",
 		JWKSURL:  "http://thunder.openchoreo.localhost:8080/oauth2/jwks",
@@ -280,6 +282,7 @@ func setValidUpdateConfig(t *testing.T) {
 	viper.Set("thunder.admin_client_id", "admin")
 	viper.Set("oc.api_url", "http://api.openchoreo.localhost:8080")
 	viper.Set("oc.system_namespace", "openchoreo-control-plane")
+	viper.Set("idp.org_handle", "default")
 }
 
 // `platform update` (and so `make dev-update`) must carry every pair install

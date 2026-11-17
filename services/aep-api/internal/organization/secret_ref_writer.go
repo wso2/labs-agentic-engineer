@@ -595,11 +595,11 @@ func (w *SecretRefWriter) withOrgClientLock(ctx context.Context, ocOrgID string,
 // writeOrgClient stores one org client's credentials (client_id,
 // client_secret) as a new reference of its secret (ae-publisher-client or
 // ae-studio-client) under the held lock l, vault path under ouID. Inside the
-// repoint it runs beforeStamp (nil = nothing), then writes cols (the client's
-// ids) onto the profile, before the previous reference is deleted. The
+// repoint it writes cols (the client's ids) onto the profile, before the
+// previous reference is deleted. The
 // secret lives only in the reference: no column holds it. Coding dispatch
 // mounts the publisher's two keys by the name its row records.
-func (w *SecretRefWriter) writeOrgClient(ctx context.Context, l *OrgSecretLocked, ocOrgID, ouID string, kind ClientKind, clientID, clientSecret string, beforeStamp func() error, cols map[string]any) (string, error) {
+func (w *SecretRefWriter) writeOrgClient(ctx context.Context, l *OrgSecretLocked, ocOrgID, ouID string, kind ClientKind, clientID, clientSecret string, cols map[string]any) (string, error) {
 	if err := requireOrgClient(ocOrgID, clientID, clientSecret); err != nil {
 		return "", err
 	}
@@ -610,11 +610,6 @@ func (w *SecretRefWriter) writeOrgClient(ctx context.Context, l *OrgSecretLocked
 		PublisherSecretFieldClientID:     clientID,
 		PublisherSecretFieldClientSecret: clientSecret,
 	}, func(string) error {
-		if beforeStamp != nil {
-			if err := beforeStamp(); err != nil {
-				return err
-			}
-		}
 		return w.idpRepo.UpdateProfileColumns(ctx, &OrganizationIDPProfile{}, ocOrgID, cols)
 	})
 	if err != nil {
@@ -632,25 +627,6 @@ func requireOrgClient(ocOrgID, clientID, clientSecret string) error {
 		if strings.TrimSpace(f.value) == "" {
 			return fmt.Errorf("secret-ref writer: %s required", f.name)
 		}
-	}
-	return nil
-}
-
-// DeletePublisher removes the org's ae-publisher-client reference: its row,
-// then the reference by its stored name, under the secret's lock. Unset is a
-// no-op. Called when the publisher's Thunder app is deleted
-// (idp_service.forgetPublisherSecret). ctx must carry the user's ouId claim
-// (the vault path).
-func (w *SecretRefWriter) DeletePublisher(ctx context.Context, ocOrgID string) error {
-	if !w.Enabled() || w.orgSecrets == nil {
-		return nil
-	}
-	ouID, err := orgUUIDForSecretLocation(ctx)
-	if err != nil {
-		return fmt.Errorf("secret-ref writer: delete publisher secret: %w", err)
-	}
-	if err := w.orgSecrets.Remove(ctx, ocOrgID, ouID, OrgSecretPublisherClient, nil); err != nil {
-		return fmt.Errorf("secret-ref writer: delete publisher secret: %w", err)
 	}
 	return nil
 }

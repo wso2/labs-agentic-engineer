@@ -26,8 +26,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-
-	"github.com/wso2/aep/aep-api/internal/clients/thundersvc"
 )
 
 // webhookSecretBytes is the entropy of the org's GitHub webhook secret.
@@ -62,12 +60,7 @@ func (s *Service) submitGitPAT(ctx context.Context, org, pat string) error {
 		return submitFailure(ctx, org, "github-webhook-secret", err)
 	}
 	for _, kind := range []ClientKind{ClientPublisher, ClientStudio} {
-		err := s.idpSvc.EnsureClient(ctx, org, kind)
-		if errors.Is(err, ErrIDPThunderUnavailable) {
-			slog.ErrorContext(ctx, "ae_studio_not_configured", "org", org, "reason", "thunder admin client not configured")
-			return nil
-		}
-		if err != nil {
+		if err := s.idpSvc.EnsureClient(ctx, org, kind); err != nil {
 			return submitFailure(ctx, org, "client:"+string(kind), err)
 		}
 	}
@@ -164,9 +157,6 @@ func submitFailure(ctx context.Context, org, step string, err error) error {
 	case errors.Is(err, ErrOrgSecretConflict):
 		return &SectionError{Section: "gitProvider", Status: http.StatusConflict, Code: AEStudioSetupIncompleteCode,
 			Message: saved + "another save of this organization's secrets was in progress. Save the token again to retry."}
-	case errors.Is(err, thundersvc.ErrAppInForeignOU):
-		return &SectionError{Section: "gitProvider", Status: http.StatusConflict, Code: AEStudioSetupIncompleteCode,
-			Message: saved + "an AE Studio client with this organization's name belongs to another organization; an operator must remove it."}
 	case errors.Is(err, errOrgOUUnknown):
 		return &SectionError{Section: "gitProvider", Status: http.StatusConflict, Code: AEStudioSetupIncompleteCode,
 			Message: saved + "this organization has no identity-provider organization unit recorded; an operator must link it before AE Studio can be set up."}

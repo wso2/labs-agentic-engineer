@@ -25,14 +25,10 @@ package organization_test
 // SQL-shaped (they read and write the `organizations` table) and cannot be
 // proven honestly with a fake DB.
 //
-// SECURITY NOTE — this feature owns the org→OU mapping (thunder_org_uuid), which
-// downstream code turns into per-org namespaces, impersonation, and the runner's
-// publisher OU binding. A phantom (Thunder-unknown) ouId written here poisons all
-// three (the runner cc-token 401 root cause). The phantom-guard tests below pin
-// EXACTLY which write paths the guard covers: the overwrite path
-// (TestEnsureThunderUUID_PhantomOverwriteRefused_DB) AND the fresh-org NULL-set
-// path (TestEnsureForOuHandle_PhantomOnFreshOrgIsRejected_DB) — the latter closed
-// a gap where the guard was skipped for a just-backfilled NULL row.
+// This feature owns the org's IdP org id (thunder_org_uuid), which downstream
+// code turns into per-org namespaces, impersonation and the pod's org check.
+// It is taken from the caller's token: the token is signed by the platform
+// IdP and, under the one-org mapping, names the install's org.
 //
 // External test package: ou_validation_test.go (unit tier, package
 // organization) imports dbtest, which imports migrate, which imports
@@ -64,18 +60,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/dbtest"
 )
-
-// fakeOUValidator duplicates ou_validation_test.go's fakeOUValidator (package
-// organization, stays white-box — it also asserts on unexported
-// organizationService.ouValidator directly).
-type fakeOUValidator struct {
-	exists bool
-	err    error
-}
-
-func (f fakeOUValidator) OUExists(_ context.Context, _ string) (bool, error) {
-	return f.exists, f.err
-}
 
 // nsMockReturning builds a NamespaceClient whose GetNamespace answers a live
 // namespace for any handle (keyed by the requested name so concurrent
@@ -273,50 +257,15 @@ func TestEnsureForOuHandle_CacheExpiryReverifies_DB(t *testing.T) {
 	}
 }
 
-// TestEnsureThunderUUID_PhantomOverwriteRefused_DB pins the guard WORKING for
-// the overwrite path: an existing row already carries a validated Thunder UUID,
-// and a request arrives bearing a DIFFERENT ouId that Thunder says does not
-// exist (phantom). The row's thunder_org_uuid MUST be left intact — overwriting
-// it with a phantom is the poisoning this guard exists to stop.
-func TestEnsureThunderUUID_PhantomOverwriteRefused_DB(t *testing.T) {
+// TestEnsureThunderUUID_DriftOverwrites_DB: when the incoming org id differs
+// from the stored one, the row is updated. The token is the IdP's statement
+// of the org's id, so a genuine change of it heals on the next sign-in.
+func TestEnsureThunderUUID_DriftOverwrites_DB(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
 	ctx := context.Background()
 	ns := nsMockReturning()
 	svc := organization.NewOrganizationService(organization.NewOrganizationRepository(db), ns)
-	svc.SetOUValidator(fakeOUValidator{exists: false}) // Thunder: this ouId does NOT exist
-
-	good := uuid.New()
-	if err := db.Create(&organization.Organization{UUID: uuid.New(), Name: "acme", ThunderOrgUUID: &good}).Error; err != nil {
-		t.Fatalf("seed row: %v", err)
-	}
-
-	phantom := uuid.NewString()
-	if err := svc.EnsureForOuHandle(ctx, "acme", phantom); err != nil {
-		t.Fatalf("ensure: %v", err)
-	}
-
-	row := loadOrg(t, db, "acme")
-	if row.ThunderOrgUUID == nil || *row.ThunderOrgUUID != good {
-		t.Fatalf("phantom must NOT overwrite a validated UUID: got %v, want %s", row.ThunderOrgUUID, good)
-	}
-	if got := len(ns.GetNamespaceCalls()); got != 0 {
-		t.Fatalf("existing row → no OC verify expected, got %d", got)
-	}
-}
-
-// TestEnsureThunderUUID_ValidatedDriftOverwrites_DB pins the complementary
-// branch: when the incoming ouId is DIFFERENT from the stored one but Thunder
-// CONFIRMS it exists, the row is updated (Thunder is authoritative; genuine OU
-// migrations must heal). This is the "trust guard, but only against phantoms"
-// contract — a mutation that inverted the trust check would flip this.
-func TestEnsureThunderUUID_ValidatedDriftOverwrites_DB(t *testing.T) {
-	t.Parallel()
-	db := dbtest.New(t)
-	ctx := context.Background()
-	ns := nsMockReturning()
-	svc := organization.NewOrganizationService(organization.NewOrganizationRepository(db), ns)
-	svc.SetOUValidator(fakeOUValidator{exists: true}) // Thunder: the new ouId is real
 
 	old := uuid.New()
 	if err := db.Create(&organization.Organization{UUID: uuid.New(), Name: "acme", ThunderOrgUUID: &old}).Error; err != nil {
@@ -330,37 +279,10 @@ func TestEnsureThunderUUID_ValidatedDriftOverwrites_DB(t *testing.T) {
 
 	row := loadOrg(t, db, "acme")
 	if row.ThunderOrgUUID == nil || row.ThunderOrgUUID.String() != next {
-		t.Fatalf("validated drift must overwrite: got %v, want %s", row.ThunderOrgUUID, next)
+		t.Fatalf("drift must overwrite: got %v, want %s", row.ThunderOrgUUID, next)
 	}
-}
-
-// TestEnsureForOuHandle_PhantomOnFreshOrgIsRejected_DB pins the FIXED guard for
-// the fresh-org path: a first request bearing a Thunder-unknown ouId must NOT
-// poison thunder_org_uuid.
-//
-// backfillRow already refuses to stamp a phantom onto a NEW row (leaves the
-// column NULL). EnsureForOuHandle then calls ensureThunderUUID, whose trust
-// check now covers the NULL-set write too (previously it was gated behind
-// `if row.ThunderOrgUUID != nil`, so the fresh NULL row skipped it). The row's
-// thunder_org_uuid stays NULL until a valid login re-backfills it.
-func TestEnsureForOuHandle_PhantomOnFreshOrgIsRejected_DB(t *testing.T) {
-	t.Parallel()
-	db := dbtest.New(t)
-	ctx := context.Background()
-	ns := nsMockReturning()
-	svc := organization.NewOrganizationService(organization.NewOrganizationRepository(db), ns)
-	svc.SetOUValidator(fakeOUValidator{exists: false}) // Thunder: this ouId does NOT exist
-
-	phantom := uuid.NewString()
-	if err := svc.EnsureForOuHandle(ctx, "acme", phantom); err != nil {
-		t.Fatalf("ensure: %v", err)
-	}
-
-	row := loadOrg(t, db, "acme")
-	// The fresh-org NULL path is now trust-checked: an untrusted OU is refused,
-	// so the column stays NULL rather than being poisoned with the phantom.
-	if row.ThunderOrgUUID != nil {
-		t.Fatalf("fresh-org phantom must be rejected: got thunder_org_uuid=%v, want nil", row.ThunderOrgUUID)
+	if got := len(ns.GetNamespaceCalls()); got != 0 {
+		t.Fatalf("existing row → no OC verify expected, got %d", got)
 	}
 }
 

@@ -16,10 +16,9 @@
 
 package organization
 
-// UNIT tier for EnsureClient: the real idpService, SecretRefWriter and
-// OrgSecretWriter over in-memory rows, a fake vault and a fake Thunder that
-// share one call log, so the table below and the heal order (vault before
-// the Thunder PUT) are observable step by step.
+// UNIT tier for EnsureClient: the real idpService, OrgClients, SecretRefWriter
+// and OrgSecretWriter over in-memory rows and a fake vault with a call log.
+// No IdP is involved: the org's clients are created before aep-api runs.
 
 import (
 	"context"
@@ -35,7 +34,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
-	"github.com/wso2/aep/aep-api/internal/clients/thundersvc"
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 )
 
@@ -135,54 +133,6 @@ func (v *ensureVault) wrote(s OrgSecret) bool {
 }
 
 // ensureThunder answers EnsureOrgApp / EnsurePublisherApp from appExists and
-// logs a create and SetAppSecret.
-type ensureThunder struct {
-	thundersvc.Client // anything else is a test bug (nil panic)
-
-	log       *[]string
-	appExists bool
-	foreignOU bool
-	putErr    error
-
-	created, put bool
-	putSecret    string
-	specs        []thundersvc.OrgAppSpec
-	onEnsure     func()
-}
-
-func (t *ensureThunder) app(name string) (thundersvc.OrgApp, error) {
-	if t.onEnsure != nil {
-		t.onEnsure()
-	}
-	if t.foreignOU {
-		return thundersvc.OrgApp{}, thundersvc.ErrAppInForeignOU
-	}
-	if t.appExists {
-		return thundersvc.OrgApp{EntityID: "app-1", ClientID: name}, nil
-	}
-	t.created = true
-	*t.log = append(*t.log, "thunder:create")
-	return thundersvc.OrgApp{EntityID: "app-new", ClientID: name, Secret: "thunder-once", Created: true}, nil
-}
-
-func (t *ensureThunder) EnsureOrgApp(_ context.Context, spec thundersvc.OrgAppSpec) (thundersvc.OrgApp, error) {
-	t.specs = append(t.specs, spec)
-	return t.app(spec.Name)
-}
-
-func (t *ensureThunder) EnsurePublisherApp(_ context.Context, orgHandle, orgOUID, storedID string) (thundersvc.OrgApp, error) {
-	t.specs = append(t.specs, thundersvc.OrgAppSpec{Name: thundersvc.PublisherAppName(orgHandle), OUID: orgOUID, StoredID: storedID})
-	return t.app(thundersvc.PublisherAppName(orgHandle))
-}
-
-func (t *ensureThunder) SetAppSecret(_ context.Context, entityID, secret string) error {
-	*t.log = append(*t.log, "thunder:put:"+entityID)
-	if t.putErr != nil {
-		return t.putErr
-	}
-	t.put, t.putSecret = true, secret
-	return nil
-}
 
 // ouOrgRepo is an OrganizationRepository whose org row carries ou.
 type ouOrgRepo struct {
@@ -198,37 +148,39 @@ func (r ouOrgRepo) GetByName(_ context.Context, name string) (*Organization, err
 
 var ensureOU = uuid.MustParse("1b4e28ba-2fa1-11d2-883f-0016d3cca427")
 
+const (
+	orgPublisherSecret = "stored-publisher-secret"
+	orgStudioSecret    = "stored-studio-secret"
+)
+
 // ensureCtx is a request whose ouId is the org's OU.
 func ensureCtx() context.Context {
 	return jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OrgID: ensureOU.String()})
 }
 
 type ensureFixture struct {
-	svc     *idpService
-	log     []string
-	vault   *ensureVault
-	thunder *ensureThunder
-	rows    *memOrgSecretRepo
-	idp     *memIDPRepo
+	svc   *idpService
+	log   []string
+	vault *ensureVault
+	rows  *memOrgSecretRepo
+	idp   *memIDPRepo
 }
 
-// newEnsureFixture builds the service for org "default". rowSet seeds both
-// client rows naming "old-ref" (a reference the vault holds).
-func newEnsureFixture(t *testing.T, appExists, rowSet bool) *ensureFixture {
+// newEnsureFixture builds the service for org "default" over the install's
+// pre-created clients.
+func newEnsureFixture(t *testing.T) *ensureFixture {
+	t.Helper()
+	return newEnsureFixtureWith(t, NewOrgClients("default", orgPublisherSecret, orgStudioSecret))
+}
+
+func newEnsureFixtureWith(t *testing.T, clients *OrgClients) *ensureFixture {
 	t.Helper()
 	f := &ensureFixture{rows: newMemOrgSecretRepo(), idp: newMemIDPRepo()}
 	f.vault = &ensureVault{log: &f.log, refs: map[string]bool{}}
-	f.thunder = &ensureThunder{log: &f.log, appExists: appExists}
-	if rowSet {
-		for _, s := range []OrgSecret{OrgSecretPublisherClient, OrgSecretStudioClient} {
-			f.rows.rows[memOrgSecretKey("default", s)] = OrgSecretRef{Secret: s, Name: "old-ref"}
-		}
-		f.vault.refs["old-ref"] = true
-	}
 	ou := ensureOU
 	writer := NewSecretRefWriter(f.vault, f.idp).
 		WithOrgSecretWriter(NewOrgSecretWriter(f.vault, f.rows, memOrgSecretLock{}, time.Now))
-	f.svc = NewIDPService(f.idp, ouOrgRepo{ou: &ou}, f.thunder, PlatformIDPConfig{}).WithSecretRefWriter(writer)
+	f.svc = NewIDPService(f.idp, ouOrgRepo{ou: &ou}, clients, PlatformIDPConfig{}).WithSecretRefWriter(writer)
 	return f
 }
 
@@ -245,179 +197,131 @@ func (f *ensureFixture) profile(t *testing.T) *OrganizationIDPProfile {
 	return p
 }
 
-// --- the table ------------------------------------------------------------
+// --- the ensure ---------------------------------------------------------------
 
-func TestEnsureClient_Table(t *testing.T) {
-	cases := []struct {
-		name                string
-		appExists, rowSet   bool
-		wantCreate, wantPut bool
-		wantWrite           bool
+// EnsureClient stores the pre-created client's secret in the org's reference
+// and records its client id, with no IdP call. A reconnect stores it again
+// under a new reference and retires the old one, which is how a secret
+// rotated in the IdP and stored again reaches the org.
+func TestEnsureClient_StoresThePreCreatedClient(t *testing.T) {
+	for _, tc := range []struct {
+		kind     ClientKind
+		secret   OrgSecret
+		clientID string
+		value    string
 	}{
-		{"app missing", false, false, true, false, true},
-		{"app missing, stale row", false, true, true, false, true},
-		{"exists, row missing: heal", true, false, false, true, true},
-		{"exists, row present: nothing", true, true, false, false, false},
-	}
-	for _, kind := range []struct {
-		kind   ClientKind
-		secret OrgSecret
-	}{{ClientStudio, OrgSecretStudioClient}, {ClientPublisher, OrgSecretPublisherClient}} {
-		for _, c := range cases {
-			t.Run(string(kind.kind)+": "+c.name, func(t *testing.T) {
-				f := newEnsureFixture(t, c.appExists, c.rowSet)
-				if err := f.svc.EnsureClient(ensureCtx(), "default", kind.kind); err != nil {
-					t.Fatal(err)
-				}
-				if f.thunder.created != c.wantCreate || f.thunder.put != c.wantPut || f.vault.wrote(kind.secret) != c.wantWrite {
-					t.Fatalf("create=%v put=%v write=%v (log %v)", f.thunder.created, f.thunder.put, f.vault.wrote(kind.secret), f.log)
-				}
-				if c.wantPut && !slices.Equal(f.log[:2], []string{"vault", "thunder:put:app-1"}) {
-					t.Fatalf("heal: vault write before Thunder PUT, so Thunder never holds a secret AE failed to store: %v", f.log)
-				}
-				if !c.wantWrite {
-					if f.row(kind.secret) != "old-ref" || len(f.vault.writes) != 0 {
-						t.Fatalf("present: nothing written, row %q", f.row(kind.secret))
-					}
-					return
-				}
-				// The row names the one new reference and the old one is gone.
-				w := f.vault.writes[0]
-				if f.row(kind.secret) == "old-ref" || !f.vault.refs[f.row(kind.secret)] || f.vault.refs["old-ref"] {
-					t.Fatalf("row %q, live %v", f.row(kind.secret), f.vault.refs)
-				}
-				wantSecret := "thunder-once"
-				if c.wantPut {
-					wantSecret = f.thunder.putSecret
-				}
-				if w.data["client_secret"] != wantSecret || w.data["client_id"] == "" {
-					t.Fatalf("stored the secret Thunder holds: stored %d chars", len(w.data["client_secret"]))
-				}
-			})
-		}
+		{ClientPublisher, OrgSecretPublisherClient, "aep-publisher-default", orgPublisherSecret},
+		{ClientStudio, OrgSecretStudioClient, "ae-studio-default", orgStudioSecret},
+	} {
+		t.Run(string(tc.kind), func(t *testing.T) {
+			f := newEnsureFixture(t)
+			if err := f.svc.EnsureClient(ensureCtx(), "default", tc.kind); err != nil {
+				t.Fatalf("first connect: %v", err)
+			}
+			first := f.row(tc.secret)
+			if first == "" || !f.vault.refs[first] {
+				t.Fatalf("the row names no live reference: %q %v", first, f.vault.refs)
+			}
+			w := f.vault.writes[0]
+			if w.entity != string(tc.secret) || w.data["client_id"] != tc.clientID || w.data["client_secret"] != tc.value {
+				t.Fatalf("the reference holds entity %q client_id %q, want %q %q with the stored secret", w.entity, w.data["client_id"], tc.secret, tc.clientID)
+			}
+			// No column holds the secret: memIDPRepo refuses any column the
+			// profile does not have, so a secret write would have failed the
+			// ensure. The client id stands in for the entity id column.
+			p := f.profile(t)
+			if tc.kind == ClientPublisher && (p.PublisherClientID != tc.clientID || p.PublisherThunderAppID != tc.clientID) {
+				t.Fatalf("publisher ids = %q %q", p.PublisherClientID, p.PublisherThunderAppID)
+			}
+			if tc.kind == ClientStudio && (p.StudioClientID != tc.clientID || p.StudioThunderAppID != tc.clientID) {
+				t.Fatalf("studio ids = %q %q", p.StudioClientID, p.StudioThunderAppID)
+			}
+
+			if err := f.svc.EnsureClient(ensureCtx(), "default", tc.kind); err != nil {
+				t.Fatalf("reconnect: %v", err)
+			}
+			second := f.row(tc.secret)
+			if second == first || !f.vault.refs[second] || f.vault.refs[first] {
+				t.Fatalf("reconnect: row %q -> %q, live refs %v; want a new reference and the old one retired", first, second, f.vault.refs)
+			}
+			if len(f.vault.writes) != 2 || f.vault.writes[1].data["client_secret"] != tc.value {
+				t.Fatalf("reconnect wrote %d references", len(f.vault.writes))
+			}
+		})
 	}
 }
 
-func TestEnsureClient_HealSecretIs32RandomBytes(t *testing.T) {
-	f := newEnsureFixture(t, true, false)
-	if err := f.svc.EnsureClient(ensureCtx(), "default", ClientStudio); err != nil {
-		t.Fatal(err)
-	}
-	g := newEnsureFixture(t, true, false)
-	if err := g.svc.EnsureClient(ensureCtx(), "default", ClientStudio); err != nil {
-		t.Fatal(err)
-	}
-	if len(f.thunder.putSecret) != 64 || f.thunder.putSecret == g.thunder.putSecret {
-		t.Fatalf("heal secret: 32 random bytes hex (got %d chars, distinct=%v)", len(f.thunder.putSecret), f.thunder.putSecret != g.thunder.putSecret)
-	}
-}
-
-func TestEnsureClient_StudioRecordsIDsAndNoSecretColumn(t *testing.T) {
-	f := newEnsureFixture(t, false, false)
-	if err := f.svc.EnsureClient(ensureCtx(), "default", ClientStudio); err != nil {
-		t.Fatal(err)
-	}
-	p := f.profile(t)
-	if p.StudioClientID != "ae-studio-default" || p.StudioThunderAppID != "app-new" {
-		t.Fatalf("studio ids: %q %q", p.StudioClientID, p.StudioThunderAppID)
-	}
-	// No column holds the secret: memIDPRepo refuses any column the profile
-	// does not have, so a secret write would have failed the ensure.
-	if w := f.vault.writes[0]; w.data["client_secret"] != "thunder-once" {
-		t.Fatal("the studio secret lives only in its reference")
-	}
-	spec := f.thunder.specs[0]
-	if spec.Name != "ae-studio-default" || spec.OUID != ensureOU.String() {
-		t.Fatalf("studio app spec: %+v", spec)
+// A client whose secret did not reach aep-api is not stored: the error names
+// the setting, never a secret, and nothing is written.
+func TestEnsureClient_MissingSecretWritesNothing(t *testing.T) {
+	for _, tc := range []struct {
+		kind    ClientKind
+		clients *OrgClients
+		setting string
+	}{
+		{ClientPublisher, NewOrgClients("default", "", orgStudioSecret), "PLATFORM_IDP_ORG_PUBLISHER_SECRET"},
+		{ClientStudio, NewOrgClients("default", orgPublisherSecret, ""), "PLATFORM_IDP_ORG_STUDIO_SECRET"},
+	} {
+		t.Run(string(tc.kind), func(t *testing.T) {
+			f := newEnsureFixtureWith(t, tc.clients)
+			err := f.svc.EnsureClient(ensureCtx(), "default", tc.kind)
+			if err == nil || !strings.Contains(err.Error(), tc.setting) {
+				t.Fatalf("err = %v, want one naming %s", err, tc.setting)
+			}
+			if strings.Contains(err.Error(), orgPublisherSecret) || strings.Contains(err.Error(), orgStudioSecret) {
+				t.Fatalf("the error carries a secret: %v", err)
+			}
+			if len(f.vault.writes) != 0 {
+				t.Fatalf("wrote %d references for a client with no secret", len(f.vault.writes))
+			}
+		})
 	}
 }
 
-// The publisher's secret lives only in its reference: the profile
-// records the app's ids, and no secret or secret-reference column is written
-// (memIDPRepo refuses any column the profile does not have).
-func TestEnsureClient_PublisherSecretLivesOnlyInItsReference(t *testing.T) {
-	f := newEnsureFixture(t, true, false)
-	if err := f.svc.EnsureClient(ensureCtx(), "default", ClientPublisher); err != nil {
-		t.Fatal(err)
-	}
-	if f.row(OrgSecretPublisherClient) == "" || !f.vault.refs[f.row(OrgSecretPublisherClient)] {
-		t.Fatalf("the ae-publisher-client row names the live reference: %q %v", f.row(OrgSecretPublisherClient), f.vault.refs)
-	}
-	if w := f.vault.writes[0]; w.data["client_secret"] != f.thunder.putSecret {
-		t.Fatal("the reference holds the healed secret")
-	}
-	p := f.profile(t)
-	if p.PublisherThunderAppID != "app-1" || p.PublisherClientID != "aep-publisher-default" {
-		t.Fatalf("publisher ids: %q %q", p.PublisherClientID, p.PublisherThunderAppID)
-	}
-}
-
-func TestEnsureClient_HealPutFailureRollsBackTheReference(t *testing.T) {
-	f := newEnsureFixture(t, true, false)
-	f.thunder.putErr = errors.New("thunder: 500")
+// A vault failure leaves the org's record as it was: no row, no client ids
+// stamped by the write.
+func TestEnsureClient_VaultFailureLeavesNoRow(t *testing.T) {
+	f := newEnsureFixture(t)
+	f.vault.createErr = errors.New("vault down")
 	if err := f.svc.EnsureClient(ensureCtx(), "default", ClientStudio); err == nil {
-		t.Fatal("a failed PUT fails the ensure")
+		t.Fatal("the ensure passed with the vault down")
 	}
-	if f.row(OrgSecretStudioClient) != "" || len(f.vault.refs) != 0 {
-		t.Fatalf("no row and no live reference after the rollback: row %q live %v", f.row(OrgSecretStudioClient), f.vault.refs)
+	if f.row(OrgSecretStudioClient) != "" {
+		t.Fatalf("a row was written: %q", f.row(OrgSecretStudioClient))
 	}
-	if f.profile(t).StudioThunderAppID != "app-1" {
-		// The scan-found id is recorded before the write; nothing else moved.
-		t.Fatal("found app id recorded")
-	}
-}
-
-func TestEnsureClient_HealVaultFailureNeverReachesThunder(t *testing.T) {
-	f := newEnsureFixture(t, true, false)
-	f.vault.createErr = errors.New("openbao: sealed")
-	if err := f.svc.EnsureClient(ensureCtx(), "default", ClientPublisher); err == nil {
-		t.Fatal("a vault failure fails the ensure")
-	}
-	if slices.ContainsFunc(f.log, func(e string) bool { return e == "thunder:put:app-1" }) {
-		t.Fatalf("Thunder must not hold a secret AE failed to store: %v", f.log)
-	}
-}
-
-func TestEnsureClient_ForeignOUFailsLoudly(t *testing.T) {
-	f := newEnsureFixture(t, true, false)
-	f.thunder.foreignOU = true
-	err := f.svc.EnsureClient(ensureCtx(), "default", ClientStudio)
-	if !errors.Is(err, thundersvc.ErrAppInForeignOU) {
-		t.Fatalf("err = %v, want ErrAppInForeignOU", err)
-	}
-	if f.thunder.put || len(f.vault.writes) != 0 {
-		t.Fatal("a foreign-OU app is never written to nor given a secret")
+	if p := f.profile(t); p.StudioClientID != "" {
+		t.Fatalf("the studio client id was recorded without its reference: %q", p.StudioClientID)
 	}
 }
 
 func TestEnsureClient_UnknownOUTouchesNothing(t *testing.T) {
-	f := newEnsureFixture(t, false, false)
+	f := newEnsureFixture(t)
 	f.svc.orgRepo = ouOrgRepo{}
 	if err := f.svc.EnsureClient(ensureCtx(), "default", ClientStudio); !errors.Is(err, errOrgOUUnknown) {
 		t.Fatalf("err = %v, want errOrgOUUnknown", err)
 	}
-	if len(f.log) != 0 || len(f.thunder.specs) != 0 {
-		t.Fatalf("nothing is created under a guessed OU: %v", f.log)
+	if len(f.log) != 0 {
+		t.Fatalf("nothing is stored for an org with no IdP org id: %v", f.log)
 	}
 }
 
 func TestEnsureClient_OUMismatchTouchesNothing(t *testing.T) {
-	f := newEnsureFixture(t, false, false)
+	f := newEnsureFixture(t)
 	other := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OrgID: uuid.NewString()})
 	for _, kind := range []ClientKind{ClientPublisher, ClientStudio} {
 		if err := f.svc.EnsureClient(other, "default", kind); !errors.Is(err, errOrgOUMismatch) {
 			t.Fatalf("%s: err = %v, want errOrgOUMismatch", kind, err)
 		}
 	}
-	if len(f.log) != 0 || len(f.thunder.specs) != 0 {
-		t.Fatalf("the vault path and the client OU must name one org: %v", f.log)
+	if len(f.log) != 0 {
+		t.Fatalf("the vault path and the org's record must name one org: %v", f.log)
 	}
 }
 
 // The claim carries the org's OU in another case than the row's canonical
 // form: one OU, so the ensure goes ahead.
 func TestEnsureClient_OUComparedAsUUIDs(t *testing.T) {
-	f := newEnsureFixture(t, false, false)
+	f := newEnsureFixture(t)
 	upper := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OrgID: strings.ToUpper(ensureOU.String())})
 	for _, kind := range []ClientKind{ClientPublisher, ClientStudio} {
 		if err := f.svc.EnsureClient(upper, "default", kind); err != nil {
@@ -436,38 +340,71 @@ func TestEnsureClient_OUComparedAsUUIDs(t *testing.T) {
 	}
 }
 
-func TestEnsureClient_HoldsTheSecretLockAcrossTheEnsure(t *testing.T) {
-	f := newEnsureFixture(t, true, false)
+func TestEnsureClient_HoldsTheSecretLockAcrossTheWrite(t *testing.T) {
+	f := newEnsureFixture(t)
 	lock := &recordingLock{log: &f.log}
 	f.svc.secretRefWriter.orgSecrets = NewOrgSecretWriter(f.vault, f.rows, lock, time.Now)
-	f.thunder.onEnsure = func() {
-		if lock.held {
-			lock.ensuresInside++
-		}
-	}
 	if err := f.svc.EnsureClient(ensureCtx(), "default", ClientStudio); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"lock:ae-studio-client", "vault", "thunder:put:app-1", "unlock"}
+	want := []string{"lock:ae-studio-client", "vault", "unlock"}
 	if !slices.Equal(f.log, want) {
-		t.Fatalf("log %v, want %v (the row check, write and PUT under one lock)", f.log, want)
-	}
-	if lock.ensuresInside != 1 {
-		t.Fatal("the Thunder ensure runs under the lock")
+		t.Fatalf("log %v, want %v (the write under the secret's lock)", f.log, want)
 	}
 }
 
 // recordingLock logs lock/unlock into the shared call log.
 type recordingLock struct {
-	log           *[]string
-	held          bool
-	ensuresInside int
+	log *[]string
 }
 
 func (l *recordingLock) Lock(_ context.Context, _ string, s OrgSecret) (func(), error) {
 	*l.log = append(*l.log, "lock:"+string(s))
-	l.held = true
-	return func() { l.held = false; *l.log = append(*l.log, "unlock") }, nil
+	return func() { *l.log = append(*l.log, "unlock") }, nil
+}
+
+// A profile kind switch leaves the publisher as it is: the client is the
+// platform IdP's and stays valid, so both halves of its record are kept, the
+// reference and the ids on the profile. Dropping either would only block
+// builds until GitHub is reconnected.
+func TestKindSwitch_KeepsThePublisher(t *testing.T) {
+	for name, switchKind := range map[string]func(*idpService) error{
+		"UpdateProfile": func(s *idpService) error {
+			_, err := s.UpdateProfile(ensureCtx(), "default", "", UpdateProfileRequest{Kind: "custom", Issuer: "https://idp.example.com"})
+			return err
+		},
+		"SetProfile": func(s *idpService) error {
+			_, err := s.SetProfile(ensureCtx(), "default", "", "custom", "https://idp.example.com", "")
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newEnsureFixture(t)
+			if err := f.svc.EnsureClient(ensureCtx(), "default", ClientPublisher); err != nil {
+				t.Fatal(err)
+			}
+			ref := f.row(OrgSecretPublisherClient)
+			before := *f.profile(t)
+			if before.Kind != "platform" || before.PublisherClientID == "" || before.PublisherThunderAppID == "" || ref == "" {
+				t.Fatalf("setup: kind %q client %q app %q ref %q", before.Kind, before.PublisherClientID, before.PublisherThunderAppID, ref)
+			}
+
+			if err := switchKind(f.svc); err != nil {
+				t.Fatal(err)
+			}
+
+			after := f.profile(t)
+			if after.Kind != "custom" {
+				t.Fatalf("kind = %q, want custom", after.Kind)
+			}
+			if after.PublisherClientID != before.PublisherClientID || after.PublisherThunderAppID != before.PublisherThunderAppID {
+				t.Fatalf("the publisher ids were cleared: client %q app %q", after.PublisherClientID, after.PublisherThunderAppID)
+			}
+			if got := f.row(OrgSecretPublisherClient); got != ref || !f.vault.refs[ref] {
+				t.Fatalf("the publisher reference was dropped: row %q, live refs %v", got, f.vault.refs)
+			}
+		})
+	}
 }
 
 // A missing or disagreeing OU is not fixed by saving the token again, so

@@ -27,38 +27,10 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/wso2/aep/aep-api/internal/clients/thundersvc"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
-
-// countingThunder counts every Thunder admin call the deploy could make on the
-// publisher's behalf; any other method is a test bug (nil panic).
-type countingThunder struct {
-	thundersvc.Client
-	calls atomic.Int32
-}
-
-func (c *countingThunder) EnsurePublisherApp(context.Context, string, string, string) (thundersvc.OrgApp, error) {
-	c.calls.Add(1)
-	return thundersvc.OrgApp{}, nil
-}
-
-func (c *countingThunder) EnsureOrgApp(context.Context, thundersvc.OrgAppSpec) (thundersvc.OrgApp, error) {
-	c.calls.Add(1)
-	return thundersvc.OrgApp{}, nil
-}
-
-func (c *countingThunder) SetAppSecret(context.Context, string, string) error {
-	c.calls.Add(1)
-	return nil
-}
-
-func (c *countingThunder) DeletePublisherApp(context.Context, string, string) (bool, error) {
-	c.calls.Add(1)
-	return false, nil
-}
 
 // profileRows is an IDPRepository holding at most one profile; writes are
 // counted, never applied. A set err fails every read.
@@ -104,15 +76,11 @@ func TestDeploy_ProtectedAPIWithoutPublisherAppMakesNoThunderCalls(t *testing.T)
 			}
 			oc := ocDeployments(map[string]string{})
 			svc := newTestDeploymentService(oc, traitStoreWith(files))
-			thunder := &countingThunder{}
 			rows := &profileRows{profile: tc.profile}
-			svc.SetIDPService(organization.NewIDPService(rows, nil, thunder, organization.PlatformIDPConfig{}))
+			svc.SetIDPService(organization.NewIDPService(rows, nil, nil, organization.PlatformIDPConfig{}))
 
 			if _, err := svc.Deploy(context.Background(), "acme", "proj", promoting("abc123def456", "api")); err != nil {
 				t.Fatalf("Deploy: %v", err)
-			}
-			if n := thunder.calls.Load(); n != 0 {
-				t.Fatalf("deploy made %d Thunder calls; the issuer read is read-only", n)
 			}
 			if n := rows.writes.Load(); n != 0 {
 				t.Fatalf("deploy wrote the IDP profile %d times; the issuer read is read-only", n)
@@ -133,9 +101,8 @@ func TestResolveIssuers_ReadsTheProfileIssuer(t *testing.T) {
 	}
 	design := traitReadDesign(t, files)
 	svc := newTestDeploymentService(ocDeployments(nil), traitStoreWith(files))
-	thunder := &countingThunder{}
 	rows := &profileRows{profile: &organization.OrganizationIDPProfile{OrgID: "acme", Kind: "custom", Issuer: "https://idp.byo.example"}}
-	svc.SetIDPService(organization.NewIDPService(rows, nil, thunder, organization.PlatformIDPConfig{}))
+	svc.SetIDPService(organization.NewIDPService(rows, nil, nil, organization.PlatformIDPConfig{}))
 
 	got, err := svc.resolveIssuers(context.Background(), "acme", "proj", design)
 	if err != nil {
@@ -144,8 +111,8 @@ func TestResolveIssuers_ReadsTheProfileIssuer(t *testing.T) {
 	if len(got) != 1 || got[0] != "https://idp.byo.example" {
 		t.Fatalf("issuers = %v, want the profile's issuer", got)
 	}
-	if thunder.calls.Load() != 0 || rows.writes.Load() != 0 {
-		t.Fatalf("thunder calls %d, profile writes %d; want none", thunder.calls.Load(), rows.writes.Load())
+	if rows.writes.Load() != 0 {
+		t.Fatalf("profile writes %d; want none", rows.writes.Load())
 	}
 }
 
@@ -162,7 +129,7 @@ func TestDeploy_UnreadableIDPProfileFailsRetryablyAndWritesNothing(t *testing.T)
 	oc := ocDeployments(map[string]string{})
 	svc := newTestDeploymentService(oc, traitStoreWith(files))
 	rows := &profileRows{err: errors.New("connection refused")}
-	svc.SetIDPService(organization.NewIDPService(rows, nil, &countingThunder{}, organization.PlatformIDPConfig{}))
+	svc.SetIDPService(organization.NewIDPService(rows, nil, nil, organization.PlatformIDPConfig{}))
 
 	_, err := svc.Deploy(context.Background(), "acme", "proj", promoting("abc123def456", "api"))
 	if err == nil {
@@ -194,7 +161,7 @@ func TestDeploy_UnreadableIDPProfileRefusesBeforeGovernance(t *testing.T) {
 	g := &stubGovernor{}
 	svc.SetGovernor(g)
 	rows := &profileRows{err: errors.New("connection refused")}
-	svc.SetIDPService(organization.NewIDPService(rows, nil, &countingThunder{}, organization.PlatformIDPConfig{}))
+	svc.SetIDPService(organization.NewIDPService(rows, nil, nil, organization.PlatformIDPConfig{}))
 
 	if _, err := svc.Deploy(context.Background(), "acme", "proj", promoting("abc123def456", "api")); err == nil {
 		t.Fatal("Deploy succeeded with an unreadable IDP profile; want the deploy refused")
@@ -224,7 +191,7 @@ func TestDeploy_BYOProfileWithoutIssuerFailsRetryablyAndWritesNothing(t *testing
 			oc := ocDeployments(map[string]string{})
 			svc := newTestDeploymentService(oc, traitStoreWith(files))
 			rows := &profileRows{profile: &organization.OrganizationIDPProfile{OrgID: "acme", Kind: tc.kind, Issuer: tc.issuer}}
-			svc.SetIDPService(organization.NewIDPService(rows, nil, &countingThunder{}, organization.PlatformIDPConfig{}))
+			svc.SetIDPService(organization.NewIDPService(rows, nil, nil, organization.PlatformIDPConfig{}))
 
 			_, err := svc.Deploy(context.Background(), "acme", "proj", promoting("abc123def456", "api"))
 			if err == nil {

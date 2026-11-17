@@ -50,14 +50,16 @@ org.
 
 ### One org under the IdP's own handle
 
-An Asgardeo tenant names its org by the tenant's handle, which is not the
-org's OpenChoreo namespace. `Dialect.WithSingleOrg(idpHandle, platformHandle)`
-(wired from `PLATFORM_IDP_ORG_HANDLE` and `PLATFORM_IDP_ORG_NAMESPACE`) maps
-it: a token declaring exactly `idpHandle` reads as the org `platformHandle`,
-and any other token (another org of the IdP, no handle claim) reads as no
-org, so the tenant gate and the machine-token verifiers refuse it. Both
-settings are required under `asgardeo` and refused under `thunder`
-(`config.Validate`). The mapping is in the dialect because every consumer of
+An install serves one org. The IdP names it by a handle of its own (a
+ThunderID organization unit's handle, an Asgardeo organization's handle),
+which need not be the org's OpenChoreo namespace.
+`Dialect.WithSingleOrg(idpHandle, platformHandle)` (wired from
+`PLATFORM_IDP_ORG_HANDLE` and `PLATFORM_IDP_ORG_NAMESPACE`) maps it: a token
+declaring exactly `idpHandle` reads as the org `platformHandle`, and any
+other token (another org of the IdP, no handle claim) reads as no org, so the
+tenant gate and the machine-token verifiers refuse it. Both settings are
+required on every install (`config.Validate`), and the mapping is always
+applied. It is in the dialect because every consumer of
 the handle goes through it: the user edge, the org lookup, and the publisher
 and studio verifiers, whose clients are named after the namespace.
 

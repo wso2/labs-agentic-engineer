@@ -363,8 +363,7 @@ func platformSecretPaths() []string {
 }
 
 // platformInputPaths are the paths an install writes from its inputs. The
-// Thunder admin credentials and the system client's id are inputs only where
-// the IdP is Thunder.
+// Thunder admin credentials are inputs only where the IdP is Thunder.
 func platformInputPaths() []string {
 	paths := []string{
 		"aep/anthropic-api-key",
@@ -376,7 +375,6 @@ func platformInputPaths() []string {
 	return append(paths,
 		"aep/thunder-admin/client-id",
 		"aep/thunder-admin/client-secret",
-		"aep/idp-clients/system-client-id",
 	)
 }
 
@@ -474,7 +472,7 @@ func syncPlatformExternalSecrets(ctx context.Context, namespace string) (map[str
 // stale value.
 func clientsReadingUnsynced(unsynced map[string]string) map[string]string {
 	skip := map[string]string{}
-	for _, d := range aepThunderClients {
+	for _, d := range thunderClients() {
 		if reason, ok := unsynced[d.secretNameOrDefault()]; ok && d.clientType == "confidential" {
 			skip[d.clientID] = reason
 		}

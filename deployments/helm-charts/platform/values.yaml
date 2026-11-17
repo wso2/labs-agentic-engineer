@@ -238,25 +238,15 @@ dataPlaneGateway:
   tls: true
 
 thunder:
-  # In-cluster URLs of the platform IdP (release `platform-idp`, namespace
-  # `platform-idp`). Chart defaults are literals by nature; the source of truth
-  # for the IdP's name is deployments/scripts/env.sh (THUNDER_INTERNAL_URL) and
-  # these must agree with it. Override if the IdP moves.
-  adminURL: "http://platform-idp-service.platform-idp.svc.cluster.local:8090"
-  # The IdP's JWKS and token endpoints at the in-cluster address. `aectl`
-  # sets both from the IdP's OIDC discovery document (the public document's
-  # paths on thunder.url) at install and update; the defaults are the local
-  # ThunderID's.
+  # The platform IdP's JWKS and token endpoints at the in-cluster address
+  # (release `platform-idp`, namespace `platform-idp`). `aectl` sets both
+  # from the IdP's OIDC discovery document (the public document's paths on
+  # thunder.url) at install and update; the defaults are the local
+  # ThunderID's. Chart defaults are literals by nature; the source of truth
+  # for the IdP's name is deployments/scripts/env.sh (THUNDER_INTERNAL_URL)
+  # and these must agree with it.
   jwksURL: "http://platform-idp-service.platform-idp.svc.cluster.local:8090/oauth2/jwks"
   tokenURL: "http://platform-idp-service.platform-idp.svc.cluster.local:8090/oauth2/token"
-  # OAuth resource indicator for ThunderID's own "System" resource server, the
-  # one that owns the `system` scope aep-api's admin calls need. It is a name,
-  # not an address: conventionally "<public issuer>/mcp", so the default derives
-  # it from console.thunderPublicURL even though adminURL above is in-cluster.
-  # Without it, a Thunder with a default resource server (Agent Manager's, on a
-  # converged cluster) drops the scope silently and every admin call 403s.
-  # Set only when the IdP registered a non-conventional identifier.
-  systemResourceIdentifier: ""
 
 idp:
   # The platform IdP's token dialect: the claim names and rules every reader
@@ -264,26 +254,26 @@ idp:
   # (PLATFORM_IDP_KIND), every org's AE Studio pod (AE_STUDIO_IDP_KIND, then
   # AE_IDP_KIND) and the console (VITE_IDP_KIND): `thunder` or `asgardeo`.
   # `aectl` sets it from its idp.kind config. Under `asgardeo` the chart
-  # renders no Thunder admin credentials, no Thunder admin env on aep-api and
-  # no CORS policy on Thunder's route, and reads only aep-api's own client
-  # secret from the Thunder client paths.
+  # renders no Thunder admin credentials and no CORS policy on Thunder's
+  # route, and reads only the secrets of the clients the IdP's admin created.
   kind: "thunder"
-  # Set both on an IdP that serves one org under a handle of its own (kind
-  # asgardeo, where they are required): orgHandle is the handle the IdP's
-  # tokens name the org by (the Asgardeo tenant's handle), orgNamespace the
-  # org's OpenChoreo namespace. aep-api reads a token declaring orgHandle as
-  # that org and any other token as no org (PLATFORM_IDP_ORG_HANDLE,
-  # PLATFORM_IDP_ORG_NAMESPACE), and gives the org's pod orgHandle as its org
-  # handle. Leave both empty under thunder, whose handle is the namespace.
+  # The one org the IdP serves. orgHandle is the handle the IdP's tokens name
+  # the org by (a ThunderID organization unit's handle, an Asgardeo
+  # organization's handle), orgNamespace the org's OpenChoreo namespace.
+  # aep-api reads a token declaring orgHandle as that org and any other token
+  # as no org (PLATFORM_IDP_ORG_HANDLE, PLATFORM_IDP_ORG_NAMESPACE), and gives
+  # the org's pod orgHandle as its org handle. `aectl` sets both; the
+  # defaults are the local ThunderID's default organization unit.
   #
-  # Under asgardeo the chart also reads the secrets of that org's two
-  # pre-created clients, aep-publisher-<orgNamespace> and
-  # ae-studio-<orgNamespace>, from the vault paths
-  # aep/idp-clients/org-publisher and aep/idp-clients/org-studio
-  # (ExternalSecret aep-org-client-secrets), which the tenant's admin imports
-  # with `aectl platform secret import`. aep-api cannot create clients there.
-  orgHandle: ""
-  orgNamespace: ""
+  # The chart also reads the secrets of that org's two pre-created clients,
+  # aep-publisher-<orgNamespace> and ae-studio-<orgNamespace>, from the vault
+  # paths aep/idp-clients/org-publisher and aep/idp-clients/org-studio
+  # (ExternalSecret aep-org-client-secrets). `aectl` creates the clients and
+  # generates the secrets on a ThunderID it administers; on another IdP its
+  # admin creates them and stores the secrets with
+  # `aectl platform secret import`. aep-api cannot create clients.
+  orgHandle: "default"
+  orgNamespace: "default"
 
 openbao:
   # Address of OpenChoreo's built-in OpenBao service.

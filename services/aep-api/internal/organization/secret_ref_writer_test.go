@@ -486,28 +486,6 @@ func TestSecretRefWriter_ResolveVaultKey_NoClaimsInContext(t *testing.T) {
 	}
 }
 
-func TestSecretRefWriter_DeletePublisher(t *testing.T) {
-	t.Run("disabled (nil client) is a no-op", func(t *testing.T) {
-		t.Parallel()
-		w := organization.NewSecretRefWriter(nil, nil)
-		if err := w.DeletePublisher(context.Background(), "acme"); err != nil {
-			t.Fatalf("disabled DeletePublisher = %v; want nil", err)
-		}
-	})
-
-	t.Run("no ae-publisher-client row is a no-op (idempotent), the vault is never called", func(t *testing.T) {
-		t.Parallel()
-		fake := &fakeSMClient{}
-		w := withOrgSecrets(organization.NewSecretRefWriter(fake, nil), fake)
-		if err := w.DeletePublisher(claimsCtx("ou-acme-uuid"), "ghost-org"); err != nil {
-			t.Fatalf("DeletePublisher without a row = %v; want nil", err)
-		}
-		if len(fake.deleteCalls) != 0 {
-			t.Fatalf("nothing to delete without a row: %+v", fake.deleteCalls)
-		}
-	})
-}
-
 // seedUserPATRow inserts a minimal valid org_credentials row of kind
 // user-pat (the app_fields CHECK requires installation_id/selected_repos to
 // be NULL for this kind).
@@ -644,23 +622,4 @@ func TestSecretRefWriter_WriteAMPModelKey(t *testing.T) {
 			t.Error("CreateSecret must not be called without an ouId claim")
 		}
 	})
-}
-
-func TestSecretRefWriter_DeletePublisher_RemovesTheRecordedReference(t *testing.T) {
-	t.Parallel()
-	const minted = "acme-ae-publisher-client-0000000a"
-	fake := &fakeSMClient{}
-	rows := newFakeRepo()
-	rows.set("acme", organization.OrgSecretPublisherClient, minted)
-	w := organization.NewSecretRefWriter(fake, nil).
-		WithOrgSecretWriter(organization.NewOrgSecretWriter(fake, rows, newFakeLock(), fixedClock))
-	if err := w.DeletePublisher(claimsCtx("ou-acme-uuid"), "acme"); err != nil {
-		t.Fatalf("DeletePublisher: %v", err)
-	}
-	if len(fake.deleteCalls) != 1 || fake.deleteCalls[0].secretRefName != minted || fake.deleteCalls[0].loc.EntityName != "ae-publisher-client" {
-		t.Fatalf("the minted reference is deleted by its stored name: %+v", fake.deleteCalls)
-	}
-	if rows.name("acme", organization.OrgSecretPublisherClient) != "" {
-		t.Fatal("the row is unset")
-	}
 }

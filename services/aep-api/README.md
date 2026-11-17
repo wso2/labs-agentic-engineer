@@ -76,6 +76,8 @@ datastore · `(["/prefix"])` = an inbound route group.
   [`design/git-boundary.md`](design/git-boundary.md).
 - **`clients/`** — outbound adapters to external systems (`openchoreo`, `thundersvc`,
   `thunderapp`, `secretmanagersvc`, `oauth`, `oidc`, `observability`).
+  `thundersvc` — the admin client of an environment's Thunder (directory, resource servers,
+  roles) for the identity domain; aep-api administers nothing on the platform IdP.
   `thunderapp` — Kubernetes GET of ThunderApplication CRs for the web-app deploy wait.
   `kubeauth` — the bearer/token-file Authorization and cluster-CA transport both share.
   `aestudiotools` — each org's ae-studio-tools `/internal/v1` (turns, references,

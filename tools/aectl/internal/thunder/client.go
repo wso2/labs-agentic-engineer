@@ -27,11 +27,9 @@
 //     tokenClaimConfig
 //   - the built-in "System" resource server's `identifier` is an absolute
 //     URI derived from the deployment's public URL ("<publicUrl>/mcp"), not
-//     the literal string "system" (that string is the HANDLE of the one
-//     resource nested inside it) — see findSystemResourceServerID
-//   - a role's assignments are their own sub-resource
-//     (GET/POST .../roles/{id}/assignments[/add]); GET/PUT /roles/{id} does
-//     not read or write them — see ensureAppInRole
+//     the literal string "system" — see SystemResourceIdentifier
+//   - an organization unit is read by its handle at
+//     /organization-units/tree/<handle> — see ouIDOf
 package thunder
 
 import (
@@ -91,21 +89,38 @@ type DesiredApp struct {
 	// all. It marks the AE-only internal client: its token must never carry an
 	// org (or any identity) the gate could trust.
 	NoUserAttributes bool
+	// OrgOUHandle marks one of an org's own clients (its publisher and its AE
+	// Studio client) and names the handle of the org's organization unit. The
+	// client is created under that OU, so its client_credentials token names
+	// the org, and with the settings an org client needs (orgClientConfig).
+	// Empty is a platform client, under the default OU.
+	OrgOUHandle string
 }
+
+// defaultOUHandle is the handle of ThunderID's built-in organization unit.
+const defaultOUHandle = "default"
+
+// orgTokenAttributes are the claims an org client's client_credentials token
+// carries. ThunderID 1.0.0 releases an application's OU into such a token only
+// when the application's token config asks for it, and every verifier of an
+// org client's token reads the org from it.
+var orgTokenAttributes = []string{"ouId", "ouHandle"}
+
+// orgTokenValiditySeconds is the lifetime of an org client's access token.
+const orgTokenValiditySeconds = 3600
+
+// orgClientAuthMethod is how an org client sends its secret to the token
+// endpoint. The coding runner and the AE Studio pod both use HTTP Basic.
+const orgClientAuthMethod = "client_secret_basic"
 
 // AdminClient calls Thunder's admin API to create/update OAuth applications.
 type AdminClient struct {
 	baseURL   string
 	token     string
 	defaultOU string
-	http      *http.Client
-	// systemResourceIdentifier is the identifier ThunderID assigned to its
-	// built-in "System" resource server on this deployment — the same value
-	// sent as the OAuth `resource` indicator when this client authenticated
-	// (see SystemResourceIdentifier). Set once at New() time so
-	// findSystemResourceServerID matches against the exact value the token
-	// exchange itself relied on; the two can never drift apart.
-	systemResourceIdentifier string
+	// ous caches the id of each organization unit looked up by its handle.
+	ous  map[string]string
+	http *http.Client
 }
 
 // SystemResourceIdentifier derives the identifier of ThunderID's own "System"
@@ -169,10 +184,10 @@ func New(ctx context.Context, baseURL, adminClientID, adminClientSecret, systemR
 		return nil, fmt.Errorf("could not parse access token from Thunder response: %s", body)
 	}
 
-	c := &AdminClient{baseURL: baseURL, token: tok.AccessToken, http: hc, systemResourceIdentifier: systemResource}
+	c := &AdminClient{baseURL: baseURL, token: tok.AccessToken, http: hc}
 
 	// Resolve and cache the default OU ID once at construction.
-	ouID, err := c.fetchDefaultOU(ctx)
+	ouID, err := c.ouIDOf(ctx, defaultOUHandle)
 	if err != nil {
 		return nil, fmt.Errorf("fetch default OU: %w", err)
 	}
@@ -184,93 +199,56 @@ func New(ctx context.Context, baseURL, adminClientID, adminClientSecret, systemR
 // EnsureApplication creates or updates a Thunder OAuth application to match
 // the desired state. It is idempotent — safe to call on every install/upgrade.
 func (c *AdminClient) EnsureApplication(ctx context.Context, app DesiredApp) error {
+	ouID := c.defaultOU
+	if app.OrgOUHandle != "" {
+		var err error
+		if ouID, err = c.ouIDOf(ctx, app.OrgOUHandle); err != nil {
+			return fmt.Errorf("app %q: %w", app.ClientID, err)
+		}
+	}
 	internalID, err := c.findAppByClientID(ctx, app.ClientID)
 	if err != nil {
 		return fmt.Errorf("look up app %q: %w", app.ClientID, err)
 	}
 
 	if internalID != "" {
-		return c.updateApp(ctx, internalID, app)
+		return c.updateApp(ctx, internalID, app, ouID)
 	}
-	return c.createApp(ctx, app)
-}
-
-// AssignAdminRole grants clientID the Thunder "system" permission via a
-// dedicated "aep-system" role. It is fully idempotent: if the role exists and
-// clientID is already assigned it returns immediately; if the role exists but
-// the assignment is missing it adds it via POST .../assignments/add; if the
-// role is absent it creates it with the assignment inline.
-func (c *AdminClient) AssignAdminRole(ctx context.Context, clientID string) error {
-	// Resolve the app's internal ID first — needed on both the create and
-	// update paths.
-	appID, err := c.findAppByClientID(ctx, clientID)
-	if err != nil {
-		return fmt.Errorf("find app %q: %w", clientID, err)
-	}
-	if appID == "" {
-		return fmt.Errorf("app %q not found — cannot assign system role", clientID)
-	}
-
-	// Check whether the aep-system role already exists.
-	roleID, err := c.findRoleByName(ctx, "aep-system")
-	if err != nil {
-		return fmt.Errorf("check aep-system role: %w", err)
-	}
-	if roleID != "" {
-		// Role exists — verify clientID is in its assignments; add it if not.
-		return c.ensureAppInRole(ctx, roleID, appID)
-	}
-
-	// Role is absent — resolve the system resource server and create the role
-	// with the app assigned inline.
-	sysRsID, err := c.findSystemResourceServerID(ctx)
-	if err != nil {
-		return fmt.Errorf("find system resource server: %w", err)
-	}
-	if sysRsID == "" {
-		return fmt.Errorf("system resource server not found in Thunder")
-	}
-
-	payload, _ := json.Marshal(map[string]any{
-		"name":        "aep-system",
-		"description": "Grants aep-system-client the Thunder system permission.",
-		"ouId":        c.defaultOU,
-		"permissions": []map[string]any{
-			{"resourceServerId": sysRsID, "permissions": []string{"system"}},
-		},
-		"assignments": []map[string]any{
-			{"id": appID, "type": "app"},
-		},
-	})
-	respBody, status, err := c.doRequest(ctx, http.MethodPost, "/roles", payload)
-	if err != nil {
-		return fmt.Errorf("create aep-system role: %w", err)
-	}
-	if status != http.StatusOK && status != http.StatusCreated {
-		return fmt.Errorf("assign admin role to %q returned %d: %s", clientID, status, apiErrSummary(respBody))
-	}
-	return nil
+	return c.createApp(ctx, app, ouID)
 }
 
 // -- private helpers ----------------------------------------------------------
 
-func (c *AdminClient) fetchDefaultOU(ctx context.Context) (string, error) {
-	body, status, err := c.doRequest(ctx, http.MethodGet, "/organization-units/tree/default", nil)
+// ouIDOf returns the id of the organization unit with the given handle. A
+// handle ThunderID does not know is an error: aectl creates clients, never
+// organization units.
+func (c *AdminClient) ouIDOf(ctx context.Context, handle string) (string, error) {
+	if id, ok := c.ous[handle]; ok {
+		return id, nil
+	}
+	body, status, err := c.doRequest(ctx, http.MethodGet, "/organization-units/tree/"+url.PathEscape(handle), nil)
 	if err != nil {
-		return "", fmt.Errorf("get default OU: %w", err)
+		return "", fmt.Errorf("get organization unit %q: %w", handle, err)
+	}
+	if status == http.StatusNotFound {
+		return "", fmt.Errorf("ThunderID has no organization unit with handle %q", handle)
 	}
 	if status != http.StatusOK {
-		return "", fmt.Errorf("get default OU returned %d: %s", status, body)
+		return "", fmt.Errorf("get organization unit %q returned %d: %s", handle, status, apiErrSummary(body))
 	}
 	var ou struct {
 		ID string `json:"id"`
 	}
 	if err := json.Unmarshal(body, &ou); err != nil {
-		return "", fmt.Errorf("parse OU response: %w", err)
+		return "", fmt.Errorf("parse organization unit %q: %w", handle, err)
 	}
 	if ou.ID == "" {
-		return "", fmt.Errorf("thunder default OU has no id")
+		return "", fmt.Errorf("organization unit %q has no id", handle)
 	}
+	if c.ous == nil {
+		c.ous = map[string]string{}
+	}
+	c.ous[handle] = ou.ID
 	return ou.ID, nil
 }
 
@@ -326,8 +304,8 @@ func parseAppList(data []byte) ([]appSummary, error) {
 	return wrapped.Applications, nil
 }
 
-func (c *AdminClient) createApp(ctx context.Context, app DesiredApp) error {
-	payload := c.buildCreatePayload(app)
+func (c *AdminClient) createApp(ctx context.Context, app DesiredApp, ouID string) error {
+	payload := buildCreatePayload(app, ouID)
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal create payload for %q: %w", app.ClientID, err)
@@ -342,7 +320,7 @@ func (c *AdminClient) createApp(ctx context.Context, app DesiredApp) error {
 	return nil
 }
 
-func (c *AdminClient) updateApp(ctx context.Context, internalID string, app DesiredApp) error {
+func (c *AdminClient) updateApp(ctx context.Context, internalID string, app DesiredApp, ouID string) error {
 	// Read the full app object so we can PUT it back with minimal diff.
 	body, status, err := c.doRequest(ctx, http.MethodGet, "/applications/"+internalID, nil)
 	if err != nil {
@@ -355,6 +333,14 @@ func (c *AdminClient) updateApp(ctx context.Context, internalID string, app Desi
 	var full map[string]any
 	if err := json.Unmarshal(body, &full); err != nil {
 		return fmt.Errorf("parse app %q for update: %w", app.ClientID, err)
+	}
+
+	// An org's client is never moved: one found under another organization
+	// unit would mint tokens naming that unit's org.
+	if app.OrgOUHandle != "" {
+		if got, _ := full["ouId"].(string); got != ouID {
+			return fmt.Errorf("app %q exists under another organization unit than %q; remove it and run again", app.ClientID, app.OrgOUHandle)
+		}
 	}
 
 	// Locate the oauth2 inboundAuthConfig entry and patch it.
@@ -371,7 +357,10 @@ func (c *AdminClient) updateApp(ctx context.Context, internalID string, app Desi
 		cfg["redirectUris"] = wireRedirectURIs(app.RedirectURIs)
 		cfg["scopeClaims"] = scopeClaimConfig()
 	}
-	cfg["token"] = tokenClaimConfig(app.ClientType, app.NoUserAttributes)
+	cfg["token"] = tokenConfigOf(app)
+	if app.OrgOUHandle != "" {
+		cfg["tokenEndpointAuthMethod"] = orgClientAuthMethod
+	}
 	full["allowedUserTypes"] = []string{"Person"}
 	full["type"] = appType(app.ClientType)
 
@@ -389,15 +378,19 @@ func (c *AdminClient) updateApp(ctx context.Context, internalID string, app Desi
 	return nil
 }
 
-func (c *AdminClient) buildCreatePayload(app DesiredApp) map[string]any {
+func buildCreatePayload(app DesiredApp, ouID string) map[string]any {
 	base := map[string]any{
 		"name":             app.ClientID,
 		"type":             appType(app.ClientType),
-		"ouId":             c.defaultOU,
+		"ouId":             ouID,
 		"allowedUserTypes": []string{"Person"},
 	}
 
 	if app.ClientType == "confidential" {
+		authMethod := "client_secret_post"
+		if app.OrgOUHandle != "" {
+			authMethod = orgClientAuthMethod
+		}
 		base["inboundAuthConfig"] = []map[string]any{
 			{
 				"type": "oauth2",
@@ -405,10 +398,10 @@ func (c *AdminClient) buildCreatePayload(app DesiredApp) map[string]any {
 					"clientId":                app.ClientID,
 					"clientSecret":            app.ClientSecret,
 					"grantTypes":              []string{"client_credentials"},
-					"tokenEndpointAuthMethod": "client_secret_post",
+					"tokenEndpointAuthMethod": authMethod,
 					"pkceRequired":            false,
 					"publicClient":            false,
-					"token":                   tokenClaimConfig(app.ClientType, app.NoUserAttributes),
+					"token":                   tokenConfigOf(app),
 				},
 			},
 		}
@@ -424,7 +417,7 @@ func (c *AdminClient) buildCreatePayload(app DesiredApp) map[string]any {
 					"tokenEndpointAuthMethod": "none",
 					"pkceRequired":            true,
 					"publicClient":            true,
-					"token":                   tokenClaimConfig(app.ClientType, app.NoUserAttributes),
+					"token":                   tokenConfigOf(app),
 					"scopeClaims":             scopeClaimConfig(),
 				},
 			},
@@ -446,124 +439,6 @@ func appType(clientType string) string {
 		return "m2m"
 	}
 	return "browser"
-}
-
-// findRoleByName returns the internal ID of the role with the given name, or
-// "" if no such role exists.
-func (c *AdminClient) findRoleByName(ctx context.Context, name string) (string, error) {
-	body, status, err := c.doRequest(ctx, http.MethodGet, "/roles", nil)
-	if err != nil {
-		return "", fmt.Errorf("list roles: %w", err)
-	}
-	if status != http.StatusOK {
-		return "", fmt.Errorf("list roles returned %d: %s", status, body)
-	}
-	var raw any
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return "", fmt.Errorf("parse roles response: %w", err)
-	}
-	for _, item := range toSlice(raw) {
-		m, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		if m["name"] == name {
-			id, _ := m["id"].(string)
-			return id, nil
-		}
-	}
-	return "", nil
-}
-
-// ensureAppInRole adds appID to roleID's assignments if it is not already
-// there.
-//
-// Assignments are their own sub-resource: GET /roles/{id} does not include
-// them, and PUT /roles/{id} does not write them, so membership is read via
-// GET /roles/{id}/assignments and added via POST /roles/{id}/assignments/add
-// with a body of {"assignments": [...]} (a bare {"id","type"} object returns
-// 400 ROL-1001 "Invalid request format"). The add is additive and
-// idempotent — adding an already-present assignment, or the same one twice,
-// is a 204 no-op that leaves every other assignment untouched.
-func (c *AdminClient) ensureAppInRole(ctx context.Context, roleID, appID string) error {
-	body, status, err := c.doRequest(ctx, http.MethodGet, "/roles/"+roleID+"/assignments", nil)
-	if err != nil {
-		return fmt.Errorf("get role %q assignments: %w", roleID, err)
-	}
-	if status != http.StatusOK {
-		return fmt.Errorf("get role %q assignments returned %d: %s", roleID, status, apiErrSummary(body))
-	}
-	var parsed struct {
-		Assignments []map[string]any `json:"assignments"`
-	}
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return fmt.Errorf("parse role %q assignments: %w", roleID, err)
-	}
-	for _, m := range parsed.Assignments {
-		if m["id"] == appID {
-			return nil
-		}
-	}
-
-	data, err := json.Marshal(map[string]any{
-		"assignments": []map[string]any{{"id": appID, "type": "app"}},
-	})
-	if err != nil {
-		return fmt.Errorf("marshal assignment for role %q: %w", roleID, err)
-	}
-	respBody, status, err := c.doRequest(ctx, http.MethodPost, "/roles/"+roleID+"/assignments/add", data)
-	if err != nil {
-		return fmt.Errorf("add assignment to role %q: %w", roleID, err)
-	}
-	if status != http.StatusOK && status != http.StatusNoContent {
-		return fmt.Errorf("add assignment to role %q returned %d: %s", roleID, status, apiErrSummary(respBody))
-	}
-	return nil
-}
-
-// findSystemResourceServerID returns the internal ID of ThunderID's built-in
-// "System" resource server — the one that owns the `system` scope.
-//
-// Matches on identifier, not the literal string "system": ThunderID 1.0.0
-// requires resource-server identifiers to be absolute URIs (RFC 8707) and
-// assigns its built-in System resource server one derived from the
-// deployment's public URL, "<publicUrl>/mcp" (SystemResourceIdentifier).
-// "system" is only the HANDLE of the one resource nested inside it, a
-// different field entirely.
-//
-// Falls back to name=="System" when systemResourceIdentifier is empty — the
-// same "no resource indicator" case New() already treats as a valid,
-// deliberate input (a Thunder with no default resource server).
-func (c *AdminClient) findSystemResourceServerID(ctx context.Context) (string, error) {
-	body, status, err := c.doRequest(ctx, http.MethodGet, "/resource-servers", nil)
-	if err != nil {
-		return "", fmt.Errorf("list resource servers: %w", err)
-	}
-	if status != http.StatusOK {
-		return "", fmt.Errorf("list resource servers returned %d: %s", status, body)
-	}
-	var raw any
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return "", fmt.Errorf("parse resource servers response: %w", err)
-	}
-	for _, item := range toSlice(raw) {
-		m, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		if c.systemResourceIdentifier != "" {
-			if m["identifier"] == c.systemResourceIdentifier {
-				id, _ := m["id"].(string)
-				return id, nil
-			}
-			continue
-		}
-		if m["name"] == "System" {
-			id, _ := m["id"].(string)
-			return id, nil
-		}
-	}
-	return "", nil
 }
 
 // doRequest sends an authenticated request and returns (body, statusCode, err).
@@ -625,6 +500,22 @@ func wireRedirectURIs(desired []string) []any {
 		out[i] = u
 	}
 	return out
+}
+
+// tokenConfigOf is the token config of app: an org client's names its org and
+// nothing else (orgTokenAttributes), any other follows tokenClaimConfig.
+func tokenConfigOf(app DesiredApp) map[string]any {
+	if app.OrgOUHandle != "" {
+		return map[string]any{
+			"accessToken": map[string]any{
+				"clientConfig": map[string]any{
+					"validityPeriod": orgTokenValiditySeconds,
+					"attributes":     orgTokenAttributes,
+				},
+			},
+		}
+	}
+	return tokenClaimConfig(app.ClientType, app.NoUserAttributes)
 }
 
 // tokenClaimConfig returns ThunderID 1.0.0's token issuance/claims config for

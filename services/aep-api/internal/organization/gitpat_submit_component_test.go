@@ -19,7 +19,7 @@ package organization_test
 // COMPONENT tier, Component+DB flavor: the real organization.Service gitpat
 // submit (PATCH /config {gitProvider}) over the real credential, IDP and
 // org secret services on a pristine Postgres (real rows, real advisory
-// lock), with GitHub, the secrets client, Thunder and the AE Studio
+// lock), with GitHub, the secrets client and the AE Studio
 // converger faked at their edges. One call log across the fakes shows the
 // order the submit runs its steps in. Self-skips under -short.
 
@@ -42,7 +42,6 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
-	"github.com/wso2/aep/aep-api/internal/clients/thundersvc"
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 	"github.com/wso2/aep/aep-api/internal/platform/dbtest"
@@ -51,7 +50,11 @@ import (
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
-const submitThunderSecret = "thunder-issued-once"
+// The org's two pre-created clients' secrets, as they reach aep-api.
+const (
+	submitPublisherSecret = "stored-publisher-secret"
+	submitStudioSecret    = "stored-studio-secret"
+)
 
 // submitLog is the call log the fakes share. A step repeated back to back is
 // recorded once: the PAT is probed by the submit and validated again inside
@@ -144,74 +147,6 @@ func (v *submitVault) clientSecret(name string) string {
 	return v.data[name]["client_secret"]
 }
 
-// submitThunder creates each org app on its first ensure and finds it after,
-// and keeps the secret each app holds. A create waits (briefly) for another
-// ensure to arrive, so a concurrent ensure that is not held off by the
-// client secret's lock finds the app before the creator stores its secret.
-type submitThunder struct {
-	thundersvc.Client // anything else is a test bug (nil panic)
-
-	log     *submitLog
-	mu      sync.Mutex
-	apps    map[string]bool
-	secrets map[string]string // entity id → the secret Thunder holds
-	arrived chan struct{}
-}
-
-func (t *submitThunder) ensure(kind, name string) thundersvc.OrgApp {
-	t.log.add("ensure:" + kind)
-	select {
-	case t.arrived <- struct{}{}:
-	default:
-	}
-	t.mu.Lock()
-	id := "id-" + name
-	if t.apps[name] {
-		t.mu.Unlock()
-		return thundersvc.OrgApp{EntityID: id, ClientID: name}
-	}
-	t.apps[name] = true
-	secret := submitThunderSecret + "-" + kind
-	t.secrets[id] = secret
-	t.mu.Unlock()
-	select {
-	case <-t.arrived:
-	case <-time.After(300 * time.Millisecond):
-	}
-	return thundersvc.OrgApp{EntityID: id, ClientID: name, Secret: secret, Created: true}
-}
-
-func (t *submitThunder) EnsurePublisherApp(_ context.Context, org, _, _ string) (thundersvc.OrgApp, error) {
-	return t.ensure("publisher", thundersvc.PublisherAppName(org)), nil
-}
-
-func (t *submitThunder) EnsureOrgApp(_ context.Context, spec thundersvc.OrgAppSpec) (thundersvc.OrgApp, error) {
-	return t.ensure("studio", spec.Name), nil
-}
-
-func (t *submitThunder) SetAppSecret(_ context.Context, entityID, secret string) error {
-	t.log.add("thunder:put")
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.secrets[entityID] = secret
-	return nil
-}
-
-// DeletePublisherApp is the revoke an idp kind switch runs.
-func (t *submitThunder) DeletePublisherApp(_ context.Context, org, _ string) (bool, error) {
-	t.log.add("thunder:delete-publisher")
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	delete(t.apps, thundersvc.PublisherAppName(org))
-	return true, nil
-}
-
-func (t *submitThunder) holds(entityID string) string {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.secrets[entityID]
-}
-
 // submitStudio fakes the disconnect's hook and studio steps and the
 // submit's hook re-sync (logged).
 type submitStudio struct{ log *submitLog }
@@ -232,15 +167,14 @@ func (c submitConverger) Trigger(context.Context, string) { c.log.add("converge"
 // --- fixture ------------------------------------------------------------------
 
 type submitFixture struct {
-	svc     *organization.Service
-	log     *submitLog
-	vault   *submitVault
-	thunder *submitThunder
-	rows    organization.OrgSecretRepository
-	db      *gorm.DB
-	logs    *bytes.Buffer
-	calls   []string
-	writes  map[string]int
+	svc    *organization.Service
+	log    *submitLog
+	vault  *submitVault
+	rows   organization.OrgSecretRepository
+	db     *gorm.DB
+	logs   *bytes.Buffer
+	calls  []string
+	writes map[string]int
 }
 
 type submitOption func(*submitOptions)
@@ -296,8 +230,8 @@ func newSubmitFixture(t *testing.T, opts ...submitOption) *submitFixture {
 		WithOrgSecretWriter(orgSecrets)
 
 	credSvc := organization.NewCredentialService(credRepo).WithGitHubAPIBase(gh.URL).WithSecretRefWriter(refWriter)
-	thunder := &submitThunder{log: log, apps: map[string]bool{}, secrets: map[string]string{}, arrived: make(chan struct{})}
-	idpSvc := organization.NewIDPService(idpRepo, orgRepo, thunder, organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS}).
+	clients := organization.NewOrgClients("default", submitPublisherSecret, submitStudioSecret)
+	idpSvc := organization.NewIDPService(idpRepo, orgRepo, clients, organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS}).
 		WithSecretRefWriter(refWriter)
 
 	var converger organization.StudioConverger = submitConverger{log: log}
@@ -319,7 +253,7 @@ func newSubmitFixture(t *testing.T, opts ...submitOption) *submitFixture {
 	slog.SetDefault(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	return &submitFixture{svc: svc, log: log, vault: vault, thunder: thunder, rows: rows, db: db, logs: logs}
+	return &submitFixture{svc: svc, log: log, vault: vault, rows: rows, db: db, logs: logs}
 }
 
 // patch submits the gitpat and records the steps it ran in f.calls.
@@ -361,7 +295,7 @@ func TestSubmit_Sequence(t *testing.T) {
 	if err := f.patch(ctx, "ghorg", "pat-1"); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"validate", "connect", "write:github-pat", "write:github-webhook-secret", "ensure:publisher", "write:ae-publisher-client", "ensure:studio", "write:ae-studio-client", "resync-hooks", "converge"}
+	want := []string{"validate", "connect", "write:github-pat", "write:github-webhook-secret", "write:ae-publisher-client", "write:ae-studio-client", "resync-hooks", "converge"}
 	if !slices.Equal(f.calls, want) {
 		t.Fatalf("calls %v\nwant  %v", f.calls, want)
 	}
@@ -379,9 +313,11 @@ func TestSubmit_Sequence(t *testing.T) {
 	if f.writes["github-pat"] != 1 {
 		t.Fatalf("one resubmit writes one github-pat reference, got %d", f.writes["github-pat"])
 	}
-	// A reconnect re-syncs the org's repo hooks: the repair re-ensures each
-	// with the pod's config, so a hook left stale by hand is healed too.
-	want = []string{"validate", "connect", "write:github-pat", "ensure:publisher", "ensure:studio", "resync-hooks", "converge"}
+	// A reconnect stores both clients' secrets again (how a secret rotated in
+	// the IdP reaches the org) and re-syncs the org's repo hooks: the repair
+	// re-ensures each with the pod's config, so a hook left stale by hand is
+	// healed too.
+	want = []string{"validate", "connect", "write:github-pat", "write:ae-publisher-client", "write:ae-studio-client", "resync-hooks", "converge"}
 	if !slices.Equal(f.calls, want) {
 		t.Fatalf("resubmit calls %v\nwant  %v", f.calls, want)
 	}
@@ -392,7 +328,7 @@ func TestSubmit_Sequence(t *testing.T) {
 	if pat2 == pat1 || !f.vault.live[pat2] || f.vault.live[pat1] {
 		t.Fatalf("one submit = one github-pat reference, the previous one deleted: %q → %q, live %v", pat1, pat2, f.vault.live)
 	}
-	for _, v := range []string{"pat-1", "pat-2", submitThunderSecret} {
+	for _, v := range []string{"pat-1", "pat-2", submitPublisherSecret, submitStudioSecret} {
 		if strings.Contains(f.logs.String(), v) {
 			t.Fatal("a secret value reached the logs")
 		}
@@ -419,18 +355,17 @@ func TestSubmit_ConcurrentFirstSubmitsMakeOneWebhookSecret(t *testing.T) {
 	if n := f.vault.takeWrites()["github-webhook-secret"]; !written || n != 1 {
 		t.Fatalf("two first submits stored %d webhook secrets, want 1", n)
 	}
-	// Each client's reference holds the secret Thunder ends on, though both
-	// submits ensured it at once (one created it, the other found it).
+	// Each client's reference holds the client's secret, though both submits
+	// stored it at once.
 	for _, c := range []struct {
 		secret organization.OrgSecret
-		app    string
+		want   string
 	}{
-		{organization.OrgSecretPublisherClient, "id-aep-publisher-default"},
-		{organization.OrgSecretStudioClient, "id-ae-studio-default"},
+		{organization.OrgSecretPublisherClient, submitPublisherSecret},
+		{organization.OrgSecretStudioClient, submitStudioSecret},
 	} {
-		stored := f.vault.clientSecret(f.row(t, c.secret))
-		if stored == "" || stored != f.thunder.holds(c.app) {
-			t.Fatalf("%s: the stored client_secret is not the one Thunder holds (stored %d chars)", c.secret, len(stored))
+		if stored := f.vault.clientSecret(f.row(t, c.secret)); stored != c.want {
+			t.Fatalf("%s: the stored client_secret is not the client's (stored %d chars)", c.secret, len(stored))
 		}
 	}
 }
@@ -460,9 +395,9 @@ func TestSubmit_EnsureNotConfiguredStillSucceeds(t *testing.T) {
 	}
 }
 
-// An idp kind switch in the same patch revokes the publisher app; the
-// submit's setup runs after it, so the publisher it ensures survives.
-func TestSubmit_RunsAfterAnIDPKindSwitch(t *testing.T) {
+// An idp kind switch in the same patch leaves the publisher as it is: the
+// client is the platform IdP's, so its reference is still written and live.
+func TestSubmit_AnIDPKindSwitchKeepsThePublisher(t *testing.T) {
 	f := newSubmitFixture(t)
 	ctx := userCtx(submitOU.String())
 	if err := f.patch(ctx, "ghorg", "pat-1"); err != nil {
@@ -473,10 +408,9 @@ func TestSubmit_RunsAfterAnIDPKindSwitch(t *testing.T) {
 	if _, err := f.svc.Patch(ctx, "default", "admin", p); err != nil {
 		t.Fatal(err)
 	}
-	calls := f.log.take()
-	del, ens := slices.Index(calls, "thunder:delete-publisher"), slices.Index(calls, "ensure:publisher")
-	if del < 0 || ens < del {
-		t.Fatalf("the publisher is ensured after the revoke: %v", calls)
+	ref := f.row(t, organization.OrgSecretPublisherClient)
+	if ref == "" || !f.vault.live[ref] || f.vault.clientSecret(ref) != submitPublisherSecret {
+		t.Fatalf("the publisher reference after the kind switch: row %q, live %v", ref, f.vault.live)
 	}
 }
 
