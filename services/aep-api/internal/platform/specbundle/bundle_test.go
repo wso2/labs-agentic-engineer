@@ -137,6 +137,12 @@ func TestOpen_Refusals(t *testing.T) {
 		"assigned passphrase":   {entries: withEntry(entry{name: "specs/requirements/cfg.md", content: "password = correcthorsebatterystaple\n"}), want: `assigned to "password"`},
 		"url credentials":       {entries: withEntry(entry{name: "specs/requirements/url.md", content: "see https://user:pa55word@example.com/x\n"}), want: "URL with credentials"},
 		"high entropy token":    {entries: withEntry(entry{name: "specs/requirements/tok.md", content: "ref AKIAxQ7bL2mN9pR4sT6vW8yZ1aC3eF5gH0jK2lM4nP6\n"}), want: "high-entropy token"},
+		"prefixed token":        {entries: withEntry(entry{name: "specs/requirements/tok.md", content: "ref sk-AbC9dEf2GhI5jKl8MnO1pQr4StU7vWx0YzA3bCd6\n"}), want: "high-entropy token"},
+		"url-safe token":        {entries: withEntry(entry{name: "specs/requirements/tok.md", content: "ref aZ9x-Qm3L_tR8vK2nP5wY7cH1jD4fG6sB0eN3uI9oA\n"}), want: "high-entropy token"},
+		"two-word prefix token": {entries: withEntry(entry{name: "specs/requirements/tok.md", content: "ref sk-proj-AbC9dEf2GhI5jKl8MnO1pQr4StU7vWx0YzA3bCd6\n"}), want: "high-entropy token"},
+		"underscored key":       {entries: withEntry(entry{name: "specs/requirements/tok.md", content: "ref svc_key_Qm3LtR8vK2nP5wY7cH1jD4fG6sB0eN3u\n"}), want: "high-entropy token"},
+		"token under a path":    {entries: withEntry(entry{name: "specs/requirements/tok.md", content: "see com/api/keys/aZ9xQm3LtR8vK2nP5wY7cH1jD4fG6sB0eN3uI9oA\n"}), want: "high-entropy token"},
+		"single-letter words":   {entries: withEntry(entry{name: "specs/requirements/tok.md", content: "ref x-a-Qm3LtR8vK2nP5wY7cH1jD4fG6sB0eN3uI9oAbCd\n"}), want: "high-entropy token"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -161,7 +167,11 @@ func TestOpen_ProseIsNotACredential(t *testing.T) {
 	prose := "**Consumption instructions**: send the bearer token: authenticate first, then call `GET /rates`.\n" +
 		"| SALES_ENTITY_SERVICE_CLIENT_SECRET | Client secret for the client-credentials grant | yes |\n" +
 		"Read from https://github.com/acme/allocations.git at d14b825c0ffee0000000000000000000000000000.\n" +
-		`{ "config": [ { "key": "SALES_ENTITY_SERVICE_CLIENT_SECRET", "secret": true } ] }` + "\n"
+		`{ "config": [ { "key": "SALES_ENTITY_SERVICE_CLIENT_SECRET", "secret": true } ] }` + "\n" +
+		"- F12 [Visas and travel documents](features/F12-visas-and-travel-documents.md)\n" +
+		"- travel/backend-go/internal/handlers/TravelRequestHandler2.go:88 → F11.3\n" +
+		"- travel/backend-go/internal/api/v1/handlers/TravelRequestHandler.go:40 → F11.2\n" +
+		"- see also [F13](features/F12-visas-and-travel-documents-F13.md)\n"
 	if _, err := Open(zipOf(t, withEntry(entry{name: "specs/requirements/prose.md", content: prose}))); err != nil {
 		t.Fatalf("prose refused: %v", err)
 	}
