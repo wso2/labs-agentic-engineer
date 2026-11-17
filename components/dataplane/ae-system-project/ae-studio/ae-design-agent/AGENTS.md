@@ -139,7 +139,7 @@ names its thread, whose chat the book knows. Only the main chat rotates.
   (`edge/authenticate.ts`, `@aep/platform-idp-auth`): a Platform IdP user token
   of `AE_IDP_ISSUER` with an `AE_USER_AUDIENCES` audience whose org is the
   pod's (`AE_ORG_ID`/`AE_ORG_HANDLE`), read by the IdP's token dialect
-  (`AE_IDP_KIND`, thunder when unset). M2M → 401, another org → 403, IdP keys
+  (`AE_IDP_CLAIMS_*`, required, no default). M2M → 401, another org → 403, IdP keys
   unreachable → 503 `idp_unavailable` (`Retry-After: 5`), all before route
   matching. The Turn socket (`AE_TURN_SOCKET`, mode 0660; a stale socket file
   is replaced, any other file refuses the start) serves `edge/turn-socket.ts`
