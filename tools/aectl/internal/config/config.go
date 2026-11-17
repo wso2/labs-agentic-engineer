@@ -18,6 +18,7 @@ package config
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -292,7 +293,8 @@ func validateViper(v *viper.Viper) []string {
 	clients := clientsOf(v)
 	// The IdP's claims have to be complete once the preset and the config's
 	// own keys are layered: every reader of its tokens refuses a partial set.
-	if _, err := idpclaims.Resolve(v.GetString("idp.claims.preset"), ClaimsOverride(v)); err != nil && !strings.Contains(err.Error(), "unknown preset") {
+	// An unknown preset is the enum check's to report, once.
+	if _, err := idpclaims.Resolve(v.GetString("idp.claims.preset"), ClaimsOverride(v)); err != nil && !errors.Is(err, idpclaims.ErrUnknownPreset) {
 		errs = append(errs, err.Error())
 	}
 	// An IdP aectl does not run is reached over the public internet, by the

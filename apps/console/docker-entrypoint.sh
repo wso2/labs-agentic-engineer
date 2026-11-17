@@ -30,7 +30,13 @@ THUNDER_SCOPES="${VITE_THUNDER_SCOPES:-openid profile email}"
 # The name of the claim the platform IdP's tokens carry the org's handle in
 # (src/auth/claims.ts). Required: the console knows no IdP, so the deployment
 # says which claim it is (the chart's idp.claims.org.handle).
-IDP_ORG_HANDLE_CLAIM="${VITE_IDP_CLAIMS_ORG_HANDLE:?VITE_IDP_CLAIMS_ORG_HANDLE is required: the name of the claim that carries the org handle in the platform IdP's tokens}"
+# Spaces alone are not a claim name: the console would fall back to its dev
+# default and read no org from this IdP's tokens.
+IDP_ORG_HANDLE_CLAIM="$(printf '%s' "${VITE_IDP_CLAIMS_ORG_HANDLE:-}" | tr -d '[:space:]')"
+if [ -z "$IDP_ORG_HANDLE_CLAIM" ]; then
+  echo "VITE_IDP_CLAIMS_ORG_HANDLE is required: the name of the claim that carries the org handle in the platform IdP's tokens" >&2
+  exit 1
+fi
 TRY_IT_URL="${VITE_TRY_IT_URL:-http://tryit.aep.localhost:8095}"
 # WSO2 Cloud only — set by the ReleaseBinding. Empty locally so the SPA skips
 # the first-login billing activation call.

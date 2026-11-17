@@ -29,6 +29,7 @@ package idpclaims
 
 import (
 	"embed"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -108,6 +109,9 @@ type Resolved struct {
 // from the config and the environment.
 type Override func(key string) (value string, source Source)
 
+// ErrUnknownPreset is a preset name aectl does not ship.
+var ErrUnknownPreset = errors.New("unknown preset")
+
 // Presets lists the values idp.claims.preset takes: the shipped presets,
 // sorted, then NoPreset.
 func Presets() []string {
@@ -128,7 +132,7 @@ func presetValues(name string) (map[string]string, error) {
 	}
 	raw, err := presetFiles.ReadFile("presets/" + name + ".yaml")
 	if err != nil {
-		return nil, fmt.Errorf("idp.claims.preset: unknown preset %q (shipped: %s)", name, strings.Join(Presets(), ", "))
+		return nil, fmt.Errorf("idp.claims.preset: %w %q (shipped: %s)", ErrUnknownPreset, name, strings.Join(Presets(), ", "))
 	}
 	var doc map[string]map[string]string
 	if err := yaml.Unmarshal(raw, &doc); err != nil {

@@ -129,9 +129,11 @@ func run() error {
 		slog.Error("config_invalid", "error", err)
 		return err
 	}
-	// The platform IdP's token dialect: Load required its mandatory claims.
+	// The platform IdP's token dialect. Load required its mandatory claims,
+	// so a failure here is the same fault and logs under the same name.
 	idpDialect, err := dialect.New(cfg.IDPClaims)
 	if err != nil {
+		slog.Error("config_invalid", "error", err)
 		return err
 	}
 
