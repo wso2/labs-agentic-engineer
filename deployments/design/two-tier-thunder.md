@@ -297,8 +297,9 @@ has no command in this repository today.
   "ouHandle claim missing" and the runner reports "mcp auth: unauthorized". A
   `PUT` of the application without a `clientSecret` keeps the existing secret,
   so the claims can be added to a live publisher without rotating anything.
-  The declarative documents and the thunder-app operator carried both; the
-  aep-api publisher client is the third copy and lagged twice.
+  The declarative documents and the thunder-app operator carry both; the org's
+  two clients that aectl registers are the third copy (`orgTokenAttributes`,
+  `tools/aectl/internal/thunder`).
 - **`helm upgrade` with no values re-applies the LAST release's values**, so a
   chart whose defaults are the contract (`amp-platform-resources`) has to be
   upgraded with `--reset-values`, or an old `--set` outlives the script that

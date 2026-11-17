@@ -655,12 +655,6 @@ org can never address another's data. Domains read the bound org from context; a
 request carrying no verified org is refused. See `services/aep-api/README.md`
 (Platform invariants).
 
-### Phantom-OU (trust guard)
-A JWT can name an organizational unit (`ouId`) that does not exist. aep-api rejects
-an `ouId` ONLY when a wired validator positively reports it absent; an empty id, no
-validator, or a transient lookup error all fail OPEN. A phantom OU would otherwise
-poison `wc-` namespace derivation and the publisher OU binding.
-
 ### Committed-truth
 aep-api's rule that a spec (requirements + design) is authoritative only once it is
 committed to git `main`. An agent turn's file edits land in the Room; the Room's

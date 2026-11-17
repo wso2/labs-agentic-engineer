@@ -132,8 +132,6 @@ func (v *ensureVault) wrote(s OrgSecret) bool {
 	return slices.ContainsFunc(v.writes, func(w ensureWrite) bool { return w.entity == string(s) })
 }
 
-// ensureThunder answers EnsureOrgApp / EnsurePublisherApp from appExists and
-
 // ouOrgRepo is an OrganizationRepository whose org row carries ou.
 type ouOrgRepo struct {
 	stubOrgRepo

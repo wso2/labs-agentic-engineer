@@ -81,7 +81,7 @@ spec:
             - name: SERVICE_AUTH_CLIENT_ID
               value: {{ .Values.aepApi.serviceAuth.clientId | quote }}
             # The IdP's token endpoint at the in-cluster address, from its
-            # discovery document (aectl writes thunder.tokenURL).
+            # discovery document (aectl writes idp.tokenURL).
             - name: SERVICE_AUTH_TOKEN_URL
               valueFrom:
                 configMapKeyRef:

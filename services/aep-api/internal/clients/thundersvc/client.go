@@ -221,9 +221,8 @@ type Config struct {
 	ClientSecret string // OAuth2 client secret of the system app
 	// SystemResourceIdentifier is the OAuth resource indicator naming the
 	// resource server that owns the `system` scope: ThunderID's own "System"
-	// resource server, conventionally "<public issuer>/mcp" (see the
-	// SystemResourceIdentifier function). Sent as `resource` on every token
-	// request.
+	// resource server, conventionally "<public issuer>/mcp". Sent as
+	// `resource` on every token request.
 	//
 	// ThunderID 1.0.0 resolves a requested scope against a resource server.
 	// Without an indicator it uses the server-wide default, and when that
@@ -254,7 +253,7 @@ type client struct {
 	// now is the clock the cache is judged by; tests substitute it.
 	now func() time.Time
 
-	// Default OU id, looked up once on first EnsurePublisherApp call
+	// Default OU id, looked up once on the first call that needs it
 	// and cached. Thunder's UI nests every org under a root OU
 	// ("default") so for v1 we always use that.
 	muOU      sync.Mutex

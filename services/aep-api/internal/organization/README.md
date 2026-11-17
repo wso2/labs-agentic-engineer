@@ -166,10 +166,10 @@ model-connection / idp services.*
   it saves it again, and a subscription with no `coding-agent-key` row bills the connection's key
   (above).
 - **The publisher client secret lives only in vault; builds and deploys only read** ([ADR-0047](../../../../docs/decisions/ADR-0047-an-org-secrets-value-lives-only-in-vault.md)).
-  The gitpat submit's `EnsureClient(publisher)` is the one writer of the publisher app and its
+  The gitpat submit's `EnsureClient(publisher)` is the one writer of the publisher client's
   `ae-publisher-client` reference; the profile keeps `publisher_client_id` and
   `publisher_thunder_app_id`, never the secret or a reference to it. `POST /build` runs
-  `RequirePublisherForBuild`: a read of the `ae-publisher-client` row (no Thunder call, no heal); no
+  `RequirePublisherForBuild`: a read of the `ae-publisher-client` row (no IdP call, no write); no
   row is `delivery.ErrPublisherCredentialsMissing`, answered `409 publisher_credentials_missing`
   "Reconnect GitHub to set up this organization's build credentials". The deploy reads only the
   profile's issuer (`projects.OrgIDPProfiles`). There is no user rotation: a lost reference is healed

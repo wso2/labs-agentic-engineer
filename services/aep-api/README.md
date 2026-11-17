@@ -38,7 +38,6 @@ flowchart TB
   DOMAINS --> PG[("Postgres")]
   DEP --> OC[[OpenChoreo]]
   SC --> AES[["the org's AE Studio pod (git + GitHub)"]]
-  ORG --> TH[[Thunder]]
   IDN --> TH
   DEL --> TMP[[Temporal]]
 ```
@@ -171,7 +170,7 @@ The playground's tasks phase runs both (playground ADR-0003).
 | **PAS strategy** | overlay-supplied `RequestAuthStrategy` that decides pass-through vs M2M (+ impersonation) per OC request |
 | **overlay module** | separate Go module / `main` that imports `app` and wires cloud-specific `Options` |
 
-*Product & platform terms (committed-truth, phantom-OU, tenant gate) → [`docs/glossary.md`](../../docs/glossary.md).*
+*Product & platform terms (committed-truth, tenant gate) → [`docs/glossary.md`](../../docs/glossary.md).*
 
 ## Platform invariants
 
@@ -211,9 +210,9 @@ point at enforcement, they don't restate it.
 - **Deny-by-default tenant gate.** A request's org comes only from a verified JWT claim —
   never from a path, query, or body — so cross-org access is unrepresentable →
   `edge/tenant_gate_test.go` + every domain's `*_component_test.go`
-- **Phantom-OU trust guard.** A JWT `ouId` is rejected only when a wired validator
-  positively reports it does not exist (empty id / no validator / transient error all
-  fail open) → `organization/ou_validation_test.go`
+- **One org per install.** A token that does not declare the install's org handle reads
+  as no org, on the user edge and on every machine-token verifier; aep-api asks no IdP
+  about an org → `platform/auth/dialect/dialect_test.go` (`TestWithSingleOrg`)
 
 ## Where to look
 
