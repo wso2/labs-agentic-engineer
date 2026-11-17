@@ -18,76 +18,77 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dialectFor } from "../src/dialect.js";
-import { parseDialectKind } from "../src/index.js";
+import { createDialect } from "../src/dialect.js";
+import { readIdpClaims } from "../src/index.js";
+import { ASGARDEO, claimsOf, loadFixture, THUNDER } from "./helpers/idp-claims.js";
 
-test("parseDialectKind: empty is thunder; a kind this build does not know throws", () => {
-  assert.equal(parseDialectKind(undefined), "thunder");
-  assert.equal(parseDialectKind(""), "thunder");
-  assert.equal(parseDialectKind(" Thunder "), "thunder");
-  assert.equal(parseDialectKind("asgardeo"), "asgardeo");
-  assert.equal(parseDialectKind(" Asgardeo "), "asgardeo");
-  assert.throws(() => parseDialectKind("okta"), /unknown platform IdP kind/);
-});
+// Every sample token of both IdPs reads as the shared fixtures say. The same
+// files pin aep-api's dialect, the pod's Go twin and the console, so the four
+// cannot drift apart.
+for (const idp of ["thunder", "asgardeo"] as const) {
+  const fixture = loadFixture(idp);
+  const dialect = createDialect(claimsOf(fixture));
+  for (const token of fixture.tokens) {
+    test(`${idp}: ${token.name}`, () => {
+      assert.deepEqual(dialect.org(token.payload), token.org);
+      const machine = dialect.machine(token.payload);
+      assert.equal(machine === undefined ? "refused" : machine ? "machine" : "user", token.caller);
+    });
+  }
+}
 
-// The Thunder org precedence (ouHandle, else ouName, else ouId), and whether
-// the handle was the token's own.
-test("thunder: the org and whether its handle was declared", () => {
-  const d = dialectFor("thunder");
-  assert.deepEqual(d.org({ ouHandle: "acme", ouName: "Acme Inc", ouId: "ou-1" }), {
-    handle: "acme",
-    id: "ou-1",
-    name: "Acme Inc",
-    handleDeclared: true,
+test("readIdpClaims: the pod's AE_IDP_CLAIMS_* settings, trimmed", () => {
+  const { claims, problems } = readIdpClaims({
+    AE_IDP_CLAIMS_ORG_HANDLE: " org_handle ",
+    AE_IDP_CLAIMS_ORG_ID: "org_id",
+    AE_IDP_CLAIMS_ORG_NAME: "org_name",
+    AE_IDP_CLAIMS_CALLER_TYPE_CLAIM: "aut",
+    AE_IDP_CLAIMS_CALLER_TYPE_MACHINE: "APPLICATION",
+    AE_IDP_CLAIMS_CALLER_TYPE_USER: "APPLICATION_USER",
   });
-  assert.deepEqual(d.org({ ouName: "Acme Inc", ouId: "ou-1" }), { handle: "Acme Inc", id: "ou-1", name: "Acme Inc", handleDeclared: false });
-  assert.deepEqual(d.org({ ouId: "ou-1" }), { handle: "ou-1", id: "ou-1", name: "", handleDeclared: false });
-  assert.deepEqual(d.org({ grant_type: "authorization_code" }), { handle: "", id: "", name: "", handleDeclared: false });
-  // A non-string claim is no claim.
-  assert.equal(d.org({ ouHandle: 42 }).handleDeclared, false);
+  assert.deepEqual(problems, []);
+  assert.deepEqual(claims, ASGARDEO);
 });
 
-// client_credentials is a machine's; any other grant a user's; no grant
-// answers neither, so a verifier can refuse it rather than guess.
-test("thunder: a machine's token by grant_type", () => {
-  const d = dialectFor("thunder");
-  assert.equal(d.machine({ grant_type: "client_credentials" }), true);
-  assert.equal(d.machine({ grant_type: "authorization_code" }), false);
-  assert.equal(d.machine({ grant_type: "refresh_token" }), false);
-  assert.equal(d.machine({ ouHandle: "acme" }), undefined);
+test("readIdpClaims: the pod knows no IdP, so each mandatory key that is missing is named", () => {
+  const { claims, problems } = readIdpClaims({ AE_IDP_CLAIMS_ORG_ID: "ouId", AE_IDP_CLAIMS_CALLER_TYPE_CLAIM: "  " });
+  assert.deepEqual(problems, [
+    "missing AE_IDP_CLAIMS_ORG_HANDLE",
+    "missing AE_IDP_CLAIMS_CALLER_TYPE_CLAIM",
+    "missing AE_IDP_CLAIMS_CALLER_TYPE_MACHINE",
+  ]);
+  // The org's display name claim and the user value are optional.
+  assert.equal(claims.orgName, "");
+  assert.equal(claims.callerTypeUser, "");
+  assert.deepEqual(readIdpClaims({ ...envOf(THUNDER) }).problems, []);
 });
 
-// Asgardeo names the org in org_handle / org_id / org_name, with no fallback.
-test("asgardeo: the org and whether its handle was declared", () => {
-  const d = dialectFor("asgardeo");
-  assert.deepEqual(d.org({ org_handle: "acme", org_name: "Acme Inc", org_id: "org-1" }), {
-    handle: "acme",
-    id: "org-1",
-    name: "Acme Inc",
-    handleDeclared: true,
-  });
-  assert.deepEqual(d.org({ org_name: "Acme Inc", org_id: "org-1" }), { handle: "", id: "org-1", name: "Acme Inc", handleDeclared: false });
-  // Thunder's claims name no org here, and a non-string claim is no claim.
-  assert.deepEqual(d.org({ ouHandle: "acme", ouId: "ou-1", ouName: "Acme Inc" }), { handle: "", id: "", name: "", handleDeclared: false });
-  assert.equal(d.org({ org_handle: 42 }).handleDeclared, false);
+test("createDialect: an incomplete set throws, naming what is missing", () => {
+  assert.throws(() => createDialect({ ...ASGARDEO, orgHandle: "" }), /orgHandle/);
+  assert.throws(() => createDialect({ ...ASGARDEO, orgId: " " }), /orgId/);
+  assert.throws(() => createDialect({ ...ASGARDEO, callerTypeClaim: "" }), /callerTypeClaim/);
+  assert.throws(() => createDialect({ ...ASGARDEO, callerTypeMachine: "" }), /callerTypeMachine/);
+  assert.doesNotThrow(() => createDialect({ ...ASGARDEO, orgName: "", callerTypeUser: "" }));
 });
 
-// aut has two values: APPLICATION is a machine's, APPLICATION_USER a user's.
-// No claim, or a value that is neither, answers neither.
-test("asgardeo: a machine's token by aut", () => {
-  const d = dialectFor("asgardeo");
-  assert.equal(d.machine({ aut: "APPLICATION" }), true);
-  assert.equal(d.machine({ aut: "APPLICATION_USER" }), false);
-  assert.equal(d.machine({ org_handle: "acme" }), undefined);
-  assert.equal(d.machine({ aut: "DEVICE" }), undefined);
-  assert.equal(d.machine({ aut: "application" }), undefined);
-  // Thunder's grant_type is not read.
-  assert.equal(d.machine({ grant_type: "authorization_code" }), undefined);
+test("with no user value configured, any value but the machine's is a user's", () => {
+  const strict = createDialect(ASGARDEO);
+  const loose = createDialect({ ...ASGARDEO, callerTypeUser: "" });
+  assert.equal(strict.machine({ aut: "DEVICE" }), undefined);
+  assert.equal(loose.machine({ aut: "DEVICE" }), false);
+  assert.equal(loose.machine({ aut: "APPLICATION" }), true);
+  // A caller type claim that is not text is no claim.
+  assert.equal(loose.machine({ aut: true }), undefined);
 });
 
-test("thunder does not read asgardeo's claims", () => {
-  const d = dialectFor("thunder");
-  const claims = { org_handle: "acme", org_id: "org-1", org_name: "Acme Inc", aut: "APPLICATION_USER" };
-  assert.deepEqual(d.org(claims), { handle: "", id: "", name: "", handleDeclared: false });
-  assert.equal(d.machine(claims), undefined);
-});
+/** The env a pod would get for `claims`. */
+function envOf(claims: typeof THUNDER): Record<string, string> {
+  return {
+    AE_IDP_CLAIMS_ORG_HANDLE: claims.orgHandle,
+    AE_IDP_CLAIMS_ORG_ID: claims.orgId,
+    AE_IDP_CLAIMS_ORG_NAME: claims.orgName,
+    AE_IDP_CLAIMS_CALLER_TYPE_CLAIM: claims.callerTypeClaim,
+    AE_IDP_CLAIMS_CALLER_TYPE_MACHINE: claims.callerTypeMachine,
+    AE_IDP_CLAIMS_CALLER_TYPE_USER: claims.callerTypeUser,
+  };
+}

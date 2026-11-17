@@ -192,15 +192,28 @@ func TestTemplate_ContainerCommandsAndEnv(t *testing.T) {
 	}
 }
 
-// The platform IdP's token dialect reaches every container as AE_IDP_KIND,
-// from environmentConfigs.idp.kind: the three readers of the IdP's tokens
-// must read them by the same rules aep-api does.
-func TestTemplate_IDPKindReachesEveryContainer(t *testing.T) {
+// The platform IdP's token dialect reaches every container as AE_IDP_CLAIMS_*,
+// from environmentConfigs.idp.claims: the three readers of the IdP's tokens
+// must read them by the same claim names and values aep-api does.
+func TestTemplate_IDPClaimsReachEveryContainer(t *testing.T) {
 	cs := byName(renderedContainers(t, ""))
+	want := map[string]string{
+		"AE_IDP_CLAIMS_ORG_HANDLE":          "ouHandle",
+		"AE_IDP_CLAIMS_ORG_ID":              "ouId",
+		"AE_IDP_CLAIMS_ORG_NAME":            "ouName",
+		"AE_IDP_CLAIMS_CALLER_TYPE_CLAIM":   "grant_type",
+		"AE_IDP_CLAIMS_CALLER_TYPE_MACHINE": "client_credentials",
+		"AE_IDP_CLAIMS_CALLER_TYPE_USER":    "",
+	}
 	for _, name := range []string{"ae-design-agent", "ae-collab", "ae-studio-tools"} {
-		got, ok := cs[name].env("AE_IDP_KIND")
-		if !ok || got != "thunder" {
-			t.Errorf("%s AE_IDP_KIND = %q (set %v), want thunder from environmentConfigs.idp.kind", name, got, ok)
+		for key, value := range want {
+			got, ok := cs[name].env(key)
+			if !ok || got != value {
+				t.Errorf("%s %s = %q (set %v), want %q from environmentConfigs.idp.claims", name, key, got, ok, value)
+			}
+		}
+		if _, ok := cs[name].env("AE_IDP_KIND"); ok {
+			t.Errorf("%s still gets AE_IDP_KIND", name)
 		}
 	}
 }

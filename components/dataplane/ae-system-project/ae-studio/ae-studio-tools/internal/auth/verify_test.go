@@ -34,7 +34,7 @@ import (
 )
 
 // thunderDialect reads the Thunder claims every signed test token here carries.
-var thunderDialect = dialect.ForKind(dialect.KindThunder)
+var thunderDialect = dialect.MustForTest(dialect.ThunderClaimsForTest())
 
 type keyPair struct {
 	key *rsa.PrivateKey
@@ -198,7 +198,7 @@ func TestGate_Table_Asgardeo(t *testing.T) {
 	const iss = "https://api.asgardeo.io/t/acme/oauth2/token"
 	kp := newKeyPair(t)
 	srv := kp.serveJWKS(t)
-	v := NewVerifier(iss, NewJWKSCache(srv.URL), dialect.ForKind(dialect.KindAsgardeo))
+	v := NewVerifier(iss, NewJWKSCache(srv.URL), dialect.MustForTest(dialect.AsgardeoClaimsForTest()))
 	exp := time.Now().Add(time.Hour).Unix()
 	user := func(changes map[string]any) string {
 		claims := jwt.MapClaims{"iss": iss, "aud": "aep-console-client", "azp": "aep-console-client", "client_id": "aep-console-client",

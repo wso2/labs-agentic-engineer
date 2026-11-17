@@ -50,7 +50,7 @@ func signedTokenFor(t *testing.T) (*JWKSCache, func(grantType string) string) {
 	t.Cleanup(srv.Close)
 	sign := func(grantType string) string {
 		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, WireClaims{
-			Raw: dialect.Raw{OuHandle: "acme", GrantType: grantType},
+			Raw: dialect.Raw{"ouHandle": "acme", "grant_type": grantType},
 			Sub: "entity-1", ClientID: "aep-console-client",
 			RegisteredClaims: jwt.RegisteredClaims{
 				Issuer: "thunder", Audience: jwt.ClaimStrings{"aep-console-client"},
@@ -73,7 +73,7 @@ func TestAuthenticator_UserTokensOnlyRefusesClientCredentials(t *testing.T) {
 	jwks, sign := signedTokenFor(t)
 	mw := Authenticator(Config{
 		JWKS: jwks, AllowedIssuers: []string{"thunder"}, AllowedAudiences: []string{"aep-console-client"},
-		Dialect: dialect.ForKind(dialect.KindThunder), UserTokensOnly: true,
+		Dialect: dialect.MustForTest(dialect.ThunderClaimsForTest()), UserTokensOnly: true,
 	})
 	h := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
 	call := func(tok string) *httptest.ResponseRecorder {
@@ -104,7 +104,7 @@ func TestAuthenticator_UserTokensOnlyRefusesATokenWithoutAMachineClaim(t *testin
 	jwks, sign := signedTokenFor(t)
 	h := Authenticator(Config{
 		JWKS: jwks, AllowedIssuers: []string{"thunder"}, AllowedAudiences: []string{"aep-console-client"},
-		Dialect: dialect.ForKind(dialect.KindThunder), UserTokensOnly: true,
+		Dialect: dialect.MustForTest(dialect.ThunderClaimsForTest()), UserTokensOnly: true,
 	})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/x", nil)
 	r.Header.Set("Authorization", "Bearer "+sign(""))
@@ -125,7 +125,7 @@ func TestAuthenticator_ClientCredentialsAdmittedWhenNotUserOnly(t *testing.T) {
 	jwks, sign := signedTokenFor(t)
 	h := Authenticator(Config{
 		JWKS: jwks, AllowedIssuers: []string{"thunder"}, AllowedAudiences: []string{"aep-console-client"},
-		Dialect: dialect.ForKind(dialect.KindThunder),
+		Dialect: dialect.MustForTest(dialect.ThunderClaimsForTest()),
 	})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
 	for _, grant := range []string{"client_credentials", ""} {
 		r := httptest.NewRequest(http.MethodGet, "/x", nil)
@@ -145,7 +145,7 @@ func TestAuthenticator_ReadsTheOrgThroughTheDialect(t *testing.T) {
 	var got *TokenClaims
 	h := Authenticator(Config{
 		JWKS: jwks, AllowedIssuers: []string{"thunder"}, AllowedAudiences: []string{"aep-console-client"},
-		Dialect: dialect.ForKind(dialect.KindThunder), UserTokensOnly: true,
+		Dialect: dialect.MustForTest(dialect.ThunderClaimsForTest()), UserTokensOnly: true,
 	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got = GetTokenClaims(r.Context())
 		w.WriteHeader(http.StatusOK)

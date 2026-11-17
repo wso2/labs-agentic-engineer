@@ -40,10 +40,12 @@ import (
 // Sub shadows the embedded RegisteredClaims.Subject on purpose (same tag,
 // shallower), so consumers read Sub; see TestWireClaims_SubShadowsEmbeddedSubject.
 type WireClaims struct {
-	dialect.Raw
-	Sub      string `json:"sub"`
-	Scope    string `json:"scope"`
-	ClientID string `json:"client_id"`
+	// Raw is the token's whole payload, which the dialect reads the IdP's
+	// own claims out of.
+	Raw      dialect.Raw `json:"-"`
+	Sub      string      `json:"sub"`
+	Scope    string      `json:"scope"`
+	ClientID string      `json:"client_id"`
 	// Display claims (OIDC standard), read for crediting a user's work.
 	Name       string `json:"name,omitempty"`
 	Email      string `json:"email,omitempty"`
@@ -55,6 +57,24 @@ type WireClaims struct {
 	TaskID    string `json:"taskId,omitempty"`
 	ProjectID string `json:"projectId,omitempty"`
 	jwt.RegisteredClaims
+}
+
+// UnmarshalJSON decodes the typed claims and keeps the whole payload.
+func (w *WireClaims) UnmarshalJSON(b []byte) error {
+	type typed WireClaims
+	raw, err := dialect.Decode(b, (*typed)(w))
+	if err != nil {
+		return err
+	}
+	w.Raw = raw
+	return nil
+}
+
+// MarshalJSON is UnmarshalJSON's inverse: the typed claims with Raw's laid
+// over them, so a token signed from the struct carries the IdP's claims.
+func (w WireClaims) MarshalJSON() ([]byte, error) {
+	type typed WireClaims
+	return dialect.Encode(typed(w), w.Raw)
 }
 
 // TokenClaims holds the verified claims of a JWT, with the caller's org read

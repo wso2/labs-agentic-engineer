@@ -52,8 +52,28 @@ type PublisherTokenVerifier struct {
 // audience, cross-checked against the org the dialect reads.
 type PublisherClaims struct {
 	jwt.RegisteredClaims
-	dialect.Raw
-	OrgHandle string `json:"-"`
+	// Raw is the token's whole payload, which the dialect reads the IdP's
+	// own claims out of.
+	Raw       dialect.Raw `json:"-"`
+	OrgHandle string      `json:"-"`
+}
+
+// UnmarshalJSON decodes the registered claims and keeps the whole payload.
+func (c *PublisherClaims) UnmarshalJSON(b []byte) error {
+	type typed PublisherClaims
+	raw, err := dialect.Decode(b, (*typed)(c))
+	if err != nil {
+		return err
+	}
+	c.Raw = raw
+	return nil
+}
+
+// MarshalJSON is UnmarshalJSON's inverse: the registered claims with Raw's
+// laid over them, so a token signed from the struct carries the IdP's claims.
+func (c PublisherClaims) MarshalJSON() ([]byte, error) {
+	type typed PublisherClaims
+	return dialect.Encode(typed(c), c.Raw)
 }
 
 // NewPublisherTokenVerifier returns a verifier. audiencePrefix is the
@@ -137,12 +157,11 @@ func (v *PublisherTokenVerifier) Verify(tokenString string) (*PublisherClaims, e
 	// org B's data by hand-rolling a token with a mismatched org (which
 	// would fail signature verification, but layered defense).
 	//
-	// A machine token must declare its org handle outright: aep-api
-	// registers every publisher and studio client itself and stamps the
-	// handle on it, so the user path's fallback to a name or id for legacy
-	// tokens would only widen what is accepted here.
+	// A machine token must carry its org's handle: every publisher and
+	// studio client is created under its org, whose handle the IdP stamps on
+	// its tokens.
 	org := v.dialect.Org(claims.Raw)
-	if !org.HandleDeclared {
+	if org.Handle == "" {
 		return nil, fmt.Errorf("org handle claim missing")
 	}
 	if org.Handle != orgHandle {

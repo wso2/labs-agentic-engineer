@@ -17,102 +17,116 @@
  */
 
 /**
- * The platform IdP's token dialect: the claim names and rules one IdP kind
- * uses to say who a caller is. The verifier reads a token's org and whether
- * it is a machine's through the dialect; nothing else in the pod reads a
- * claim by its IdP-specific name. The TypeScript twin of ae-studio-tools'
- * `internal/auth/dialect` (and of aep-api's), kept in step by hand.
+ * The platform IdP's token dialect: the claim names and values one IdP uses
+ * to say who a caller is. The verifier reads a token's org and whether it is
+ * a machine's through the dialect; nothing else in the pod reads one of those
+ * claims by its IdP-specific name. The TypeScript twin of ae-studio-tools'
+ * `internal/auth/dialect` (and of aep-api's), pinned to both by the sample
+ * tokens in `test/fixtures/idp-claims`, which all of them are tested against.
+ *
+ * The names and values are settings (`AE_IDP_CLAIMS_*`, the ones aep-api
+ * reads its own tokens by). This module knows no IdP. Claims a standard names
+ * (`sub`, `aud`, `iss`, `exp`, `client_id`, `name`, `email`) are not the
+ * dialect's: the verifier reads them by their standard names.
  */
 
 import type { JWTPayload } from "jose";
 
-/** The platform IdP kinds this build reads tokens of. */
-export type DialectKind = "thunder" | "asgardeo";
+/**
+ * What the platform IdP calls the two things no standard defines: the
+ * caller's org, and whether a token was issued to a machine or to a user.
+ * Each claim is a top-level text claim of the token. `orgName` and
+ * `callerTypeUser` are optional, `""` when not configured.
+ */
+export interface IdpClaims {
+  /** The names of the claims that carry the caller's org: its handle, the IdP's id for it, a display name. */
+  orgHandle: string;
+  orgId: string;
+  orgName: string;
+  /** The name of the claim that says who a token was issued to. */
+  callerTypeClaim: string;
+  /** The value of that claim that means a machine. */
+  callerTypeMachine: string;
+  /**
+   * The value that means a user. When set, only those two values are
+   * accepted; when `""`, any value other than the machine's is a user's.
+   */
+  callerTypeUser: string;
+}
+
+/** The mandatory settings, by env key: a dialect cannot work without them. */
+const REQUIRED: readonly (readonly [keyof IdpClaims, string])[] = [
+  ["orgHandle", "AE_IDP_CLAIMS_ORG_HANDLE"],
+  ["orgId", "AE_IDP_CLAIMS_ORG_ID"],
+  ["callerTypeClaim", "AE_IDP_CLAIMS_CALLER_TYPE_CLAIM"],
+  ["callerTypeMachine", "AE_IDP_CLAIMS_CALLER_TYPE_MACHINE"],
+];
 
 /**
- * Reads the configured kind (`AE_IDP_KIND`). Empty is thunder, the default a
- * Thunder install never has to set; an unknown value throws, so a pod naming
- * a kind this build does not know fails at boot rather than running on
- * another kind's rules.
+ * Reads the pod's claim settings (`AE_IDP_CLAIMS_*`), trimmed. `problems`
+ * names each mandatory key that is missing, in the pod config's own wording
+ * (`missing KEY`); there are no defaults, since the pod knows no IdP.
  */
-export function parseDialectKind(value: string | undefined): DialectKind {
-  const kind = (value ?? "").trim().toLowerCase();
-  if (kind === "" || kind === "thunder") return "thunder";
-  if (kind === "asgardeo") return "asgardeo";
-  throw new Error(`unknown platform IdP kind "${value}" (supported: thunder, asgardeo)`);
+export function readIdpClaims(env: Readonly<Record<string, string | undefined>>): { claims: IdpClaims; problems: string[] } {
+  const get = (key: string): string => env[key]?.trim() ?? "";
+  const claims: IdpClaims = {
+    orgHandle: get("AE_IDP_CLAIMS_ORG_HANDLE"),
+    orgId: get("AE_IDP_CLAIMS_ORG_ID"),
+    orgName: get("AE_IDP_CLAIMS_ORG_NAME"),
+    callerTypeClaim: get("AE_IDP_CLAIMS_CALLER_TYPE_CLAIM"),
+    callerTypeMachine: get("AE_IDP_CLAIMS_CALLER_TYPE_MACHINE"),
+    callerTypeUser: get("AE_IDP_CLAIMS_CALLER_TYPE_USER"),
+  };
+  const problems = REQUIRED.filter(([field]) => claims[field] === "").map(([, key]) => `missing ${key}`);
+  return { claims, problems };
 }
 
 /**
- * The caller's organization as the dialect reads it. `handle` is the name
- * the platform knows the org by, `id` the IdP's own id for it, `name` a
- * display name; each is `""` when the token carries no such claim.
- * `handleDeclared` is true when `handle` came from the handle claim itself
- * (Thunder: `ouHandle`; Asgardeo: `org_handle`), false when it was filled
- * from a fallback (Thunder's `ouName`, `ouId`) or is empty. The pod's rules
- * require the declared handle.
+ * The caller's organization as the dialect reads it. `handle` is the handle
+ * the IdP knows the org by, `id` the IdP's own id for it, `name` a display
+ * name; each is `""` when the token carries no such claim. The handle comes
+ * from the one handle claim: nothing stands in for it.
  */
 export interface OrgIdentity {
   handle: string;
   id: string;
   name: string;
-  handleDeclared: boolean;
 }
 
 /** The dialect's two questions about a verified payload. */
 export interface Dialect {
-  readonly kind: DialectKind;
   org(payload: JWTPayload): OrgIdentity;
   /** `true` for a machine's token, `false` for a user's, `undefined` when the token does not say in a way the dialect knows. */
   machine(payload: JWTPayload): boolean | undefined;
 }
 
+/** A claim's value when it is text, else `""`: the dialect's claims are text claims. */
 const str = (value: unknown): string => (typeof value === "string" ? value : "");
 
 /**
- * ThunderID: the org is an organization unit carried as ouHandle / ouName /
- * ouId (the handle falls back to the name, then the id, as on aep-api's user
- * edge), and every token says its grant in grant_type; client_credentials is
- * a machine's.
+ * The dialect of `claims`. A mandatory name or value left empty throws,
+ * naming it: a dialect that could not find the org or tell a machine from a
+ * user must not run.
  */
-const thunder: Dialect = {
-  kind: "thunder",
-  org(payload) {
-    const ouHandle = str(payload["ouHandle"]);
-    const ouName = str(payload["ouName"]);
-    const ouId = str(payload["ouId"]);
-    return { handle: ouHandle || ouName || ouId, id: ouId, name: ouName, handleDeclared: ouHandle !== "" };
-  },
-  machine(payload) {
-    const grant = str(payload["grant_type"]);
-    if (grant === "") return undefined;
-    return grant === "client_credentials";
-  },
-};
-
-/**
- * Asgardeo: the org is the tenant's organization carried as org_handle /
- * org_id / org_name, with no fallback for the handle (every token carries
- * it), and every token says who it was issued to in aut. aut has two values:
- * APPLICATION is a machine's, APPLICATION_USER a user's, and with only two to
- * know, any other value is placed as neither rather than taken for a user's.
- */
-const asgardeo: Dialect = {
-  kind: "asgardeo",
-  org(payload) {
-    const handle = str(payload["org_handle"]);
-    return { handle, id: str(payload["org_id"]), name: str(payload["org_name"]), handleDeclared: handle !== "" };
-  },
-  machine(payload) {
-    const aut = str(payload["aut"]);
-    if (aut === "APPLICATION") return true;
-    if (aut === "APPLICATION_USER") return false;
-    return undefined;
-  },
-};
-
-const DIALECTS: Record<DialectKind, Dialect> = { thunder, asgardeo };
-
-/** The dialect of a parsed kind. */
-export function dialectFor(kind: DialectKind): Dialect {
-  return DIALECTS[kind];
+export function createDialect(claims: IdpClaims): Dialect {
+  const missing = REQUIRED.filter(([field]) => claims[field].trim() === "").map(([field]) => field);
+  if (missing.length > 0) throw new Error(`the platform IdP's claims are incomplete: ${missing.join(", ")} not set`);
+  return {
+    org(payload) {
+      return {
+        handle: str(payload[claims.orgHandle]),
+        id: str(payload[claims.orgId]),
+        name: claims.orgName === "" ? "" : str(payload[claims.orgName]),
+      };
+    },
+    machine(payload) {
+      const value = str(payload[claims.callerTypeClaim]);
+      if (value === "") return undefined;
+      if (value === claims.callerTypeMachine) return true;
+      // With a user value configured, a third value is refused rather than
+      // taken for a user's; with none, any other value is a user's.
+      if (claims.callerTypeUser === "" || value === claims.callerTypeUser) return false;
+      return undefined;
+    },
+  };
 }

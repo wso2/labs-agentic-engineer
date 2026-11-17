@@ -22,6 +22,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wso2/aep/aep-api/internal/platform/auth/dialect"
 )
 
 var validKey = base64.StdEncoding.EncodeToString(make([]byte, 32))
@@ -33,6 +35,7 @@ func validConfig() Config {
 		CredentialEncryptionKey: validKey,
 		JWKSURL:                 "https://thunder.example/oauth2/jwks",
 		PlatformIDP: PlatformIDPDefaults{
+			Claims:             dialect.AsgardeoClaimsForTest(),
 			OrgHandle:          "acmecorp",
 			OrgNamespace:       "default",
 			OrgPublisherSecret: "p",
@@ -79,42 +82,30 @@ func TestConfigValidate_RequiredFields(t *testing.T) {
 			t.Fatal("Validate() = nil, want error for empty JWKS_URL")
 		}
 	})
-	// The platform IdP kind names the token dialect every verifier reads by.
-	// Empty is thunder; a kind this build does not know is a boot error, never
-	// a fall-through to another kind's rules.
-	t.Run("PLATFORM_IDP_KIND", func(t *testing.T) {
-		for _, kind := range []string{"", "thunder"} {
+	// The platform IdP's own claims are the token dialect every verifier
+	// reads by. aep-api knows no IdP, so the four mandatory names and values
+	// have no default: an install missing one fails at boot, naming it.
+	t.Run("PLATFORM_IDP_CLAIMS_*", func(t *testing.T) {
+		if err := validConfig().Validate(); err != nil {
+			t.Fatalf("all set: Validate() = %v, want nil", err)
+		}
+		for setting, unset := range map[string]func(*Config){
+			"PLATFORM_IDP_CLAIMS_ORG_HANDLE":          func(c *Config) { c.PlatformIDP.Claims.OrgHandle = "" },
+			"PLATFORM_IDP_CLAIMS_ORG_ID":              func(c *Config) { c.PlatformIDP.Claims.OrgID = "" },
+			"PLATFORM_IDP_CLAIMS_CALLER_TYPE_CLAIM":   func(c *Config) { c.PlatformIDP.Claims.CallerType = "" },
+			"PLATFORM_IDP_CLAIMS_CALLER_TYPE_MACHINE": func(c *Config) { c.PlatformIDP.Claims.Machine = " " },
+		} {
 			c := validConfig()
-			c.PlatformIDP.Kind = kind
-			c.AEStudio.IDP.Kind = kind
-			if err := c.Validate(); err != nil {
-				t.Fatalf("kind %q: Validate() = %v, want nil", kind, err)
+			unset(&c)
+			if err := c.Validate(); err == nil || !strings.Contains(err.Error(), setting) {
+				t.Fatalf("Validate() = %v, want an error naming %s", err, setting)
 			}
 		}
+		// The org's display name claim and the user value are optional.
 		c := validConfig()
-		c.PlatformIDP.Kind = "asgardeo"
-		c.AEStudio.IDP.Kind = "asgardeo"
+		c.PlatformIDP.Claims.OrgName, c.PlatformIDP.Claims.User = "", ""
 		if err := c.Validate(); err != nil {
-			t.Fatalf("kind asgardeo: Validate() = %v, want nil", err)
-		}
-		c = validConfig()
-		c.PlatformIDP.Kind = "okta"
-		if err := c.Validate(); err == nil {
-			t.Fatal("Validate() = nil, want error for a kind this build does not know")
-		}
-		// The pod's kind must be the platform's: the pod reads the same
-		// IdP's tokens.
-		c = validConfig()
-		c.PlatformIDP.Kind = "thunder"
-		c.AEStudio.IDP.Kind = "asgardeo"
-		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "AE_STUDIO_IDP_KIND") {
-			t.Fatalf("Validate() = %v, want an error naming AE_STUDIO_IDP_KIND for a kind other than the platform's", err)
-		}
-		// The kind shipped to every org's pod is checked by the same rule.
-		c = validConfig()
-		c.AEStudio.IDP.Kind = "okta"
-		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "AE_STUDIO_IDP_KIND") {
-			t.Fatalf("Validate() = %v, want an error naming AE_STUDIO_IDP_KIND", err)
+			t.Fatalf("without the optional claims: Validate() = %v, want nil", err)
 		}
 	})
 	// An install serves one org, on every IdP: the org's handle in the tokens,
@@ -128,25 +119,18 @@ func TestConfigValidate_RequiredFields(t *testing.T) {
 			"PLATFORM_IDP_ORG_PUBLISHER_SECRET": func(c *Config) { c.PlatformIDP.OrgPublisherSecret = "" },
 			"PLATFORM_IDP_ORG_STUDIO_SECRET":    func(c *Config) { c.PlatformIDP.OrgStudioSecret = "" },
 		} {
-			for _, kind := range []string{"", "thunder", "asgardeo"} {
-				t.Run(setting+" under kind "+kind, func(t *testing.T) {
-					c := validConfig()
-					c.PlatformIDP.Kind = kind
-					c.AEStudio.IDP.Kind = kind
-					if err := c.Validate(); err != nil {
-						t.Fatalf("all four set: Validate() = %v, want nil", err)
-					}
-					unset(&c)
-					err := c.Validate()
-					if err == nil || !strings.Contains(err.Error(), setting) {
-						t.Fatalf("Validate() = %v, want an error naming %s", err, setting)
-					}
-					// The message names the setting, never a value.
-					if strings.Contains(err.Error(), "acmecorp") {
-						t.Fatalf("the error carries a setting's value: %v", err)
-					}
-				})
-			}
+			t.Run(setting, func(t *testing.T) {
+				c := validConfig()
+				unset(&c)
+				err := c.Validate()
+				if err == nil || !strings.Contains(err.Error(), setting) {
+					t.Fatalf("Validate() = %v, want an error naming %s", err, setting)
+				}
+				// The message names the setting, never a value.
+				if strings.Contains(err.Error(), "acmecorp") {
+					t.Fatalf("the error carries a setting's value: %v", err)
+				}
+			})
 		}
 	})
 }
@@ -268,6 +252,7 @@ func setRequiredLoadEnv(t *testing.T) {
 	t.Setenv("PLATFORM_API_SERVICE_BASE_URL", "https://platform-api.example")
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/aep")
 	t.Setenv("JWKS_URL", "https://thunder.example/oauth2/jwks")
+	setIDPClaimsEnv(t)
 	t.Setenv("PLATFORM_IDP_ORG_HANDLE", "acmecorp")
 	t.Setenv("PLATFORM_IDP_ORG_NAMESPACE", "default")
 	t.Setenv("PLATFORM_IDP_ORG_PUBLISHER_SECRET", "p")
@@ -390,4 +375,16 @@ func TestLoad_CodingAgentDeadlines(t *testing.T) {
 			}
 		}
 	}
+}
+
+// setIDPClaimsEnv sets the platform IdP's claim settings (an Asgardeo
+// organization's), which Load requires and has no defaults for.
+func setIDPClaimsEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("PLATFORM_IDP_CLAIMS_ORG_HANDLE", "org_handle")
+	t.Setenv("PLATFORM_IDP_CLAIMS_ORG_ID", "org_id")
+	t.Setenv("PLATFORM_IDP_CLAIMS_ORG_NAME", "org_name")
+	t.Setenv("PLATFORM_IDP_CLAIMS_CALLER_TYPE_CLAIM", "aut")
+	t.Setenv("PLATFORM_IDP_CLAIMS_CALLER_TYPE_MACHINE", "APPLICATION")
+	t.Setenv("PLATFORM_IDP_CLAIMS_CALLER_TYPE_USER", "APPLICATION_USER")
 }

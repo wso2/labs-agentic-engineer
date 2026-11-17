@@ -25,15 +25,15 @@
  * apart (`shared/connection-env.ts`): the pod boots without a key.
  */
 
-import { parseDialectKind, type DialectKind } from "@aep/platform-idp-auth";
+import { readIdpClaims, type IdpClaims } from "@aep/platform-idp-auth";
 
 export interface PodConfig {
   orgId: string;
   orgHandle: string;
   issuer: string;
   jwksUrl: string;
-  /** `AE_IDP_KIND`: the platform IdP's token dialect (optional, thunder when unset). */
-  idpKind: DialectKind;
+  /** `AE_IDP_CLAIMS_*`: the platform IdP's own claim names and values, its token dialect. */
+  idpClaims: IdpClaims;
   userAudiences: string[];
   listenPort: number;
   healthPort: number;
@@ -86,14 +86,10 @@ export function loadPodConfig(env: Env): PodConfig | null {
     .map((a) => a.trim())
     .filter((a) => a !== "");
   if (userAudiences.length === 0) problems.push("missing AE_USER_AUDIENCES");
-  // Optional: empty is thunder. A kind this build does not know is a boot
-  // error, never a fall-through to another kind's rules.
-  let idpKind: DialectKind = "thunder";
-  try {
-    idpKind = parseDialectKind(env.AE_IDP_KIND);
-  } catch {
-    problems.push("invalid AE_IDP_KIND");
-  }
+  // The pod knows no IdP: the mandatory claim names and values have no
+  // default, and each one missing is named.
+  const idp = readIdpClaims(env);
+  problems.push(...idp.problems);
   const mcpSocket = required("AE_MCP_SOCKET");
   const turnSocket = required("AE_TURN_SOCKET");
   const roomSocket = required("AE_ROOM_SOCKET");
@@ -106,7 +102,7 @@ export function loadPodConfig(env: Env): PodConfig | null {
     orgHandle,
     issuer,
     jwksUrl,
-    idpKind,
+    idpClaims: idp.claims,
     userAudiences,
     listenPort,
     healthPort,

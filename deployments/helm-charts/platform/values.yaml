@@ -261,12 +261,35 @@ idp:
   #   imported  the IdP's admin created them and stored their secrets; the
   #             chart renders none of the above.
   clients: "thunder"
-  # The platform IdP's token dialect: the claim names and rules every reader
-  # of its tokens uses to say who the caller is. One value reaches aep-api
-  # (PLATFORM_IDP_KIND), every org's AE Studio pod (AE_STUDIO_IDP_KIND, then
-  # AE_IDP_KIND) and the console (VITE_IDP_KIND): `thunder` or `asgardeo`.
-  # `aectl` sets it from its idp.kind config.
-  kind: "thunder"
+  # The IdP's token dialect: the names and values of the claims that say
+  # which org a caller belongs to and whether a token was issued to a machine
+  # or to a user. No standard defines these, so each IdP has its own; claims
+  # a standard names (sub, aud, client_id, ...) are read by those names and
+  # are not set here. Each is a top-level text claim of the token. The values
+  # reach aep-api (PLATFORM_IDP_CLAIMS_*), every org's AE Studio pod
+  # (AE_IDP_CLAIMS_*) and, for the org's handle, the console
+  # (VITE_IDP_CLAIMS_ORG_HANDLE). None of them knows an IdP: `aectl` sets the
+  # values from its idp.claims config, and the defaults here are ThunderID's.
+  claims:
+    org:
+      # The claim that carries the handle the IdP knows the caller's org by.
+      # Required.
+      handle: "ouHandle"
+      # The claim that carries the IdP's own id for that org, a UUID.
+      # Required.
+      id: "ouId"
+      # The claim that carries a display name for the org. Optional.
+      name: "ouName"
+    callerType:
+      # The claim that says who a token was issued to. Required.
+      claim: "grant_type"
+      # Its value that means a machine. Required.
+      machine: "client_credentials"
+      # Its value that means a user. Optional: when set, only this value and
+      # the machine's are accepted and any other is refused; when empty, any
+      # value other than the machine's is read as a user's (ThunderID has
+      # several user grants).
+      user: ""
   # The one org the IdP serves. orgHandle is the handle the IdP's tokens name
   # the org by (a ThunderID organization unit's handle, an Asgardeo
   # organization's handle), orgNamespace the org's OpenChoreo namespace.

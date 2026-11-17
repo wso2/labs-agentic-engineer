@@ -20,4 +20,4 @@ import "github.com/wso2/aep/aep-api/internal/platform/auth/dialect"
 
 // thunderDialect reads the Thunder claims every signed test token in this
 // package carries.
-func thunderDialect() dialect.Dialect { return dialect.ForKind(dialect.KindThunder) }
+func thunderDialect() dialect.Dialect { return dialect.MustForTest(dialect.ThunderClaimsForTest()) }

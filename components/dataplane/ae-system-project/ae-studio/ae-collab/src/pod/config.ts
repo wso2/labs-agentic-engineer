@@ -29,7 +29,7 @@
 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseDialectKind, type DialectKind } from "@aep/platform-idp-auth";
+import { readIdpClaims, type IdpClaims } from "@aep/platform-idp-auth";
 
 /** What the listeners need, in pod and in dev mode alike. */
 export interface ListenerConfig {
@@ -49,8 +49,8 @@ export interface PodConfig extends ListenerConfig {
   orgHandle: string;
   issuer: string;
   jwksUrl: string;
-  /** `AE_IDP_KIND`: the platform IdP's token dialect (optional, thunder when unset). */
-  idpKind: DialectKind;
+  /** `AE_IDP_CLAIMS_*`: the platform IdP's own claim names and values, its token dialect. */
+  idpClaims: IdpClaims;
   userAudiences: string[];
   /** ae-studio-tools' Files socket: spec content and commits, no token. */
   filesSocket: string;
@@ -97,14 +97,10 @@ export function loadPodConfig(env: Env): PodConfig | null {
   const issuer = required("AE_IDP_ISSUER");
   const jwksUrl = required("AE_IDP_JWKS_URL");
   const userAudiences = requiredList("AE_USER_AUDIENCES");
-  // Optional: empty is thunder. A kind this build does not know is a boot
-  // error, never a fall-through to another kind's rules.
-  let idpKind: DialectKind = "thunder";
-  try {
-    idpKind = parseDialectKind(env.AE_IDP_KIND);
-  } catch {
-    problems.push("invalid AE_IDP_KIND");
-  }
+  // The pod knows no IdP: the mandatory claim names and values have no
+  // default, and each one missing is named.
+  const idp = readIdpClaims(env);
+  problems.push(...idp.problems);
   const allowedOrigins = requiredList("AE_ALLOWED_ORIGINS");
   // A listed value that is not a bare origin never equals an Origin header:
   // fail loudly instead of refusing every browser in silence.
@@ -119,7 +115,7 @@ export function loadPodConfig(env: Env): PodConfig | null {
     orgHandle,
     issuer,
     jwksUrl,
-    idpKind,
+    idpClaims: idp.claims,
     userAudiences,
     allowedOrigins,
     filesSocket,

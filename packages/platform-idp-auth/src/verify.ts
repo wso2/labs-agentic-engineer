@@ -27,7 +27,7 @@
 
 import { createRemoteJWKSet, errors, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from "jose";
 
-import { dialectFor, type Dialect, type DialectKind, type OrgIdentity } from "./dialect.js";
+import { createDialect, type Dialect, type IdpClaims, type OrgIdentity } from "./dialect.js";
 
 /** A token kind and the audiences that name it. Kinds are wiring, never request input. */
 export interface TokenKind {
@@ -85,7 +85,8 @@ const OPTIONAL_STRING_CLAIMS = ["sub", "client_id", "name", "given_name", "famil
 
 /**
  * Returns `verify(token, kinds)` for tokens issued by exactly `issuer` and
- * read by the dialect of `kind` (thunder when unset). The token must name its
+ * read by the dialect of `claims`, the IdP's own claim names and values (an
+ * incomplete set throws). The token must name its
  * key (`kid`). A `user` token needs a non-empty `sub` and is a user's by the
  * dialect; an `ae-studio` token is a machine's by the dialect whose
  * `client_id` is one of that kind's audiences. A token the dialect cannot
@@ -97,12 +98,12 @@ const OPTIONAL_STRING_CLAIMS = ["sub", "client_id", "name", "given_name", "famil
 export function createVerifier(opts: {
   issuer: string;
   jwksUrl: string;
-  kind?: DialectKind;
+  claims: IdpClaims;
   jwks?: JWTVerifyGetKey;
 }): (token: string, kinds: TokenKind[]) => Promise<VerifiedToken> {
   if (!opts.issuer) throw new Error("createVerifier: issuer is required");
   if (!opts.jwksUrl) throw new Error("createVerifier: jwksUrl is required");
-  const dialect = dialectFor(opts.kind ?? "thunder");
+  const dialect = createDialect(opts.claims);
   const keys =
     opts.jwks ??
     createRemoteJWKSet(new URL(opts.jwksUrl), {

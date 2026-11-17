@@ -30,6 +30,11 @@ function podEnv(over: Record<string, string> = {}): Record<string, string> {
     AE_IDP_ISSUER: "http://thunder.test",
     AE_IDP_JWKS_URL: "http://unused",
     AE_USER_AUDIENCES: "aep-console-client",
+    AE_IDP_CLAIMS_ORG_HANDLE: "ouHandle",
+    AE_IDP_CLAIMS_ORG_ID: "ouId",
+    AE_IDP_CLAIMS_ORG_NAME: "ouName",
+    AE_IDP_CLAIMS_CALLER_TYPE_CLAIM: "grant_type",
+    AE_IDP_CLAIMS_CALLER_TYPE_MACHINE: "client_credentials",
     AE_MCP_SOCKET: "/run/ae/mcp/mcp.sock",
     AE_TURN_SOCKET: "/run/ae/mcp/turn.sock",
     AE_ROOM_SOCKET: "/run/ae/room/room.sock",
@@ -121,7 +126,7 @@ test("pod config: defaults, lists, and the secret revisions", () => {
     orgHandle: "default",
     issuer: "http://thunder.test",
     jwksUrl: "http://unused",
-    idpKind: "thunder",
+    idpClaims: { orgHandle: "ouHandle", orgId: "ouId", orgName: "ouName", callerTypeClaim: "grant_type", callerTypeMachine: "client_credentials", callerTypeUser: "" },
     userAudiences: ["aep-console-client", "other"],
     listenPort: 8080,
     healthPort: 9080,
@@ -137,15 +142,14 @@ test("pod config: defaults, lists, and the secret revisions", () => {
 test("pod config: AE_ORG_ID without the rest of the pod env fails, naming every missing key", () => {
   assert.throws(
     () => loadPodConfig({ AE_ORG_ID: "ou-1" }),
-    /missing AE_ORG_HANDLE, missing AE_IDP_ISSUER, missing AE_IDP_JWKS_URL, missing AE_USER_AUDIENCES, missing AE_MCP_SOCKET, missing AE_TURN_SOCKET, missing AE_ROOM_SOCKET, missing AE_SNAPSHOTS_DIR/,
+    /missing AE_ORG_HANDLE, missing AE_IDP_ISSUER, missing AE_IDP_JWKS_URL, missing AE_USER_AUDIENCES, missing AE_IDP_CLAIMS_ORG_HANDLE, missing AE_IDP_CLAIMS_ORG_ID, missing AE_IDP_CLAIMS_CALLER_TYPE_CLAIM, missing AE_IDP_CLAIMS_CALLER_TYPE_MACHINE, missing AE_MCP_SOCKET, missing AE_TURN_SOCKET, missing AE_ROOM_SOCKET, missing AE_SNAPSHOTS_DIR/,
   );
   assert.throws(() => loadPodConfig(podEnv({ AE_USER_AUDIENCES: " , " })), /missing AE_USER_AUDIENCES/);
   assert.throws(() => loadPodConfig(podEnv({ AE_LISTEN_PORT: "http" })), /invalid AE_LISTEN_PORT/);
   assert.throws(() => loadPodConfig(podEnv({ AE_HEALTH_PORT: "70000" })), /invalid AE_HEALTH_PORT/);
-  // A platform IdP kind this build does not know is a boot error, never thunder by accident.
-  assert.throws(() => loadPodConfig(podEnv({ AE_IDP_KIND: "okta" })), /invalid AE_IDP_KIND/);
-  assert.equal(loadPodConfig(podEnv({ AE_IDP_KIND: "thunder" }))?.idpKind, "thunder");
-  assert.equal(loadPodConfig(podEnv({ AE_IDP_KIND: "asgardeo" }))?.idpKind, "asgardeo");
+  // The platform IdP's claim names have no default; the user value is optional.
+  assert.throws(() => loadPodConfig(podEnv({ AE_IDP_CLAIMS_ORG_ID: " " })), /missing AE_IDP_CLAIMS_ORG_ID/);
+  assert.equal(loadPodConfig(podEnv({ AE_IDP_CLAIMS_CALLER_TYPE_USER: "authorization_code" }))?.idpClaims.callerTypeUser, "authorization_code");
 });
 
 test("pod mode refuses to start on a stale secret rev", async () => {

@@ -242,6 +242,8 @@ func platformUpdate(ctx context.Context, cfg platformUpdateConfig) error {
 		}
 		cfg.IDP = idp
 	}
+	ui.Detail(fmt.Sprintf("Platform IdP claims (preset %s):", cfg.IDP.Claims.Preset))
+	printPlatformIDPClaims(cfg.IDP.Claims)
 
 	helmArgs, err := helmUpgradeArgs(cfg)
 	if err != nil {

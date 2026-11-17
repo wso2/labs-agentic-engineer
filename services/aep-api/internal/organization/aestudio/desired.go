@@ -100,11 +100,11 @@ type envConfigs struct {
 	ListenerName     string   `json:"listenerName"`
 	ConsoleOrigins   []string `json:"consoleOrigins"`
 	IDP              struct {
-		Issuer        string   `json:"issuer"`
-		JWKSURL       string   `json:"jwksUrl"`
-		TokenURL      string   `json:"tokenUrl"`
-		Kind          string   `json:"kind"`
-		UserAudiences []string `json:"userAudiences"`
+		Issuer        string    `json:"issuer"`
+		JWKSURL       string    `json:"jwksUrl"`
+		TokenURL      string    `json:"tokenUrl"`
+		Claims        idpClaims `json:"claims"`
+		UserAudiences []string  `json:"userAudiences"`
 	} `json:"idp"`
 	AEPAPIBaseURL    string `json:"aepApiBaseUrl"`
 	AEOnlyClientID   string `json:"aeOnlyClientId"`
@@ -372,6 +372,17 @@ func (s *Service) githubConnection(ctx context.Context, org string) (login strin
 	return p.GitHubLogin, p.Status == organization.CredentialStatusActive, nil
 }
 
+// idpClaims is the RT's environmentConfigs.idp.claims: the names and values of
+// the IdP's own claims, which the pod's containers read tokens by.
+type idpClaims struct {
+	OrgHandle         string `json:"orgHandle"`
+	OrgID             string `json:"orgId"`
+	OrgName           string `json:"orgName"`
+	CallerTypeClaim   string `json:"callerTypeClaim"`
+	CallerTypeMachine string `json:"callerTypeMachine"`
+	CallerTypeUser    string `json:"callerTypeUser"`
+}
+
 // envConfigsOf maps the install config onto the RT's environmentConfigs.
 func envConfigsOf(cfg config.AEStudioConfig) envConfigs {
 	var e envConfigs
@@ -383,7 +394,14 @@ func envConfigsOf(cfg config.AEStudioConfig) envConfigs {
 	e.IDP.Issuer = cfg.IDP.Issuer
 	e.IDP.JWKSURL = cfg.IDP.JWKSURL
 	e.IDP.TokenURL = cfg.IDP.TokenURL
-	e.IDP.Kind = cfg.IDP.Kind
+	e.IDP.Claims = idpClaims{
+		OrgHandle:         cfg.IDP.Claims.OrgHandle,
+		OrgID:             cfg.IDP.Claims.OrgID,
+		OrgName:           cfg.IDP.Claims.OrgName,
+		CallerTypeClaim:   cfg.IDP.Claims.CallerType,
+		CallerTypeMachine: cfg.IDP.Claims.Machine,
+		CallerTypeUser:    cfg.IDP.Claims.User,
+	}
 	e.IDP.UserAudiences = cfg.IDP.UserAudiences
 	e.AEPAPIBaseURL = cfg.AEPAPIBaseURL
 	e.AEOnlyClientID = cfg.InternalClientID

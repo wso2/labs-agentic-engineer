@@ -22,22 +22,19 @@ import { orgRule, userRule } from "../src/index.js";
 
 const pod = { orgId: "ou-1", orgHandle: "default" };
 
-/** An org as the dialect reads it; `declared` false means the handle came from a fallback claim. */
-const org = (id: string, handle: string, declared = true) => ({ id, handle, name: "", handleDeclared: declared });
+/** An org as the dialect reads it. */
+const org = (id: string, handle: string) => ({ id, handle, name: "" });
 
-test("userRule: the org's id and its declared handle must both equal the pod's", () => {
+test("userRule: the org's id and its handle must both equal the pod's", () => {
   assert.equal(userRule({ sub: "u", exp: 1, org: org("ou-1", "default") }, pod), true);
   assert.equal(userRule({ sub: "u", exp: 1, org: org("ou-2", "default") }, pod), false);
   assert.equal(userRule({ sub: "u", exp: 1, org: org("ou-1", "other") }, pod), false);
   assert.equal(userRule({ sub: "u", exp: 1, org: org("ou-1", "") }, pod), false);
   assert.equal(userRule({ sub: "u", exp: 1, org: org("", "default") }, pod), false);
-  // The handle filled in from a name or id is not a declared handle: the
-  // fallback serves aep-api's user edge for legacy tokens, never the pod.
-  assert.equal(userRule({ sub: "u", exp: 1, org: org("ou-1", "default", false) }, pod), false);
 });
 
 test("userRule: an empty pod org fails closed", () => {
-  const claims = { sub: "u", exp: 1, org: org("", "", false) };
+  const claims = { sub: "u", exp: 1, org: org("", "") };
   assert.throws(() => userRule(claims, { orgId: "", orgHandle: "default" }), /orgId/);
   assert.throws(() => userRule(claims, { orgId: "ou-1", orgHandle: "" }), /orgHandle/);
 });
@@ -47,9 +44,8 @@ test("orgRule: the org check alone, for any verified token kind", () => {
   assert.equal(orgRule({ exp: 1, org: org("ou-1", "default") }, pod), true);
   assert.equal(orgRule({ exp: 1, org: org("ou-2", "default") }, pod), false);
   assert.equal(orgRule({ exp: 1, org: org("ou-1", "other") }, pod), false);
-  assert.equal(orgRule({ exp: 1, org: org("ou-1", "default", false) }, pod), false);
-  assert.throws(() => orgRule({ exp: 1, org: org("", "", false) }, { orgId: "", orgHandle: "default" }), /orgId/);
-  assert.throws(() => orgRule({ exp: 1, org: org("", "", false) }, { orgId: "ou-1", orgHandle: "" }), /orgHandle/);
+  assert.throws(() => orgRule({ exp: 1, org: org("", "") }, { orgId: "", orgHandle: "default" }), /orgId/);
+  assert.throws(() => orgRule({ exp: 1, org: org("", "") }, { orgId: "ou-1", orgHandle: "" }), /orgHandle/);
 });
 
 test("userRule: the org rule plus a subject", () => {

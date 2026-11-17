@@ -37,14 +37,14 @@ var testAsgardeoIDP = func() platformIDP {
 		JWKSURL:  "https://api.asgardeo.io/t/acmecorp/oauth2/jwks",
 		TokenURL: "https://api.asgardeo.io/t/acmecorp/oauth2/token",
 	}
-	return platformIDP{Clients: "imported", Kind: "asgardeo", Public: pub, InCluster: pub, OrgHandle: "acmecorp", OrgNamespace: "default"}
+	return platformIDP{Clients: "imported", Claims: presetClaims("asgardeo"), Public: pub, InCluster: pub, OrgHandle: "acmecorp", OrgNamespace: "default"}
 }()
 
 func setAsgardeoConfig(t *testing.T) {
 	t.Helper()
 	t.Cleanup(viper.Reset)
 	viper.Set("idp.clients", "imported")
-	viper.Set("idp.kind", "asgardeo")
+	viper.Set("idp.claims.preset", "asgardeo")
 	viper.Set("idp.issuer", "https://api.asgardeo.io/t/acmecorp/oauth2/token")
 	viper.Set("idp.org_handle", "acmecorp")
 	viper.Set("oc.api_url", "http://api.openchoreo.localhost:8080")
@@ -76,7 +76,7 @@ func TestDiscoverPlatformIDP_Asgardeo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if idp.Kind != "asgardeo" || idp.Public.Issuer != issuer || idp.Public.JWKSURL != srv.URL+"/t/acmecorp/oauth2/jwks" {
+	if idp.Claims.Preset != "asgardeo" || idp.Claims.Claims().OrgHandle != "org_handle" || idp.Public.Issuer != issuer || idp.Public.JWKSURL != srv.URL+"/t/acmecorp/oauth2/jwks" {
 		t.Fatalf("public: %+v", idp)
 	}
 	if idp.InCluster != idp.Public {
@@ -97,7 +97,12 @@ func TestPlatformIDPOverrides_Asgardeo(t *testing.T) {
 	got := strings.Join(platformIDPOverrides(testAsgardeoIDP), " ")
 	for _, want := range []string{
 		"--set idp.clients=imported",
-		"--set idp.kind=asgardeo",
+		"--set idp.claims.org.handle=org_handle",
+		"--set idp.claims.org.id=org_id",
+		"--set idp.claims.org.name=org_name",
+		"--set idp.claims.callerType.claim=aut",
+		"--set idp.claims.callerType.machine=APPLICATION",
+		"--set idp.claims.callerType.user=APPLICATION_USER",
 		"--set idp.orgHandle=acmecorp",
 		"--set idp.orgNamespace=default",
 		"--set idp.jwksURL=https://api.asgardeo.io/t/acmecorp/oauth2/jwks",
@@ -166,7 +171,7 @@ func TestAEStudioExtraEgress_AsgardeoOpensNoIDPNamespace(t *testing.T) {
 // What the vault holds by kind. On Asgardeo aectl generates no client secret
 // and writes no Thunder admin input; the four client secrets are the admin's
 // to import, and are restored from the cluster like any imported key.
-func TestPlatformSecrets_ByIDPKind(t *testing.T) {
+func TestPlatformSecrets_ByWhoCreatesTheClients(t *testing.T) {
 	paths := func(secrets []generatedSecret) string {
 		var out []string
 		for _, s := range secrets {

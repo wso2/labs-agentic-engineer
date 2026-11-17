@@ -20,6 +20,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/wso2/aep/ae-studio-tools/internal/auth/dialect"
 )
 
 func env(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
@@ -27,11 +29,15 @@ func env(m map[string]string) func(string) string { return func(k string) string
 func base() map[string]string {
 	return map[string]string{
 		"AE_ORG_ID": "ou-1", "AE_ORG_HANDLE": "default",
-		"AE_IDP_ISSUER":     "http://thunder.openchoreo.localhost:8080",
-		"AE_IDP_JWKS_URL":   "http://thunder:8090/oauth2/jwks",
-		"AE_USER_AUDIENCES": "aep-console-client, other",
-		"AE_M2M_CLIENT_ID":  "ae-studio-internal-client",
-		"GITHUB_PAT":        "x", "GITHUB_WEBHOOK_SECRET": "y",
+		"AE_IDP_ISSUER":                     "http://thunder.openchoreo.localhost:8080",
+		"AE_IDP_CLAIMS_ORG_HANDLE":          "ouHandle",
+		"AE_IDP_CLAIMS_ORG_ID":              "ouId",
+		"AE_IDP_CLAIMS_CALLER_TYPE_CLAIM":   "grant_type",
+		"AE_IDP_CLAIMS_CALLER_TYPE_MACHINE": "client_credentials",
+		"AE_IDP_JWKS_URL":                   "http://thunder:8090/oauth2/jwks",
+		"AE_USER_AUDIENCES":                 "aep-console-client, other",
+		"AE_M2M_CLIENT_ID":                  "ae-studio-internal-client",
+		"GITHUB_PAT":                        "x", "GITHUB_WEBHOOK_SECRET": "y",
 		"AE_IDP_TOKEN_URL":   "http://thunder:8090/oauth2/token",
 		"AEP_API_BASE_URL":   "http://aep-api.aep.svc.cluster.local:9090",
 		"AE_STUDIO_DATA_DIR": "/studio-data", "AE_STORAGE_BUDGET_BYTES": "2147483648",
@@ -56,29 +62,30 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 }
 
-// AE_IDP_KIND names the platform IdP's token dialect. Unset is thunder; a
-// kind this build does not know is named in the boot error like any other
-// bad key, never read as thunder.
-func TestLoad_IDPKind(t *testing.T) {
+// AE_IDP_CLAIMS_* name the platform IdP's own claims. The pod knows no IdP,
+// so the four mandatory ones have no default and a missing one is named in
+// the boot error; the org's display name claim and the user value are
+// optional.
+func TestLoad_IDPClaims(t *testing.T) {
 	c, err := Load(env(base()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.IDPKind != "thunder" {
-		t.Fatalf("default kind = %q, want thunder", c.IDPKind)
+	want := dialect.Claims{OrgHandle: "ouHandle", OrgID: "ouId", CallerType: "grant_type", Machine: "client_credentials"}
+	if c.IDPClaims != want {
+		t.Fatalf("claims = %+v, want %+v", c.IDPClaims, want)
 	}
 	m := base()
-	m["AE_IDP_KIND"] = "thunder"
-	if c, err := Load(env(m)); err != nil || c.IDPKind != "thunder" {
-		t.Fatalf("explicit thunder: %v / %q", err, c.IDPKind)
+	m["AE_IDP_CLAIMS_ORG_NAME"], m["AE_IDP_CLAIMS_CALLER_TYPE_USER"] = " ouName ", "authorization_code"
+	if c, err := Load(env(m)); err != nil || c.IDPClaims.OrgName != "ouName" || c.IDPClaims.User != "authorization_code" {
+		t.Fatalf("optional claims: %v / %+v", err, c.IDPClaims)
 	}
-	m["AE_IDP_KIND"] = "asgardeo"
-	if c, err := Load(env(m)); err != nil || c.IDPKind != "asgardeo" {
-		t.Fatalf("asgardeo: %v / %q", err, c.IDPKind)
-	}
-	m["AE_IDP_KIND"] = "okta"
-	if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), "AE_IDP_KIND") {
-		t.Fatalf("unknown kind: err = %v, want it named", err)
+	for _, key := range []string{"AE_IDP_CLAIMS_ORG_HANDLE", "AE_IDP_CLAIMS_ORG_ID", "AE_IDP_CLAIMS_CALLER_TYPE_CLAIM", "AE_IDP_CLAIMS_CALLER_TYPE_MACHINE"} {
+		m := base()
+		delete(m, key)
+		if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), key) {
+			t.Fatalf("without %s: err = %v, want it named", key, err)
+		}
 	}
 }
 

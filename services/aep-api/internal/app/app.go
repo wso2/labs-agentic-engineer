@@ -516,10 +516,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	deploymentService := projects.NewDeploymentService(componentClient, artifactStore)
 	deploymentService.SetWriteTargets(writeTargets)
 
-	// The platform IdP's kind decides how its tokens are read. Validate
-	// accepted the kind at load; parsing again keeps this seam honest if a
-	// caller builds the config by hand.
-	idpKind, err := dialect.ParseKind(cfg.PlatformIDP.Kind)
+	// The platform IdP's own claims decide how its tokens are read. Validate
+	// required them at load; building the dialect here keeps this seam honest
+	// if a caller builds the config by hand.
+	claimsDialect, err := dialect.New(cfg.PlatformIDP.Claims)
 	if err != nil {
 		return nil, fmt.Errorf("platform IdP: %w", err)
 	}
@@ -796,8 +796,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// The IdP serves one org, under a handle of its own; the dialect maps it
 	// to the org's namespace, the name everything here knows it by. A token
 	// of any other org reads as no org.
-	idpDialect := dialect.ForKind(idpKind).WithSingleOrg(cfg.PlatformIDP.OrgHandle, cfg.PlatformIDP.OrgNamespace)
-	slog.Info("Platform IdP token dialect", "kind", idpKind,
+	idpDialect := claimsDialect.WithSingleOrg(cfg.PlatformIDP.OrgHandle, cfg.PlatformIDP.OrgNamespace)
+	slog.Info("Platform IdP token dialect",
+		"orgHandleClaim", cfg.PlatformIDP.Claims.OrgHandle, "orgIDClaim", cfg.PlatformIDP.Claims.OrgID,
+		"callerTypeClaim", cfg.PlatformIDP.Claims.CallerType, "userValueSet", cfg.PlatformIDP.Claims.User != "",
 		"idpOrgHandle", cfg.PlatformIDP.OrgHandle, "orgNamespace", cfg.PlatformIDP.OrgNamespace)
 
 	publisherVerifier := authn.NewPublisherTokenVerifier(thunderJWKS, cfg.PlatformIDP.Issuer, "aep-publisher-", idpDialect)

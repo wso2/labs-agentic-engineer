@@ -49,10 +49,12 @@ import (
 // required (non-degradable) fields are set to dummy non-empty values. Everything
 // OPTIONAL is left at its zero value, so the graph assembles in its maximally-
 // degraded mode. Assemble never calls config.Validate, so the required-at-boot
-// field (JWKSURL) is irrelevant here.
+// field (JWKSURL) is irrelevant here. The platform IdP's claims are set:
+// Assemble builds the token dialect from them and refuses an incomplete set.
 func baseCfg() config.Config {
 	c := config.Config{}
 	c.PlatformAPI.BaseURL = "http://openchoreo.test"
+	c.PlatformIDP.Claims = dialect.ThunderClaimsForTest()
 	return c
 }
 
@@ -327,7 +329,7 @@ func userTokens(t *testing.T) (jwksURL, token string) {
 	}))
 	t.Cleanup(srv.Close)
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwtassertion.WireClaims{
-		Raw: dialect.Raw{OuHandle: "acme", GrantType: "authorization_code"},
+		Raw: dialect.Raw{"ouHandle": "acme", "grant_type": "authorization_code"},
 		Sub: "user-1", ClientID: testUserAudience,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer: testUserIssuer, Audience: jwt.ClaimStrings{testUserAudience},
