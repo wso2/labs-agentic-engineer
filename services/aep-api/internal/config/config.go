@@ -385,8 +385,8 @@ func (p PlatformIDPDefaults) singleOrgErrors() []string {
 	settings := []struct{ name, value, why string }{
 		{"PLATFORM_IDP_ORG_HANDLE", p.OrgHandle, "the tenant's handle in the tokens maps to the org's namespace"},
 		{"PLATFORM_IDP_ORG_NAMESPACE", p.OrgNamespace, "the tenant's handle in the tokens maps to the org's namespace"},
-		{"PLATFORM_IDP_ORG_PUBLISHER_SECRET", p.OrgPublisherSecret, "import the secret of the org's pre-created publisher client (vault path aep/thunder-clients/org-publisher)"},
-		{"PLATFORM_IDP_ORG_STUDIO_SECRET", p.OrgStudioSecret, "import the secret of the org's pre-created AE Studio client (vault path aep/thunder-clients/org-studio)"},
+		{"PLATFORM_IDP_ORG_PUBLISHER_SECRET", p.OrgPublisherSecret, "import the secret of the org's pre-created publisher client (vault path aep/idp-clients/org-publisher)"},
+		{"PLATFORM_IDP_ORG_STUDIO_SECRET", p.OrgStudioSecret, "import the secret of the org's pre-created AE Studio client (vault path aep/idp-clients/org-studio)"},
 	}
 	var errs []string
 	for _, s := range settings {

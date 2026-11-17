@@ -20,7 +20,7 @@ package cmd
 // the same Thunder client secret aectl registers for it.
 //
 // aectl owns openchoreo-observer-resource-reader-client: install and
-// sync-clients set its Thunder secret to aep/thunder-clients/oc-observer-reader,
+// sync-clients set its Thunder secret to aep/idp-clients/oc-observer-reader,
 // replacing whatever the plane's installer registered. The observer reads its
 // copy through the plane's observer-secret ExternalSecret, so whenever aectl
 // makes that value authoritative it also points observer-secret at it — with
@@ -49,7 +49,7 @@ const (
 	defaultPlatformSecretStore = "aep-platform"
 
 	observerReaderClientID   = "openchoreo-observer-resource-reader-client"
-	observerReaderVaultKey   = "aep/thunder-clients/oc-observer-reader"
+	observerReaderVaultKey   = "aep/idp-clients/oc-observer-reader"
 	observerSecretName       = "observer-secret"
 	observerSecretKey        = "UID_RESOLVER_OAUTH_CLIENT_SECRET"
 	observerSecretRefreshCap = 2 * time.Minute

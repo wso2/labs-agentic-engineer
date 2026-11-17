@@ -43,12 +43,12 @@ spec:
     name: rca-agent-secret
   data:
     - secretKey: OAUTH_CLIENT_SECRET
-      remoteRef: { key: aep/thunder-clients/openchoreo-rca-agent, property: value }
+      remoteRef: { key: aep/idp-clients/openchoreo-rca-agent, property: value }
 `
 
 // The observer's Thunder client secret, for a plane aectl did not install.
 // `aectl platform install` registers openchoreo-observer-resource-reader-client
-// in Thunder with aep/thunder-clients/oc-observer-reader, replacing whatever
+// in Thunder with aep/idp-clients/oc-observer-reader, replacing whatever
 // secret the plane's installer gave it, so the observer must log in with that
 // one. Otherwise its project lookups 401 and every query the SRE agent makes
 // through it comes back empty. Takes over the plane installer's ExternalSecret
@@ -71,7 +71,7 @@ spec:
     name: observer-secret
   data:
     - secretKey: UID_RESOLVER_OAUTH_CLIENT_SECRET
-      remoteRef: { key: aep/thunder-clients/oc-observer-reader, property: value }
+      remoteRef: { key: aep/idp-clients/oc-observer-reader, property: value }
 `
 
 // The plane's own secrets, applied only when aectl installs the plane: an
@@ -117,7 +117,7 @@ spec:
     - secretKey: OPENSEARCH_PASSWORD
       remoteRef: { key: aep/opensearch-password, property: value }
     - secretKey: UID_RESOLVER_OAUTH_CLIENT_SECRET
-      remoteRef: { key: aep/thunder-clients/oc-observer-reader, property: value }
+      remoteRef: { key: aep/idp-clients/oc-observer-reader, property: value }
 `
 
 // rcaExtraEnvsYAML is the RCA/SRE agent's rca.extraEnvs block, shared between

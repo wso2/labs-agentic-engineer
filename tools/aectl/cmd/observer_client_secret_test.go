@@ -97,7 +97,7 @@ func TestPointObserverAtReaderSecret_OldKey_PatchedToTheAEPKey(t *testing.T) {
 	if got != want {
 		t.Errorf("applied manifest differs from sreObserverClientSecretTmpl\n--- got\n%s\n--- want\n%s", got, want)
 	}
-	for _, s := range []string{"key: aep/thunder-clients/oc-observer-reader", "name: aep-platform", "namespace: openchoreo-observability-plane", `force-sync: "` + testForceSync + `"`} {
+	for _, s := range []string{"key: aep/idp-clients/oc-observer-reader", "name: aep-platform", "namespace: openchoreo-observability-plane", `force-sync: "` + testForceSync + `"`} {
 		if !strings.Contains(got, s) {
 			t.Errorf("applied manifest missing %q\n%s", s, got)
 		}

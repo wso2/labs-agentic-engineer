@@ -69,7 +69,7 @@ func importedPlatformSecrets() []generatedSecret {
 
 // importedClientNames are the clients of an Asgardeo install whose secrets
 // the organization's admin creates (deployments/scripts/ae-asgardeo-apps.sh)
-// and imports under aep/thunder-clients/<name>: aep-api's own client, the
+// and imports under aep/idp-clients/<name>: aep-api's own client, the
 // AE-only client aep-api calls every org's pod with, and the one org's
 // publisher and AE Studio clients.
 var importedClientNames = []string{
@@ -88,7 +88,7 @@ func importedClientSecrets() []generatedSecret {
 	}
 	out := make([]generatedSecret, 0, len(importedClientNames))
 	for _, name := range importedClientNames {
-		out = append(out, generatedSecret{path: "aep/thunder-clients/" + name})
+		out = append(out, generatedSecret{path: "aep/idp-clients/" + name})
 	}
 	return out
 }
@@ -130,7 +130,7 @@ func generatedThunderClientSecrets() []generatedSecret {
 	out := make([]generatedSecret, 0, len(generatedThunderClientNames))
 	for _, name := range generatedThunderClientNames {
 		out = append(out, generatedSecret{
-			path:     "aep/thunder-clients/" + name,
+			path:     "aep/idp-clients/" + name,
 			generate: func() (string, error) { return thunderClientSecretValue(name) },
 		})
 	}
@@ -376,7 +376,7 @@ func platformInputPaths() []string {
 	return append(paths,
 		"aep/thunder-admin/client-id",
 		"aep/thunder-admin/client-secret",
-		"aep/thunder-clients/system-client-id",
+		"aep/idp-clients/system-client-id",
 	)
 }
 

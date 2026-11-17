@@ -205,7 +205,7 @@ func TestSeedGeneratedThunderClientSecrets_OnlyMissing(t *testing.T) {
 	have := map[string]bool{}
 	for _, n := range generatedThunderClientNames {
 		if n != "ae-studio-internal" {
-			have["aep/thunder-clients/"+n] = true
+			have["aep/idp-clients/"+n] = true
 		}
 	}
 	var wrote []string
@@ -222,7 +222,7 @@ func TestSeedGeneratedThunderClientSecrets_OnlyMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(wrote) != 1 || wrote[0] != "aep/thunder-clients/ae-studio-internal" || len(seeded) != 1 || seeded[0].value == "" {
+	if len(wrote) != 1 || wrote[0] != "aep/idp-clients/ae-studio-internal" || len(seeded) != 1 || seeded[0].value == "" {
 		t.Fatalf("wrote %v, seeded %v", wrote, seeded)
 	}
 }
@@ -253,13 +253,13 @@ func TestPortOfURL(t *testing.T) {
 }
 
 // The AE-only client is the one optional client: its Secret may be missing
-// without blocking the others, and aep-thunder-secrets never is.
+// without blocking the others, and aep-idp-client-secrets never is.
 func TestSecretOptional(t *testing.T) {
 	if !secretOptional(aeStudioInternalSecretsName) {
 		t.Error("the AE-only Secret must be optional")
 	}
 	if secretOptional(thunderSecretsName) {
-		t.Error("aep-thunder-secrets must be required")
+		t.Error("aep-idp-client-secrets must be required")
 	}
 }
 

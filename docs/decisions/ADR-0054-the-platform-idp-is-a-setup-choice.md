@@ -105,7 +105,7 @@ client lifecycle, into `aectl` and into the chart.
   build template, which is why this is for a local cluster only.
 - The settings that carry the IdP's endpoints keep their ThunderID names
   (`thunder.jwksURL`, `console.thunderPublicURL`, the vault path family
-  `aep/thunder-clients/`).
+  `aep/idp-clients/`).
 
 ## Alternatives rejected
 

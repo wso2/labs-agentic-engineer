@@ -291,7 +291,7 @@ var initCmd = &cobra.Command{
 With idp.kind asgardeo the platform IdP is an Asgardeo organization, on which
 aectl administers nothing: it asks for no admin credentials, generates no
 client secret and registers no client. It requires the client secrets the
-organization's admin imported (aep/thunder-clients/aep-api-client,
+organization's admin imported (aep/idp-clients/aep-api-client,
 ae-studio-internal, org-publisher, org-studio) and stops before Helm if one
 is missing.
 
@@ -1056,7 +1056,7 @@ func (s *openBaoSession) pathExists(ctx context.Context, path string) (bool, err
 }
 
 // generatedThunderClientNames are the Thunder clients whose secret aectl
-// generates and seeds under aep/thunder-clients/<name>.
+// generates and seeds under aep/idp-clients/<name>.
 var generatedThunderClientNames = []string{
 	"oc-workload-publisher",
 	"oc-observer-reader",
@@ -1122,7 +1122,7 @@ func provisionOpenBao(ctx context.Context, platformNamespace, anthropicKey, thun
 			platformInput{"aep/thunder-admin/client-secret", thunderAdminClientSecret},
 			// system-client ID is a known constant but stored in OpenBao so the
 			// thunder-app-operator can source both credentials from the same ESO Secret.
-			platformInput{"aep/thunder-clients/system-client-id", "aep-system-client"},
+			platformInput{"aep/idp-clients/system-client-id", "aep-system-client"},
 		)
 	}
 	sp.Update("Writing secrets")

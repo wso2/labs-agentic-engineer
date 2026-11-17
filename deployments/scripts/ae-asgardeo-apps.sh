@@ -23,7 +23,7 @@
 # opaque, which AE cannot verify) and, for the console, the user attributes AE
 # reads from the access token.
 #
-#   client id                    kind     secret file (vault path aep/thunder-clients/<file>)
+#   client id                    kind     secret file (vault path aep/idp-clients/<file>)
 #   aep-console-client           browser  none (public client, PKCE; redirects
 #                                         <console>/callback after sign-in and
 #                                         <console> after sign-out)
@@ -357,7 +357,7 @@ while IFS='|' read -r id kind file <&3; do
       # Not AE's secret: it goes into the local cluster's build template.
       oc_publisher_step="ASGARDEO_TENANT=${TENANT} ASGARDEO_BASE_URL=${BASE_URL} deployments/scripts/ae-asgardeo-oc-publisher.sh ${quoted_path}"
     else
-      imports="${imports}aectl platform secret import --path aep/thunder-clients/${file} --value-file ${quoted_path}
+      imports="${imports}aectl platform secret import --path aep/idp-clients/${file} --value-file ${quoted_path}
 "
     fi
   fi

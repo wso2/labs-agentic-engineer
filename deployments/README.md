@@ -247,7 +247,7 @@ their logs (until `OBSERVER_LOG_RETENTION`).
 `make dev-update` also runs `aectl platform sync-clients` after the upgrade,
 since an update never runs the install's Thunder setup. On an install that
 predates a Thunder client (the AE-only `ae-studio-internal-client`) it seeds
-only the MISSING `aep/thunder-clients/*` vault keys (an existing key is never
+only the MISSING `aep/idp-clients/*` vault keys (an existing key is never
 rotated, and no database or Thunder admin secret is touched), nudges the
 ExternalSecrets that sync them, and registers the Thunder clients (idempotent).
 A client whose Secret is still unavailable is skipped with a warning; the
@@ -257,7 +257,7 @@ Registering `openchoreo-observer-resource-reader-client` (install and
 sync-clients alike) also writes to the observability plane, which OpenChoreo
 owns: when its `observer-secret` ExternalSecret in
 `openchoreo-observability-plane` does not already read
-`aep/thunder-clients/oc-observer-reader`, aectl rewrites it to do so, waits for
+`aep/idp-clients/oc-observer-reader`, aectl rewrites it to do so, waits for
 ESO to sync it and restarts `deploy/observer`, so expect a short observer
 outage on that run. A plane already pointed there, or no plane, is left alone.
 
@@ -377,10 +377,10 @@ on it. It serves one org.
 2. **Import the four secrets** into the install's vault, one per file:
 
    ```bash
-   aectl platform secret import --path aep/thunder-clients/aep-api-client     --value-file <dir>/aep-api-client
-   aectl platform secret import --path aep/thunder-clients/ae-studio-internal --value-file <dir>/ae-studio-internal
-   aectl platform secret import --path aep/thunder-clients/org-publisher      --value-file <dir>/org-publisher
-   aectl platform secret import --path aep/thunder-clients/org-studio         --value-file <dir>/org-studio
+   aectl platform secret import --path aep/idp-clients/aep-api-client     --value-file <dir>/aep-api-client
+   aectl platform secret import --path aep/idp-clients/ae-studio-internal --value-file <dir>/ae-studio-internal
+   aectl platform secret import --path aep/idp-clients/org-publisher      --value-file <dir>/org-publisher
+   aectl platform secret import --path aep/idp-clients/org-studio         --value-file <dir>/org-studio
    ```
 
 3. **Set the config** and import it. The `thunder.*` keys are not read and
@@ -406,7 +406,7 @@ What differs from a Thunder install:
   key. `platform sync-clients` does the same check and registers nothing.
 - The chart renders no Thunder admin credentials (`aep-thunder-admin-creds`),
   no Thunder admin env on aep-api and no CORS policy on Thunder's route; of
-  `aep-thunder-secrets` only `AEP_API_CLIENT_SECRET` remains.
+  `aep-idp-client-secrets` only `AEP_API_CLIENT_SECRET` remains.
 - aep-api maps the organization's handle in a token to the org's namespace,
   and serves the org's two pre-created clients instead of creating them
   (`services/aep-api/internal/platform/auth/README.md`,
@@ -637,10 +637,10 @@ Never `bao kv get` a multi-field document without `-field=<name>` piped to
    |---|---|---|
    | `aep/thunder-admin/client-id`, `.../client-secret` | `aep-thunder-admin-creds` | `client-id`, `client-secret` |
    | `aep/postgres-password` | `postgres-secrets` | `POSTGRES_PASSWORD` |
-   | `aep/thunder-clients/<name>` | `aep-thunder-secrets` (and `aep-ae-studio-internal-secrets` for `ae-studio-internal`) | `OC_WORKLOAD_PUBLISHER_SECRET`, `OC_OBSERVER_READER_SECRET`, `AEP_API_CLIENT_SECRET`, `BFF_TO_GIT_SERVICE_SECRET`, `BFF_TO_REMOTE_WORKER_SECRET`, `LOCAL_DEV_SEEDER_SECRET`, `THUNDER_SYSTEM_CLIENT_SECRET`, `OC_RCA_AGENT_SECRET`, `AE_STUDIO_INTERNAL_CLIENT_SECRET` (for `oc-workload-publisher`, `oc-observer-reader`, `aep-api-client`, `bff-git-service`, `bff-remote-worker`, `local-dev-seeder`, `system-client`, `openchoreo-rca-agent`, `ae-studio-internal`, in that order) |
+   | `aep/idp-clients/<name>` | `aep-idp-client-secrets` (and `aep-ae-studio-internal-secrets` for `ae-studio-internal`) | `OC_WORKLOAD_PUBLISHER_SECRET`, `OC_OBSERVER_READER_SECRET`, `AEP_API_CLIENT_SECRET`, `BFF_TO_GIT_SERVICE_SECRET`, `BFF_TO_REMOTE_WORKER_SECRET`, `LOCAL_DEV_SEEDER_SECRET`, `THUNDER_SYSTEM_CLIENT_SECRET`, `OC_RCA_AGENT_SECRET`, `AE_STUDIO_INTERNAL_CLIENT_SECRET` (for `oc-workload-publisher`, `oc-observer-reader`, `aep-api-client`, `bff-git-service`, `bff-remote-worker`, `local-dev-seeder`, `system-client`, `openchoreo-rca-agent`, `ae-studio-internal`, in that order) |
    | `aep/webhook-relay-seed` | `aep-webhook-relay` | `AE_STUDIO_WEBHOOK_RELAY_SEED` |
    | `aep/jev-api-key` (only with `aeStudio.jev.enabled`) | `aep-jev` | `AE_STUDIO_JEV_API_KEY` |
-   | `aep/thunder-clients/org-publisher`, `.../org-studio` (only with `idp.kind: asgardeo`) | `aep-org-client-secrets` | `PLATFORM_IDP_ORG_PUBLISHER_SECRET`, `PLATFORM_IDP_ORG_STUDIO_SECRET`: the secrets of the org's two pre-created clients, imported by the tenant's admin |
+   | `aep/idp-clients/org-publisher`, `.../org-studio` (only with `idp.kind: asgardeo`) | `aep-org-client-secrets` | `PLATFORM_IDP_ORG_PUBLISHER_SECRET`, `PLATFORM_IDP_ORG_STUDIO_SECRET`: the secrets of the org's two pre-created clients, imported by the tenant's admin |
 
    For `idp.kind: asgardeo`, the organization's admin creates the five
    applications and their secret files with
@@ -659,7 +659,7 @@ Never `bao kv get` a multi-field document without `-field=<name>` piped to
    `aep/anthropic-api-key`, `aep/opensearch-username` and `aep/opensearch-password`
    have no ESO target Secret; re-enter them from where you hold them (the
    OpenSearch pair is in the observability plane's own Secret, if installed).
-   A missing `aep/thunder-clients/*` key is restored from its Secret by the
+   A missing `aep/idp-clients/*` key is restored from its Secret by the
    sync step's `sync-clients` (a new value only when no Secret holds one).
    `sync-clients` refuses until every non-generated path above is back.
 2. **Verify** each written key by length (or sha256) against the Secret it came

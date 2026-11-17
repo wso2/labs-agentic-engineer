@@ -52,18 +52,18 @@ type thunderClientDef struct {
 	secretKey        string   // key in the client's K8s Secret (confidential only)
 	redirectURIs     []string // public only
 	noUserAttributes bool     // token carries no attributes at all (AE-only client)
-	secretName       string   // K8s Secret holding secretKey; default aep-thunder-secrets
+	secretName       string   // K8s Secret holding secretKey; default aep-idp-client-secrets
 	// optional: a missing Secret skips this client with a warning instead of
 	// failing the run, so its absence degrades nothing else.
 	optional bool
-	// vaultName is the generated vault key aep/thunder-clients/<vaultName>
+	// vaultName is the generated vault key aep/idp-clients/<vaultName>
 	// the ExternalSecret syncs into secretKey (empty: not a generated key).
 	vaultName string
 }
 
 // aepThunderClients is the canonical list of AEP OAuth clients to register in Thunder.
 // Confidential clients read their pre-generated secret from a K8s Secret: the
-// shared aep-thunder-secrets unless the client names its own (secretName).
+// shared aep-idp-client-secrets unless the client names its own (secretName).
 // Public (PKCE) clients use the redirect URIs supplied at registration time.
 var aepThunderClients = []thunderClientDef{
 	{clientID: "openchoreo-workload-publisher-client", clientType: "confidential", vaultName: "oc-workload-publisher", secretKey: "OC_WORKLOAD_PUBLISHER_SECRET"},
@@ -131,7 +131,7 @@ func thunderSecretNames() []string {
 }
 
 const (
-	thunderSecretsName = "aep-thunder-secrets"
+	thunderSecretsName = "aep-idp-client-secrets"
 	// aeStudioInternalSecretsName holds only the AE-only client secret, so a
 	// missing vault key degrades nothing else.
 	aeStudioInternalSecretsName = "aep-ae-studio-internal-secrets"
@@ -150,7 +150,7 @@ func doThunderSetup(
 	platformNamespace, thunderNamespace, consoleURL string,
 	skipClients map[string]string,
 ) error {
-	// 1. Read client secrets from the ESO-synced K8s Secrets (aep-thunder-secrets,
+	// 1. Read client secrets from the ESO-synced K8s Secrets (aep-idp-client-secrets,
 	//    plus the AE-only client's own). ESO may take a few seconds after pod
 	//    readiness to complete its first sync, so retry for up to 60s before
 	//    failing. A Secret only optional clients read is warned about and its
@@ -255,7 +255,7 @@ func doThunderSetup(
 		}
 		clientSp.Success(def.clientID)
 		if def.clientID == observerReaderClientID {
-			// Thunder now holds aep/thunder-clients/oc-observer-reader for the
+			// Thunder now holds aep/idp-clients/oc-observer-reader for the
 			// observer's client, so the plane's observer must read that one.
 			syncObserverClientSecret(ctx, k8sClient)
 		}

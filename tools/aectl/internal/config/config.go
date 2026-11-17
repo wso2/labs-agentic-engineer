@@ -43,7 +43,7 @@ const ThunderAdminCredsSecretKey = "client-secret"
 
 // ConfigMapKeys is the canonical list of non-sensitive viper keys stored in
 // ConfigMapName. thunder.admin_client_secret is intentionally absent — it is
-// managed by OpenBao/ESO and read from the aep-thunder-secrets Secret instead.
+// managed by OpenBao/ESO and read from the aep-idp-client-secrets Secret instead.
 var ConfigMapKeys = []string{
 	"thunder.namespace",
 	"thunder.url",

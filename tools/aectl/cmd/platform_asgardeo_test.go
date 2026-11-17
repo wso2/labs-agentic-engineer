@@ -176,13 +176,13 @@ func TestPlatformSecrets_ByIDPKind(t *testing.T) {
 		return strings.Join(out, " ")
 	}
 	imported := []string{
-		"aep/thunder-clients/aep-api-client", "aep/thunder-clients/ae-studio-internal",
-		"aep/thunder-clients/org-publisher", "aep/thunder-clients/org-studio",
+		"aep/idp-clients/aep-api-client", "aep/idp-clients/ae-studio-internal",
+		"aep/idp-clients/org-publisher", "aep/idp-clients/org-studio",
 	}
 
 	t.Run("thunder", func(t *testing.T) {
 		t.Cleanup(viper.Reset)
-		if got := paths(generatedPlatformSecrets()); !strings.Contains(got, "aep/thunder-clients/system-client") {
+		if got := paths(generatedPlatformSecrets()); !strings.Contains(got, "aep/idp-clients/system-client") {
 			t.Errorf("no generated Thunder client secrets: %s", got)
 		}
 		if got := strings.Join(platformInputPaths(), " "); !strings.Contains(got, "aep/thunder-admin/client-secret") {
@@ -202,7 +202,7 @@ func TestPlatformSecrets_ByIDPKind(t *testing.T) {
 	t.Run("asgardeo", func(t *testing.T) {
 		setAsgardeoConfig(t)
 		generated := paths(generatedPlatformSecrets())
-		if strings.Contains(generated, "thunder-clients") {
+		if strings.Contains(generated, "idp-clients") {
 			t.Errorf("aectl generates a client secret on Asgardeo: %s", generated)
 		}
 		if !strings.Contains(generated, "aep/postgres-password") {
@@ -229,7 +229,7 @@ func TestPlatformSecrets_ByIDPKind(t *testing.T) {
 				t.Errorf("%s has a generator: an imported secret is never generated", s.path)
 			}
 		}
-		if !strings.Contains(paths(importedPlatformSecrets()), "aep/thunder-clients/org-studio") {
+		if !strings.Contains(paths(importedPlatformSecrets()), "aep/idp-clients/org-studio") {
 			t.Error("the imported client secrets are not restored with the other imported keys")
 		}
 	})
@@ -261,10 +261,10 @@ func (m *memSeedStore) store() seedStore {
 func TestRequireImportedClientSecrets(t *testing.T) {
 	setAsgardeoConfig(t)
 	all := map[string]string{
-		"aep/thunder-clients/aep-api-client":     "s1",
-		"aep/thunder-clients/ae-studio-internal": "s2",
-		"aep/thunder-clients/org-publisher":      "s3",
-		"aep/thunder-clients/org-studio":         "s4",
+		"aep/idp-clients/aep-api-client":     "s1",
+		"aep/idp-clients/ae-studio-internal": "s2",
+		"aep/idp-clients/org-publisher":      "s3",
+		"aep/idp-clients/org-studio":         "s4",
 	}
 	copyOf := func(m map[string]string, drop ...string) map[string]string {
 		out := map[string]string{}
@@ -283,22 +283,22 @@ func TestRequireImportedClientSecrets(t *testing.T) {
 	}
 
 	// The vault lost one; the cluster still holds it.
-	m = &memSeedStore{vault: copyOf(all, "aep/thunder-clients/org-studio"), cluster: map[string]string{"aep/thunder-clients/org-studio": "s4"}}
+	m = &memSeedStore{vault: copyOf(all, "aep/idp-clients/org-studio"), cluster: map[string]string{"aep/idp-clients/org-studio": "s4"}}
 	restored, err := requireImportedClientSecrets(m.store())
-	if err != nil || len(restored) != 1 || m.vault["aep/thunder-clients/org-studio"] != "s4" {
-		t.Fatalf("restore from the cluster: restored %v, err %v, vault %v", restored, err, m.vault["aep/thunder-clients/org-studio"])
+	if err != nil || len(restored) != 1 || m.vault["aep/idp-clients/org-studio"] != "s4" {
+		t.Fatalf("restore from the cluster: restored %v, err %v, vault %v", restored, err, m.vault["aep/idp-clients/org-studio"])
 	}
 
 	// Two were never imported.
-	m = &memSeedStore{vault: copyOf(all, "aep/thunder-clients/org-publisher", "aep/thunder-clients/aep-api-client")}
+	m = &memSeedStore{vault: copyOf(all, "aep/idp-clients/org-publisher", "aep/idp-clients/aep-api-client")}
 	_, err = requireImportedClientSecrets(m.store())
 	if err == nil {
 		t.Fatal("two missing imports were accepted")
 	}
 	msg := err.Error()
 	for _, want := range []string{
-		"aectl platform secret import --path aep/thunder-clients/org-publisher",
-		"aectl platform secret import --path aep/thunder-clients/aep-api-client",
+		"aectl platform secret import --path aep/idp-clients/org-publisher",
+		"aectl platform secret import --path aep/idp-clients/aep-api-client",
 		"ae-asgardeo-apps.sh",
 	} {
 		if !strings.Contains(msg, want) {
@@ -308,7 +308,7 @@ func TestRequireImportedClientSecrets(t *testing.T) {
 	if strings.Contains(msg, "org-studio") || strings.Contains(msg, "s1") {
 		t.Errorf("error names a present secret or a value: %s", msg)
 	}
-	if _, generated := m.vault["aep/thunder-clients/org-publisher"]; generated {
+	if _, generated := m.vault["aep/idp-clients/org-publisher"]; generated {
 		t.Error("a missing imported secret was generated")
 	}
 }

@@ -25,7 +25,7 @@ go build -o aectl .  # build CLI
 CLI has no local config file. After `aectl platform install` runs, it writes non-sensitive config to the
 `aep-cli-config` ConfigMap in `wso2-aep`. All subsequent commands read from it automatically
 via `PersistentPreRunE`. Sensitive values (Thunder admin secret) come from the ESO-synced
-`aep-thunder-secrets` Secret. CLI flags and `AEP_*` env vars always override the ConfigMap.
+`aep-idp-client-secrets` Secret. CLI flags and `AEP_*` env vars always override the ConfigMap.
 `platform update` and `sre install` refuse to run without a valid loaded config
 (`requireAEStudioConfig`, `cmd/update.go`): both re-derive and re-apply the
 `aeStudio.*` values from it (`sre install` flips `sreAgent.*` through an
@@ -41,7 +41,7 @@ read for `asgardeo`. `idp.issuer` and `idp.org_handle` are required for
 
 - `aepThunderClients` (`cmd/thunder_cli.go`) is the canonical client list; each
   confidential client's secret is generated once, seeded in OpenBao under
-  `aep/thunder-clients/<vaultName>` (`generatedThunderClientNames`,
+  `aep/idp-clients/<vaultName>` (`generatedThunderClientNames`,
   `cmd/platform.go`) and delivered OpenBao → ESO → Secret → env.
   `ae-studio-internal-client` (vault name `ae-studio-internal`, env
   `AE_STUDIO_INTERNAL_CLIENT_SECRET`) carries no org claims
@@ -69,7 +69,7 @@ read for `asgardeo`. `idp.issuer` and `idp.org_handle` are required for
   `envidp` builds the environment Thunders' trust of the platform IdP from
   the same endpoints on `https://<host>:8443`.
 - `platform install` overwrites (plain PUT) every OpenBao seed it owns: the
-  `aep/thunder-clients/<vaultName>` secrets, `aep/thunder-clients/system-client-id`,
+  `aep/idp-clients/<vaultName>` secrets, `aep/idp-clients/system-client-id`,
   `aep/anthropic-api-key`, `aep/postgres-password`, `aep/webhook-relay-seed`
   (relay on or off), `aep/opensearch-{username,password}` and
   `aep/thunder-admin/client-{id,secret}` (`cmd/platform.go`, the `secrets`
@@ -90,7 +90,7 @@ reads the kind from config. What differs from the sections above:
 - **Secrets.** `aectl` generates no client secret and asks for no admin
   secret. The organization's admin creates the clients
   (`deployments/scripts/ae-asgardeo-apps.sh`) and imports four secrets under
-  `aep/thunder-clients/`: `aep-api-client`, `ae-studio-internal`,
+  `aep/idp-clients/`: `aep-api-client`, `ae-studio-internal`,
   `org-publisher` and `org-studio` (`importedClientNames`,
   `cmd/platform_secrets.go`). `requireImportedClientSecrets` restores a
   secret that OpenBao lost from the cluster Secret that holds it. Then it

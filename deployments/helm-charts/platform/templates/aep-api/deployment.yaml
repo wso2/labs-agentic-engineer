@@ -90,7 +90,7 @@ spec:
             - name: SERVICE_AUTH_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: aep-thunder-secrets
+                  name: aep-idp-client-secrets
                   key: AEP_API_CLIENT_SECRET
             - name: SERVICE_AUTH_HOST_HEADER
               value: ""
@@ -361,7 +361,7 @@ spec:
             - name: THUNDER_SYSTEM_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: aep-thunder-secrets
+                  name: aep-idp-client-secrets
                   key: THUNDER_SYSTEM_CLIENT_SECRET
             {{- end }}
             - name: POSTGRES_PASSWORD

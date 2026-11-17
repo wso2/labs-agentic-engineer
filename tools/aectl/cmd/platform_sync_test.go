@@ -74,7 +74,7 @@ func TestSyncClients_SyncsSecretsBeforeReadersEvenWithNothingSeeded(t *testing.T
 func TestSyncClients_SkipsClientsOfUnsyncedSecrets(t *testing.T) {
 	r := &syncRecorder{}
 	unsynced := map[string]string{aeStudioInternalSecretsName: "not synced"}
-	if err := syncClients(context.Background(), r.steps(nil, []seededSecret{{path: "aep/thunder-clients/ae-studio-internal", value: "v"}}, unsynced)); err != nil {
+	if err := syncClients(context.Background(), r.steps(nil, []seededSecret{{path: "aep/idp-clients/ae-studio-internal", value: "v"}}, unsynced)); err != nil {
 		t.Fatal(err)
 	}
 	if r.setup != 1 || len(r.skip) != 1 || r.skip["ae-studio-internal-client"] == "" {

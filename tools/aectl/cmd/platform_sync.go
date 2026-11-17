@@ -40,7 +40,7 @@ OpenBao, without a full install and without rotating anything:
      secret (a restarted in-memory OpenBao: re-run 'make dev-env', whose
      install restores every generated key from the cluster Secrets ESO last
      synced it into).
-  1. Writes only the MISSING generated aep/thunder-clients/* keys to OpenBao
+  1. Writes only the MISSING generated aep/idp-clients/* keys to OpenBao
      (create-only), each restored from its cluster Secret when one holds it.
   2. Makes ESO re-read OpenBao for every platform ExternalSecret and waits
      (90s) until each has synced, so the steps below read what OpenBao holds,

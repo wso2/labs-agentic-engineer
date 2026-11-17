@@ -341,7 +341,7 @@ dev-env-asgardeo:
 	./tools/aectl/aectl-skaffold platform config test --config $(AE_ASGARDEO_AECTL_CONFIG)
 	./tools/aectl/aectl-skaffold platform config import --config $(AE_ASGARDEO_AECTL_CONFIG)
 	@for f in $(AE_ASGARDEO_CLIENT_SECRETS); do \
-		./tools/aectl/aectl-skaffold platform secret import --path aep/thunder-clients/$$f --value-file "$(AE_ASGARDEO_SECRETS_DIR)/$$f" || exit 1; \
+		./tools/aectl/aectl-skaffold platform secret import --path aep/idp-clients/$$f --value-file "$(AE_ASGARDEO_SECRETS_DIR)/$$f" || exit 1; \
 	done
 	ANTHROPIC_API_KEY=none \
 		./tools/aectl/aectl-skaffold platform install --addons=all --platform-version=latest --platform-chart=deployments/helm-charts/platform --image-tag=dev-local \
