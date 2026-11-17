@@ -43,6 +43,7 @@ var thunderKeys = map[string]string{
 }
 
 var asgardeoKeys = map[string]string{
+	"idp.clients":    "imported",
 	"idp.kind":       "asgardeo",
 	"idp.issuer":     "https://api.asgardeo.io/t/acmecorp/oauth2/token",
 	"idp.org_handle": "acmecorp",
@@ -89,9 +90,10 @@ func TestValidate_ThunderKeysRequiredUnderThunder(t *testing.T) {
 	}
 }
 
-// An Asgardeo install has no in-cluster IdP to name: it needs the issuer and
-// the organization's handle, and none of the thunder.* keys.
-func TestValidate_AsgardeoNeedsItsOwnKeysAndNoThunderKeys(t *testing.T) {
+// An install with imported clients (an Asgardeo organization here) has no
+// in-cluster IdP to name: it needs the issuer and the org's handle, and none
+// of the thunder.* keys.
+func TestValidate_ImportedClientsNeedTheIssuerAndNoThunderKeys(t *testing.T) {
 	if errs := validateViper(idpConfig(asgardeoKeys)); len(errs) != 0 {
 		t.Fatalf("a complete Asgardeo config is invalid: %v", errs)
 	}
@@ -103,18 +105,41 @@ func TestValidate_AsgardeoNeedsItsOwnKeysAndNoThunderKeys(t *testing.T) {
 	}
 }
 
-// The Asgardeo issuer is refused on a Thunder install, where nothing reads
-// it: a value there would look as if it took effect.
-func TestValidate_AsgardeoIssuerRefusedUnderThunder(t *testing.T) {
-	errs := validateViper(idpConfig(with(thunderKeys, "idp.issuer", asgardeoKeys["idp.issuer"])))
-	if !hasErrorNaming(errs, "idp.issuer") {
-		t.Errorf("idp.issuer under thunder: errors %v do not refuse it", errs)
+// The thunder.* keys describe a ThunderID aectl administers. With imported
+// clients nothing reads them: a value there would look as if it took effect,
+// so each is refused.
+func TestValidate_ThunderKeysRefusedWithImportedClients(t *testing.T) {
+	for key, val := range thunderKeys {
+		if key == "idp.org_handle" {
+			continue
+		}
+		errs := validateViper(idpConfig(with(asgardeoKeys, key, val)))
+		if !hasErrorNaming(errs, key) {
+			t.Errorf("%s with imported clients: errors %v do not refuse it", key, errs)
+		}
 	}
 }
 
-// The issuer is a public endpoint tokens are verified against: plain http is
-// refused, as is anything that is not an absolute URL.
-func TestValidate_AsgardeoIssuerMustBeHTTPS(t *testing.T) {
+// Where aectl registers the clients the issuer is optional (it is
+// thunder.public_url when unset) and may be the local ThunderID's http URL.
+func TestValidate_IssuerIsOptionalWhereAectlRegistersClients(t *testing.T) {
+	for _, issuer := range []string{"http://thunder.openchoreo.localhost:8080", "https://idp.example.com"} {
+		if errs := validateViper(idpConfig(with(thunderKeys, "idp.issuer", issuer))); len(errs) != 0 {
+			t.Errorf("issuer %q under thunder: %v", issuer, errs)
+		}
+	}
+}
+
+func TestValidate_UnknownClientsRefused(t *testing.T) {
+	errs := validateViper(idpConfig(with(thunderKeys, "idp.clients", "managed")))
+	if !hasErrorNaming(errs, "idp.clients") {
+		t.Fatalf("errors %v do not refuse the value", errs)
+	}
+}
+
+// With imported clients the issuer is a public endpoint tokens are verified
+// against: plain http is refused, as is anything that is not an absolute URL.
+func TestValidate_ImportedClientsIssuerMustBeHTTPS(t *testing.T) {
 	for _, issuer := range []string{"http://api.asgardeo.io/t/acmecorp/oauth2/token", "api.asgardeo.io/t/acmecorp", "not a url"} {
 		errs := validateViper(idpConfig(with(asgardeoKeys, "idp.issuer", issuer)))
 		if !hasErrorNaming(errs, "idp.issuer") {
@@ -130,13 +155,13 @@ func TestValidate_UnknownKindRefused(t *testing.T) {
 	}
 }
 
-// Every key validation knows is persisted, and the two new ones are among them.
+// Every key validation knows is persisted, and the IdP's are among them.
 func TestIDPKeys_ArePersisted(t *testing.T) {
 	persisted := map[string]bool{}
 	for _, k := range ConfigMapKeys {
 		persisted[k] = true
 	}
-	for _, k := range []string{"idp.kind", "idp.issuer", "idp.org_handle"} {
+	for _, k := range []string{"idp.clients", "idp.kind", "idp.issuer", "idp.org_handle"} {
 		if !persisted[k] {
 			t.Errorf("%s is not in ConfigMapKeys", k)
 		}

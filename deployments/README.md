@@ -35,9 +35,13 @@ appears in the config file you import (`console.public_url`, `tryit.public_url`,
 run the cluster script prints that block already composed, so it doesn't have
 to be written by hand. The IdP's endpoints are not in the config: `aectl`
 reads them from `<thunder.public_url>/.well-known/openid-configuration` at
-install and update, and puts their paths on `thunder.url` for the pods. The
-optional `idp.kind` (`thunder` when unset) names the IdP's token dialect, the
-claim names and rules every reader of its tokens uses.
+install and update, and puts their paths on `thunder.url` for the pods.
+`idp.clients` says who creates AE's clients on the IdP: `thunder` (the
+default) means `aectl` registers them on the ThunderID of the `thunder:`
+block, `imported` means the IdP's admin created them. The optional `idp.kind`
+(`thunder` when unset) names the IdP's token dialect, the claim names and
+rules every reader of its tokens uses. `idp.org_handle` names the one org the
+install serves, by the handle the IdP's tokens carry.
 
 ```bash
 # 1. One-shot bring-up — cluster + platform, via aectl (idempotent).
@@ -115,7 +119,7 @@ platform fallback. aep-api writes it into the org's AE Studio pod env
 (`AE_MODEL_CONNECTION` and `ANTHROPIC_API_KEY`, read once at boot) when it
 converges the pod, and hands it to each coding run at dispatch.
 
-**Asgardeo as the platform IdP.** `make dev-env AE_IDP_KIND=asgardeo
+**Asgardeo as the platform IdP.** `make dev-env AE_DEV_IDP=asgardeo
 ASGARDEO_TENANT=<handle> AE_ASGARDEO_SECRETS_DIR=<dir>` builds the cluster on
 an Asgardeo organization in place of the in-cluster ThunderID. Run
 `deployments/scripts/ae-asgardeo-apps.sh` on the organization first, with
@@ -128,7 +132,7 @@ the four secret files. The mode:
 - generates the aectl config from `AECTL_CONFIG` with the `idp:` block set
   (`deployments/scripts/ae-asgardeo-aectl-config.sh`, written to the ignored
   `tools/aectl/.aectl-asgardeo.yaml`), imports the four secrets and installs
-  with `idp.kind: asgardeo` (see "Install with Asgardeo as the platform IdP");
+  with `idp.clients: imported` (see "Install with Asgardeo as the platform IdP");
 - leaves out what signs in with a client that exists only in ThunderID:
   OpenChoreo's portal, the observability plane, Agent Manager, the SRE agent
   and `dev-seed`. Connect GitHub and the model key in the console's welcome
@@ -364,10 +368,10 @@ the Compose-chain removal.
 
 ## Install with Asgardeo as the platform IdP
 
-`idp.kind: asgardeo` makes an Asgardeo organization the platform IdP, in
-place of the in-cluster ThunderID. AE holds no management rights on the
-organization, so its admin prepares it first and `aectl` administers nothing
-on it. It serves one org.
+`idp.clients: imported` with `idp.kind: asgardeo` makes an Asgardeo
+organization the platform IdP, in place of the in-cluster ThunderID. AE holds
+no management rights on the organization, so its admin prepares it first and
+`aectl` administers nothing on it. Like every install, it serves one org.
 
 1. **Create the applications.** The organization's admin runs
    `deployments/scripts/ae-asgardeo-apps.sh` (its header is the manual) with
@@ -383,11 +387,12 @@ on it. It serves one org.
    aectl platform secret import --path aep/idp-clients/org-studio         --value-file <dir>/org-studio
    ```
 
-3. **Set the config** and import it. The `thunder.*` keys are not read and
-   may be left out:
+3. **Set the config** and import it. Leave the four `thunder.*` keys out:
+   `aectl` refuses them where it administers no ThunderID.
 
    ```yaml
    idp:
+     clients: "imported"
      kind: "asgardeo"
      issuer: "https://api.asgardeo.io/t/<handle>/oauth2/token"
      org_handle: "<handle>"
@@ -404,11 +409,13 @@ What differs from a Thunder install:
   naming the missing ones, if any is absent. One the local OpenBao lost is
   restored from the cluster Secret ESO last synced it into, like every other
   key. `platform sync-clients` does the same check and registers nothing.
-- The chart renders no Thunder admin credentials (`aep-thunder-admin-creds`),
-  no Thunder admin env on aep-api and no CORS policy on Thunder's route; of
-  `aep-idp-client-secrets` only `AEP_API_CLIENT_SECRET` remains.
-- aep-api maps the organization's handle in a token to the org's namespace,
-  and serves the org's two pre-created clients instead of creating them
+- The chart renders no Thunder admin credentials (`aep-thunder-admin-creds`)
+  and no CORS policy on Thunder's route; of `aep-idp-client-secrets` only
+  `AEP_API_CLIENT_SECRET` remains.
+- The org's two clients are the admin's to create, where on ThunderID
+  `aectl` creates them. aep-api works the same on both: it maps the handle
+  in a token to the org's namespace and stores the two clients' secrets in
+  the org's references
   (`services/aep-api/internal/platform/auth/README.md`,
   `services/aep-api/internal/organization/README.md`).
 - The AE Studio pod reaches the IdP at its public address: no IdP namespace
@@ -416,9 +423,10 @@ What differs from a Thunder install:
   HTTPS.
 - The environment ThunderIDs (the generated apps' own IdPs) stay ThunderID
   and are not told to trust the platform IdP: that trust serves Agent
-  Manager, which installs on a Thunder platform only.
-- `aectl sre install` refuses: it registers OpenChoreo's observer and RCA
-  clients on the platform IdP.
+  Manager, which installs only where `aectl` registers clients on a
+  ThunderID.
+- `aectl sre install` refuses: it relies on OpenChoreo's observer and RCA
+  clients on the platform IdP, which `aectl` registers only there.
 
 OpenChoreo itself must trust the same organization (its `security.oidc`
 issuer and key set), and its own clients are the cluster owner's to create.
@@ -640,9 +648,9 @@ Never `bao kv get` a multi-field document without `-field=<name>` piped to
    | `aep/idp-clients/<name>` | `aep-idp-client-secrets` (and `aep-ae-studio-internal-secrets` for `ae-studio-internal`) | `OC_WORKLOAD_PUBLISHER_SECRET`, `OC_OBSERVER_READER_SECRET`, `AEP_API_CLIENT_SECRET`, `BFF_TO_GIT_SERVICE_SECRET`, `BFF_TO_REMOTE_WORKER_SECRET`, `LOCAL_DEV_SEEDER_SECRET`, `OC_RCA_AGENT_SECRET`, `AE_STUDIO_INTERNAL_CLIENT_SECRET` (for `oc-workload-publisher`, `oc-observer-reader`, `aep-api-client`, `bff-git-service`, `bff-remote-worker`, `local-dev-seeder`, `openchoreo-rca-agent`, `ae-studio-internal`, in that order) |
    | `aep/webhook-relay-seed` | `aep-webhook-relay` | `AE_STUDIO_WEBHOOK_RELAY_SEED` |
    | `aep/jev-api-key` (only with `aeStudio.jev.enabled`) | `aep-jev` | `AE_STUDIO_JEV_API_KEY` |
-   | `aep/idp-clients/org-publisher`, `.../org-studio` | `aep-org-client-secrets` | `PLATFORM_IDP_ORG_PUBLISHER_SECRET`, `PLATFORM_IDP_ORG_STUDIO_SECRET`: the secrets of the org's two pre-created clients. `aectl` generates them on a ThunderID it administers; with `idp.kind: asgardeo` the organization's admin imports them |
+   | `aep/idp-clients/org-publisher`, `.../org-studio` | `aep-org-client-secrets` | `PLATFORM_IDP_ORG_PUBLISHER_SECRET`, `PLATFORM_IDP_ORG_STUDIO_SECRET`: the secrets of the org's two pre-created clients. `aectl` generates them on a ThunderID it administers; with `idp.clients: imported` the IdP's admin imports them |
 
-   For `idp.kind: asgardeo`, the organization's admin creates the five
+   For `idp.clients: imported` on Asgardeo, the organization's admin creates the five
    applications and their secret files with
    `deployments/scripts/ae-asgardeo-apps.sh` (its header is the manual), then
    imports `aep-api-client`, `ae-studio-internal`, `org-publisher` and

@@ -235,11 +235,11 @@ func aeStudioImageOverrides(designAgent, collab, studioTools string) []string {
 
 // aeStudioExtraEgress is the pod's egress to aep-api and, where the IdP is
 // the in-cluster Thunder, to its namespace and port (thunder.namespace /
-// thunder.url). An Asgardeo install opens no IdP rule: the pod's
+// thunder.url). An install with imported clients opens no IdP rule: the pod's
 // NetworkPolicy already lets it reach public HTTPS endpoints.
 func aeStudioExtraEgress(platformNamespace string) string {
 	var rules []map[string]any
-	if !onAsgardeo() {
+	if registersClients() {
 		thunderNS := viper.GetString("thunder.namespace")
 		thunderPort := portOfURL(viper.GetString("thunder.url"), 8090)
 		rules = append(rules, map[string]any{
@@ -288,10 +288,10 @@ var initCmd = &cobra.Command{
   4. Registers AEP OAuth clients in Thunder
   5. Waits for all platform pods to be ready
 
-With idp.kind asgardeo the platform IdP is an Asgardeo organization, on which
-aectl administers nothing: it asks for no admin credentials, generates no
-client secret and registers no client. It requires the client secrets the
-organization's admin imported (aep/idp-clients/aep-api-client,
+With idp.clients imported the platform IdP is one aectl administers nothing
+on (an Asgardeo organization, for example): it asks for no admin credentials,
+generates no client secret and registers no client. It requires the client
+secrets the IdP's admin imported (aep/idp-clients/aep-api-client,
 ae-studio-internal, org-publisher, org-studio) and stops before Helm if one
 is missing.
 
@@ -417,11 +417,11 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 			ui.Success("Anthropic API key (from env)")
 		}
 
-		// The Thunder admin credentials register the clients; on Asgardeo
-		// aectl registers none and asks for none.
+		// The Thunder admin credentials register the clients; with imported
+		// clients aectl registers none and asks for none.
 		var adminClientID, adminClientSecret string
-		if onAsgardeo() {
-			ui.Success("Platform IdP is Asgardeo: no admin credentials needed")
+		if !registersClients() {
+			ui.Success("The platform IdP's clients are imported: no admin credentials needed")
 		} else {
 			thunderSecret := strings.TrimSpace(os.Getenv("AEP_THUNDER_ADMIN_CLIENT_SECRET"))
 			if thunderSecret == "" {
@@ -536,11 +536,11 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	// different secret, e.g. a reinstall against a Thunder that was never
 	// wiped.
 	//
-	// On Asgardeo there is nothing to register: the organization's admin
+	// With imported clients there is nothing to register: the IdP's admin
 	// created the clients and aectl holds no rights on it.
 	fmt.Println()
-	if onAsgardeo() {
-		ui.Success("Platform IdP is Asgardeo: its clients are pre-created, none registered")
+	if !registersClients() {
+		ui.Success("The platform IdP's clients are imported: none registered")
 	} else {
 		ui.Step("Registering Thunder OAuth clients")
 		if err := doThunderSetup(ctx, k8sClient, initPlatformNamespace,
@@ -986,7 +986,7 @@ func reconcileReusedOpenBaoSecrets(ctx context.Context, platformNamespace string
 		return err
 	}
 	st := s.seedStore(ctx, recover)
-	// The client secrets: Thunder's are generated where missing; Asgardeo's
+	// The client secrets: Thunder's are generated where missing; imported ones
 	// are imported, restored from the cluster where the store lost them, and
 	// required.
 	restored, err := requireImportedClientSecrets(st)
@@ -1014,7 +1014,7 @@ func requiredOpenBaoPaths() []string {
 		"aep/opensearch-username",
 		"aep/opensearch-password",
 	}
-	if onAsgardeo() {
+	if !registersClients() {
 		return paths
 	}
 	return append(paths,
@@ -1106,7 +1106,7 @@ func provisionOpenBao(ctx context.Context, platformNamespace, anthropicKey, thun
 		return err
 	}
 
-	// On Asgardeo the client secrets are the admin's imports: checked (and
+	// Imported client secrets are the IdP admin's: checked (and
 	// restored where the store lost them) before anything is written, so a
 	// missing import stops the install with nothing changed.
 	if _, err := requireImportedClientSecrets(session.seedStore(ctx, recover)); err != nil {
@@ -1118,7 +1118,7 @@ func provisionOpenBao(ctx context.Context, platformNamespace, anthropicKey, thun
 		{"aep/anthropic-api-key", anthropicKey},
 		{"aep/opensearch-username", "admin"},
 	}
-	if !onAsgardeo() {
+	if registersClients() {
 		inputs = append(inputs,
 			platformInput{"aep/thunder-admin/client-id", thunderAdminClientID},
 			platformInput{"aep/thunder-admin/client-secret", thunderAdminClientSecret},

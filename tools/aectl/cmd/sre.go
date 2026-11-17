@@ -221,13 +221,14 @@ func sreInstallPreflight() error {
 	return requireAEStudioConfig()
 }
 
-// sreIDPSupported refuses `sre install` where the platform IdP is Asgardeo.
-// The install registers OpenChoreo's observer and RCA clients on the platform
-// IdP and points the observability plane at it; on Asgardeo those clients
-// are the cluster owner's, and aectl registers nothing there.
+// sreIDPSupported refuses `sre install` where aectl does not register the
+// platform IdP's clients (idp.clients imported). The install relies on
+// OpenChoreo's observer and RCA clients, which `platform install` registers
+// on the platform IdP, and points the observability plane at it; with
+// imported clients they are the cluster owner's, and aectl registers nothing.
 func sreIDPSupported() error {
-	if onAsgardeo() {
-		return fmt.Errorf("sre install is not supported with idp.kind asgardeo: it registers OpenChoreo's observer and RCA clients on the platform IdP, and aectl registers no client on an Asgardeo organization")
+	if !registersClients() {
+		return fmt.Errorf("sre install needs aectl to register clients on the platform IdP (idp.clients thunder): it relies on OpenChoreo's observer and RCA clients there, and with idp.clients imported aectl registers no client")
 	}
 	return nil
 }

@@ -47,8 +47,8 @@ console:
       cpu: "1"
       memory: "512Mi"
   publicURL: "http://console.ae.localhost:8080"
-  thunderPublicURL: "http://thunder.openchoreo.localhost:8080"
-  thunder:
+  # The console's client on the platform IdP and the scopes it asks for.
+  idp:
     clientId: "aep-console-client"
     scopes: "openid profile email"
 
@@ -84,7 +84,7 @@ aeStudio:
     issuer: ""
     jwksUrl: ""
     tokenUrl: ""
-    # Empty falls back to console.thunder.clientId (== JWT_AUDIENCE), the
+    # Empty falls back to console.idp.clientId (== JWT_AUDIENCE), the
     # audience user tokens are minted for.
     userAudiences: []
   runtimeClassName: ""
@@ -237,25 +237,35 @@ dataPlaneGateway:
   # http:// URLs with no certificate-issuance step to wait for.
   tls: true
 
-thunder:
-  # The platform IdP's JWKS and token endpoints at the in-cluster address
-  # (release `platform-idp`, namespace `platform-idp`). `aectl` sets both
-  # from the IdP's OIDC discovery document (the public document's paths on
-  # thunder.url) at install and update; the defaults are the local
-  # ThunderID's. Chart defaults are literals by nature; the source of truth
-  # for the IdP's name is deployments/scripts/env.sh (THUNDER_INTERNAL_URL)
-  # and these must agree with it.
+# The platform IdP: the identity provider that issues the tokens of AE's
+# users and of its own clients. `aectl` sets every value here; the defaults
+# are the local ThunderID's.
+idp:
+  # The issuer: the `iss` of every token, and the address the console signs
+  # in at. `aectl` sets it at install, from its config.
+  issuer: "http://thunder.openchoreo.localhost:8080"
+  # The IdP's JWKS and token endpoints as aep-api reaches them. `aectl` sets
+  # both from the IdP's OIDC discovery document at install and update: on a
+  # ThunderID it administers, the document's paths at the in-cluster address;
+  # otherwise the document's own URLs. The defaults are the local ThunderID's
+  # (release `platform-idp`, namespace `platform-idp`); the source of truth
+  # for its name is deployments/scripts/env.sh (THUNDER_INTERNAL_URL).
   jwksURL: "http://platform-idp-service.platform-idp.svc.cluster.local:8090/oauth2/jwks"
   tokenURL: "http://platform-idp-service.platform-idp.svc.cluster.local:8090/oauth2/token"
-
-idp:
+  # Who creates AE's clients on the IdP (aectl's idp.clients):
+  #   thunder   aectl registers them on a ThunderID it administers. The chart
+  #             then renders what only that needs: the ThunderID admin
+  #             credentials aectl reads (aep-thunder-admin-creds), the secrets
+  #             of the clients aectl registers for OpenChoreo, and the CORS
+  #             policy on ThunderID's route.
+  #   imported  the IdP's admin created them and stored their secrets; the
+  #             chart renders none of the above.
+  clients: "thunder"
   # The platform IdP's token dialect: the claim names and rules every reader
   # of its tokens uses to say who the caller is. One value reaches aep-api
   # (PLATFORM_IDP_KIND), every org's AE Studio pod (AE_STUDIO_IDP_KIND, then
   # AE_IDP_KIND) and the console (VITE_IDP_KIND): `thunder` or `asgardeo`.
-  # `aectl` sets it from its idp.kind config. Under `asgardeo` the chart
-  # renders no Thunder admin credentials and no CORS policy on Thunder's
-  # route, and reads only the secrets of the clients the IdP's admin created.
+  # `aectl` sets it from its idp.kind config.
   kind: "thunder"
   # The one org the IdP serves. orgHandle is the handle the IdP's tokens name
   # the org by (a ThunderID organization unit's handle, an Asgardeo

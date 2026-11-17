@@ -37,12 +37,13 @@ var testAsgardeoIDP = func() platformIDP {
 		JWKSURL:  "https://api.asgardeo.io/t/acmecorp/oauth2/jwks",
 		TokenURL: "https://api.asgardeo.io/t/acmecorp/oauth2/token",
 	}
-	return platformIDP{Kind: "asgardeo", Public: pub, InCluster: pub, OrgHandle: "acmecorp", OrgNamespace: "default"}
+	return platformIDP{Clients: "imported", Kind: "asgardeo", Public: pub, InCluster: pub, OrgHandle: "acmecorp", OrgNamespace: "default"}
 }()
 
 func setAsgardeoConfig(t *testing.T) {
 	t.Helper()
 	t.Cleanup(viper.Reset)
+	viper.Set("idp.clients", "imported")
 	viper.Set("idp.kind", "asgardeo")
 	viper.Set("idp.issuer", "https://api.asgardeo.io/t/acmecorp/oauth2/token")
 	viper.Set("idp.org_handle", "acmecorp")
@@ -95,11 +96,12 @@ func TestDiscoverPlatformIDP_Asgardeo(t *testing.T) {
 func TestPlatformIDPOverrides_Asgardeo(t *testing.T) {
 	got := strings.Join(platformIDPOverrides(testAsgardeoIDP), " ")
 	for _, want := range []string{
+		"--set idp.clients=imported",
 		"--set idp.kind=asgardeo",
 		"--set idp.orgHandle=acmecorp",
 		"--set idp.orgNamespace=default",
-		"--set thunder.jwksURL=https://api.asgardeo.io/t/acmecorp/oauth2/jwks",
-		"--set thunder.tokenURL=https://api.asgardeo.io/t/acmecorp/oauth2/token",
+		"--set idp.jwksURL=https://api.asgardeo.io/t/acmecorp/oauth2/jwks",
+		"--set idp.tokenURL=https://api.asgardeo.io/t/acmecorp/oauth2/token",
 		"--set aeStudio.idp.issuer=https://api.asgardeo.io/t/acmecorp/oauth2/token",
 		"--set aeStudio.idp.jwksUrl=https://api.asgardeo.io/t/acmecorp/oauth2/jwks",
 		"--set aeStudio.idp.tokenUrl=https://api.asgardeo.io/t/acmecorp/oauth2/token",
@@ -123,8 +125,8 @@ func TestPlatformIDPInstallArgs(t *testing.T) {
 		idp  platformIDP
 		want string
 	}{
-		"thunder":  {testPlatformIDP, "--set console.thunderPublicURL=http://thunder.openchoreo.localhost:8080"},
-		"asgardeo": {testAsgardeoIDP, "--set console.thunderPublicURL=https://api.asgardeo.io/t/acmecorp/oauth2/token"},
+		"thunder":  {testPlatformIDP, "--set idp.issuer=http://thunder.openchoreo.localhost:8080"},
+		"asgardeo": {testAsgardeoIDP, "--set idp.issuer=https://api.asgardeo.io/t/acmecorp/oauth2/token"},
 	} {
 		got := strings.Join(platformIDPInstallArgs(tc.idp), " ")
 		if got != tc.want {
@@ -343,15 +345,16 @@ func TestSyncClients_AsgardeoRegistersNothing(t *testing.T) {
 	}
 }
 
-// `sre install` registers OpenChoreo's observer and RCA clients on the
-// platform IdP, which on Asgardeo are the cluster owner's: it refuses there.
-func TestSreInstall_RefusedOnAsgardeo(t *testing.T) {
+// `sre install` relies on OpenChoreo's observer and RCA clients on the
+// platform IdP, which aectl registers only where it registers clients. With
+// imported clients they are the cluster owner's: it refuses there.
+func TestSreInstall_RefusedWithImportedClients(t *testing.T) {
 	setAsgardeoConfig(t)
 	err := sreIDPSupported()
-	if err == nil || !strings.Contains(err.Error(), "asgardeo") {
-		t.Fatalf("err = %v, want a refusal naming the kind", err)
+	if err == nil || !strings.Contains(err.Error(), "idp.clients") {
+		t.Fatalf("err = %v, want a refusal naming idp.clients", err)
 	}
-	viper.Set("idp.kind", "thunder")
+	viper.Set("idp.clients", "thunder")
 	if err := sreIDPSupported(); err != nil {
 		t.Fatalf("thunder: %v", err)
 	}

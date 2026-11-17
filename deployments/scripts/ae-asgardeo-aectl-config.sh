@@ -16,20 +16,23 @@
 # under the License.
 
 # Prints an aectl config whose platform IdP is an Asgardeo organization: the
-# given base config with its `idp:` block set to kind asgardeo, the
-# organization's issuer and its handle. `make dev-env AE_IDP_KIND=asgardeo`
-# uses it so a developer's organization handle is never written into the
-# repository; everything else (URLs, namespaces, toggles) stays the base's.
+# given base config with its `idp:` block set to imported clients, kind
+# asgardeo, the organization's issuer and its handle, and with the four keys
+# of its `thunder:` block commented out (aectl refuses them where it
+# administers no ThunderID). `make dev-env AE_DEV_IDP=asgardeo` uses it so a
+# developer's organization handle is never written into the repository;
+# everything else (URLs, namespaces, toggles) stays the base's.
 #
 # Usage: ae-asgardeo-aectl-config.sh <base config> <organization handle> [base URL]
 #   <base config>           skaffold/defaults.yaml, or a copy of it
 #   <organization handle>   the Asgardeo organization's handle
 #   [base URL]              default https://api.asgardeo.io
 #
-# It edits three lines of the base's `idp:` block, which must be in the shape
-# skaffold/defaults.yaml ships them: `  kind: "thunder"`,
-# `  org_handle: "default"` and the commented `  # issuer: ""`. A base
-# without them is refused, not guessed at.
+# It edits lines of the base that must be in the shape skaffold/defaults.yaml
+# ships them: in the `idp:` block `  clients: "thunder"`, `  kind: "thunder"`,
+# `  org_handle: "default"` and the commented `  # issuer: ""`; in the
+# `thunder:` block its four keys. A base without them is refused, not guessed
+# at.
 set -euo pipefail
 
 base="${1:?usage: ae-asgardeo-aectl-config.sh <base config> <organization handle> [base URL]}"
@@ -41,13 +44,22 @@ url="${3:-https://api.asgardeo.io}"
 [[ "$url" =~ ^https://[^/|]+ ]] || { echo "❌ the base URL must be an https:// URL" >&2; exit 1; }
 
 issuer="${url%/}/t/${tenant}/oauth2/token"
-out="$(sed \
+# The thunder: block's own keys, each commented out; only inside that block,
+# since other blocks have keys of the same names.
+out="$(awk '
+    /^thunder:/ { in_thunder = 1; print; next }
+    /^[^ #]/    { in_thunder = 0 }
+    in_thunder && /^  (namespace|url|admin_client_id|public_url):/ { print "  #" substr($0, 3); n++; next }
+    { print }
+    END { if (n != 4) exit 3 }
+' "$base")" || { echo "❌ ${base}: its thunder: block does not hold the four keys this script comments out (see the header)" >&2; exit 1; }
+out="$(printf '%s\n' "$out" | sed \
+    -e 's|^  clients: "thunder"$|  clients: "imported"|' \
     -e 's|^  kind: "thunder"$|  kind: "asgardeo"|' \
     -e 's|^  # issuer: ""$|  issuer: "'"${issuer}"'"|' \
-    -e 's|^  org_handle: "default"$|  org_handle: "'"${tenant}"'"|' \
-    "$base")"
+    -e 's|^  org_handle: "default"$|  org_handle: "'"${tenant}"'"|')"
 
-for line in '  kind: "asgardeo"' "  issuer: \"${issuer}\"" "  org_handle: \"${tenant}\""; do
+for line in '  clients: "imported"' '  kind: "asgardeo"' "  issuer: \"${issuer}\"" "  org_handle: \"${tenant}\""; do
     if [ "$(printf '%s\n' "$out" | grep -cxF -- "$line")" != "1" ]; then
         echo "❌ ${base}: its idp: block is not in the shape this script edits (see the header); could not set: ${line}" >&2
         exit 1

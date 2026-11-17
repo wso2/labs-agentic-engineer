@@ -113,6 +113,7 @@ func TestAEStudioOverrides(t *testing.T) {
 // in-cluster endpoints on thunder.url: the values every install so far wrote
 // by appending the paths by hand.
 var testPlatformIDP = platformIDP{
+	Clients:      "thunder",
 	Kind:         "thunder",
 	OrgHandle:    "default",
 	OrgNamespace: "default",
@@ -135,9 +136,10 @@ var testPlatformIDP = platformIDP{
 func TestPlatformIDPOverrides(t *testing.T) {
 	got := strings.Join(platformIDPOverrides(testPlatformIDP), " ")
 	for _, want := range []string{
+		"--set idp.clients=thunder",
 		"--set idp.kind=thunder",
-		"--set thunder.jwksURL=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks",
-		"--set thunder.tokenURL=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/token",
+		"--set idp.jwksURL=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks",
+		"--set idp.tokenURL=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/token",
 		"--set aeStudio.idp.issuer=http://thunder.openchoreo.localhost:8080",
 		"--set aeStudio.idp.jwksUrl=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks",
 		"--set aeStudio.idp.tokenUrl=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/token",
@@ -303,7 +305,7 @@ func TestHelmUpgradeArgs_CarriesAEStudioValues(t *testing.T) {
 			t.Errorf("update args lack %s %s", want[i], want[i+1])
 		}
 	}
-	for _, key := range []string{"aeStudio.gatewayHost=", "aeStudio.idp.issuer=", "aeStudio.idp.jwksUrl=", "aeStudio.idp.tokenUrl=", "idp.kind=", "thunder.tokenURL=", "aeStudio.consoleOrigins=", "aeStudio.extraEgress="} {
+	for _, key := range []string{"aeStudio.gatewayHost=", "aeStudio.idp.issuer=", "aeStudio.idp.jwksUrl=", "aeStudio.idp.tokenUrl=", "idp.clients=", "idp.kind=", "idp.tokenURL=", "aeStudio.consoleOrigins=", "aeStudio.extraEgress="} {
 		if !strings.Contains(joined, key) {
 			t.Errorf("update args lack %s", key)
 		}

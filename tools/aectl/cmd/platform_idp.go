@@ -35,8 +35,12 @@ const platformIDPKindDefault = config.IDPKindThunder
 
 // platformIDP is the platform IdP as the install writes it into the chart.
 // Nothing here knows the IdP's URL layout: the endpoints come from its OIDC
-// discovery document, and the kind from config.
+// discovery document, and the rest from config.
 type platformIDP struct {
+	// Clients is who creates AE's clients on the IdP (idp.clients): aectl,
+	// on a ThunderID it administers (config.ClientsThunder), or the IdP's
+	// admin, who then imports their secrets (config.ClientsImported).
+	Clients string
 	// Kind is the IdP's token dialect (idp.kind): the claim names and rules
 	// every reader of its tokens uses, told to aep-api, the AE Studio pod and
 	// the console through the chart.
@@ -45,34 +49,47 @@ type platformIDP struct {
 	// iss equals, and the endpoints at the IdP's public address.
 	Public oidc.Endpoints
 	// InCluster is the same endpoints at thunder.url, the address a pod
-	// reaches the IdP at (on k3d the public hostname is loopback inside a
-	// pod). Public itself when thunder.url is unset, and always on Asgardeo,
-	// which has no in-cluster address.
+	// reaches a ThunderID aectl administers at (on k3d the public hostname is
+	// loopback inside a pod). Public itself when thunder.url is unset, and
+	// always with imported clients: such an IdP has no in-cluster address.
 	InCluster oidc.Endpoints
-	// OrgHandle and OrgNamespace are set on Asgardeo only: the organization's
-	// handle its tokens name the one org by (idp.org_handle), and the org's
-	// OpenChoreo namespace aep-api maps it to (oc.default_org_namespace).
+	// OrgHandle and OrgNamespace name the one org the IdP serves: the handle
+	// its tokens name the org by (idp.org_handle), and the org's OpenChoreo
+	// namespace aep-api maps it to (oc.default_org_namespace).
 	OrgHandle    string
 	OrgNamespace string
 }
 
-// onAsgardeo reports whether the platform IdP is an Asgardeo organization,
-// on which aectl administers nothing: no client is registered, no client
-// secret is generated, and there is no in-cluster IdP to reach.
-func onAsgardeo() bool {
-	return platformIDPKind() == config.IDPKindAsgardeo
+// platformIDPClients reads idp.clients: who creates AE's clients on the
+// platform IdP. Unset is thunder; config validation has already refused a
+// value this build does not know.
+func platformIDPClients() string {
+	if c := strings.ToLower(strings.TrimSpace(viper.GetString("idp.clients"))); c != "" {
+		return c
+	}
+	return config.ClientsThunder
 }
 
-// platformIssuerKey is the config key that holds the platform IdP's issuer.
+// registersClients reports whether aectl creates AE's clients itself, on a
+// ThunderID it administers. Otherwise the IdP's admin created them and aectl
+// administers nothing there: it registers no client, generates no client
+// secret, asks for no admin secret, and has no in-cluster IdP to reach.
+func registersClients() bool {
+	return platformIDPClients() == config.ClientsThunder
+}
+
+// platformIssuerKey is the config key that holds the platform IdP's issuer:
+// idp.issuer, or thunder.public_url where idp.issuer is unset (a ThunderID
+// aectl administers, whose public URL is its issuer).
 func platformIssuerKey() string {
-	if onAsgardeo() {
+	if strings.TrimSpace(viper.GetString("idp.issuer")) != "" {
 		return "idp.issuer"
 	}
 	return "thunder.public_url"
 }
 
 // discoverPlatformIDP fetches the IdP's discovery document over its issuer
-// (thunder.public_url, or idp.issuer on Asgardeo) from the operator's
+// (platformIssuerKey) from the operator's
 // machine. A failure stops the caller: there is no falling back to building
 // the endpoints by hand, which is what this replaces.
 func discoverPlatformIDP(ctx context.Context) (platformIDP, error) {
@@ -82,11 +99,11 @@ func discoverPlatformIDP(ctx context.Context) (platformIDP, error) {
 		return platformIDP{}, fmt.Errorf("platform IdP (%s): %w", key, err)
 	}
 	idp := platformIDP{
-		Kind: platformIDPKind(), Public: pub, InCluster: pub,
+		Clients: platformIDPClients(), Kind: platformIDPKind(), Public: pub, InCluster: pub,
 		OrgHandle:    strings.TrimSpace(viper.GetString("idp.org_handle")),
 		OrgNamespace: ocOrgNamespace(),
 	}
-	if onAsgardeo() {
+	if !registersClients() {
 		return idp, nil
 	}
 	if base := viper.GetString("thunder.url"); base != "" {
@@ -105,8 +122,8 @@ func platformIDPKind() string {
 }
 
 // platformIDPOverrides returns the helm pairs the chart derives from the
-// IdP: the kind, the in-cluster JWKS and token endpoints aep-api and the
-// AE Studio pod reach, and the issuer. Shared by `platform install` and
+// IdP: who creates its clients, the kind, the JWKS and token endpoints aep-api
+// and the AE Studio pod reach, and the issuer. Shared by `platform install` and
 // `platform update`. Undiscovered endpoints (the zero value) set nothing,
 // so a caller never writes half of them.
 func platformIDPOverrides(idp platformIDP) []string {
@@ -114,9 +131,10 @@ func platformIDPOverrides(idp platformIDP) []string {
 		return nil
 	}
 	args := []string{
+		"--set", "idp.clients=" + idp.Clients,
 		"--set", "idp.kind=" + idp.Kind,
-		"--set", "thunder.jwksURL=" + idp.InCluster.JWKSURL,
-		"--set", "thunder.tokenURL=" + idp.InCluster.TokenURL,
+		"--set", "idp.jwksURL=" + idp.InCluster.JWKSURL,
+		"--set", "idp.tokenURL=" + idp.InCluster.TokenURL,
 		"--set", "aeStudio.idp.issuer=" + idp.Public.Issuer,
 		"--set", "aeStudio.idp.jwksUrl=" + idp.InCluster.JWKSURL,
 		"--set", "aeStudio.idp.tokenUrl=" + idp.InCluster.TokenURL,
@@ -130,12 +148,13 @@ func platformIDPOverrides(idp platformIDP) []string {
 
 // envIDPPlatformTrust is the platform IdP an environment ThunderID is told
 // to trust, or nothing. The trust exists for one caller, Agent Manager,
-// whose token is minted by the platform IdP; Agent Manager installs on a
-// Thunder platform only, so on Asgardeo nothing presents such a token and
-// the environment IdP trusts only itself. A trust nothing uses would read as
+// whose token is minted by the platform IdP. Agent Manager needs its clients
+// registered on a ThunderID, so it installs only where aectl registers
+// clients; with imported clients nothing presents such a token and the
+// environment IdP trusts only itself. A trust nothing uses would read as
 // configured and tie the environment IdP to an endpoint it never needs.
 func envIDPPlatformTrust(idp platformIDP) oidc.Endpoints {
-	if idp.Kind == config.IDPKindAsgardeo {
+	if idp.Clients != config.ClientsThunder {
 		return oidc.Endpoints{}
 	}
 	return idp.Public
@@ -145,5 +164,5 @@ func envIDPPlatformTrust(idp platformIDP) oidc.Endpoints {
 // the issuer the console signs in at and aep-api expects in iss (the one
 // string the IdP's document names). An upgrade keeps it.
 func platformIDPInstallArgs(idp platformIDP) []string {
-	return []string{"--set", "console.thunderPublicURL=" + idp.Public.Issuer}
+	return []string{"--set", "idp.issuer=" + idp.Public.Issuer}
 }

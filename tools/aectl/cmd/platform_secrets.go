@@ -62,13 +62,13 @@ type generatedSecret struct {
 
 // importedPlatformSecrets are keys an operator imports that the platform reads
 // through ESO, restored like the generated ones after an OpenBao restart: the
-// Jev key and, on Asgardeo, the client secrets.
+// Jev key and, with imported clients, the client secrets.
 func importedPlatformSecrets() []generatedSecret {
 	return append([]generatedSecret{{path: "aep/jev-api-key"}}, importedClientSecrets()...)
 }
 
-// importedClientNames are the clients of an Asgardeo install whose secrets
-// the organization's admin creates (deployments/scripts/ae-asgardeo-apps.sh)
+// importedClientNames are the clients whose secrets the IdP's admin creates
+// where aectl registers none (on Asgardeo: deployments/scripts/ae-asgardeo-apps.sh)
 // and imports under aep/idp-clients/<name>: aep-api's own client, the
 // AE-only client aep-api calls every org's pod with, and the one org's
 // publisher and AE Studio clients.
@@ -80,10 +80,10 @@ var importedClientNames = []string{
 }
 
 // importedClientSecrets are the client secrets an install imports and never
-// generates: those of importedClientNames on Asgardeo, none on Thunder
+// generates: those of importedClientNames with imported clients, none where aectl registers them
 // (where aectl generates every client secret).
 func importedClientSecrets() []generatedSecret {
-	if !onAsgardeo() {
+	if registersClients() {
 		return nil
 	}
 	out := make([]generatedSecret, 0, len(importedClientNames))
@@ -93,7 +93,7 @@ func importedClientSecrets() []generatedSecret {
 	return out
 }
 
-// requireImportedClientSecrets is the Asgardeo install's check that each
+// requireImportedClientSecrets is the imported-clients install's check that each
 // imported client secret is in the vault. One the vault lost and the cluster
 // still holds (the local OpenBao is in memory) is restored first, and
 // returned. One that nothing holds is an error naming the command that
@@ -118,7 +118,7 @@ func requireImportedClientSecrets(st seedStore) ([]seededSecret, error) {
 		return restored, nil
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%d client secret(s) of the Asgardeo organization are not in OpenBao. aectl creates no client there: the organization's admin creates them with deployments/scripts/ae-asgardeo-apps.sh, which writes one file per secret. Import each:", len(missing))
+	fmt.Fprintf(&b, "%d client secret(s) of the platform IdP are not in OpenBao. With idp.clients imported aectl creates no client: the IdP's admin creates them (on Asgardeo with deployments/scripts/ae-asgardeo-apps.sh, which writes one file per secret). Import each:", len(missing))
 	for _, path := range missing {
 		fmt.Fprintf(&b, "\n  aectl platform secret import --path %s --value-file <file>", path)
 	}
@@ -141,9 +141,9 @@ func generatedThunderClientSecrets() []generatedSecret {
 var webhookRelaySeedSecret = generatedSecret{path: webhookRelaySeedPath, generate: webhookRelaySeed}
 
 // generatedClientSecrets are the client secrets this install generates: the
-// Thunder clients' on Thunder, none on Asgardeo (they are imported).
+// Thunder clients' where aectl registers them, none where they are imported.
 func generatedClientSecrets() []generatedSecret {
-	if onAsgardeo() {
+	if !registersClients() {
 		return nil
 	}
 	return generatedThunderClientSecrets()
@@ -349,7 +349,7 @@ func newClusterSecretRecovery(ctx context.Context, platformNamespace string) (re
 
 // platformSecretPaths is every OpenBao path the platform's pods read through
 // ESO that an install writes or requires: its inputs, the generated secrets,
-// and on Asgardeo the imported client secrets. Their Secrets are synced
+// and the imported client secrets. Their Secrets are synced
 // before anything reads them.
 func platformSecretPaths() []string {
 	paths := append([]string(nil), platformInputPaths()...)
@@ -369,7 +369,7 @@ func platformInputPaths() []string {
 		"aep/anthropic-api-key",
 		"aep/opensearch-username",
 	}
-	if onAsgardeo() {
+	if !registersClients() {
 		return paths
 	}
 	return append(paths,

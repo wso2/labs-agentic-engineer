@@ -77,7 +77,7 @@ spec:
             # publisher, system, SRE — have their own /internal/v1 routes, and the
             # verifier refuses a client_credentials token here whatever its aud.
             - name: JWT_AUDIENCE
-              value: {{ .Values.console.thunder.clientId | quote }}
+              value: {{ .Values.console.idp.clientId | quote }}
             - name: SERVICE_AUTH_CLIENT_ID
               value: {{ .Values.aepApi.serviceAuth.clientId | quote }}
             # The IdP's token endpoint at the in-cluster address, from its
@@ -86,7 +86,7 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   name: platform-configs
-                  key: THUNDER_TOKEN_URL
+                  key: IDP_TOKEN_URL
             - name: SERVICE_AUTH_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
@@ -128,12 +128,12 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   name: platform-configs
-                  key: THUNDER_JWKS_URL
+                  key: IDP_JWKS_URL
             - name: JWT_ISSUER
               valueFrom:
                 configMapKeyRef:
                   name: platform-configs
-                  key: THUNDER_ISSUER
+                  key: IDP_ISSUER
             # The platform IdP the coding-agent dispatch mints its own
             # (PUBLISHER_*) client_credentials token against — same instance
             # as JWKS_URL/JWT_ISSUER above, read again under the names
@@ -145,19 +145,19 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   name: platform-configs
-                  key: THUNDER_JWKS_URL
+                  key: IDP_JWKS_URL
             - name: PLATFORM_IDP_ISSUER
               valueFrom:
                 configMapKeyRef:
                   name: platform-configs
-                  key: THUNDER_ISSUER
+                  key: IDP_ISSUER
             # The token endpoint the coding-agent dispatch mints the org's
             # publisher token against.
             - name: PLATFORM_IDP_TOKEN_URL
               valueFrom:
                 configMapKeyRef:
                   name: platform-configs
-                  key: THUNDER_TOKEN_URL
+                  key: IDP_TOKEN_URL
             # The IdP's token dialect: how aep-api reads the claims of every
             # token it verifies (values.yaml idp.kind).
             - name: PLATFORM_IDP_KIND
@@ -272,7 +272,7 @@ spec:
             - name: AE_STUDIO_CONSOLE_ORIGINS
               value: {{ join "," ($ae.consoleOrigins | default list) | quote }}
             - name: AE_STUDIO_IDP_USER_AUDIENCES
-              value: {{ join "," ((default dict $ae.idp).userAudiences | default (list .Values.console.thunder.clientId)) | quote }}
+              value: {{ join "," ((default dict $ae.idp).userAudiences | default (list .Values.console.idp.clientId)) | quote }}
             - name: AE_STUDIO_CILIUM
               value: {{ $ae.cilium | default false | quote }}
             - name: AE_STUDIO_EXTRA_EGRESS

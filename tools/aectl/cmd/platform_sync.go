@@ -73,7 +73,7 @@ type syncClientsSteps struct {
 	// refusing while that Secret is unsynced.
 	syncPostgres func(ctx context.Context, unsynced map[string]string) error
 	// setupThunder registers the Thunder clients except the skipped ones.
-	// nil on Asgardeo, where aectl registers nothing.
+	// nil with imported clients, where aectl registers nothing.
 	setupThunder func(ctx context.Context, skip map[string]string) error
 }
 
@@ -123,7 +123,7 @@ func syncClients(ctx context.Context, st syncClientsSteps) error {
 	}
 
 	if st.setupThunder == nil {
-		ui.Success("Platform IdP is Asgardeo: its clients are pre-created, none registered")
+		ui.Success("The platform IdP's clients are imported: none registered")
 		return nil
 	}
 	ui.Step("Registering Thunder OAuth clients")
@@ -149,8 +149,8 @@ func runSyncClients(cmd *cobra.Command, args []string) error {
 
 	steps := syncClientsSteps{
 		missingRequired: session.missingRequiredPaths,
-		// Thunder's client secrets are generated where missing. Asgardeo's
-		// are imported: restored from the cluster where the store lost them,
+		// Thunder's client secrets are generated where missing. Imported ones
+		// are restored from the cluster where the store lost them,
 		// and required.
 		seed: func(ctx context.Context) ([]seededSecret, error) {
 			recover, err := newClusterSecretRecovery(ctx, syncClientsNamespace)
@@ -176,7 +176,7 @@ func runSyncClients(cmd *cobra.Command, args []string) error {
 				viper.GetString("thunder.namespace"), consolePublicURL(), skip)
 		},
 	}
-	if onAsgardeo() {
+	if !registersClients() {
 		steps.setupThunder = nil
 	}
 	return syncClients(ctx, steps)
