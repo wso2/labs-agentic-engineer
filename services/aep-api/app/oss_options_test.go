@@ -30,6 +30,11 @@ func setOSSEnv(t *testing.T) {
 	t.Setenv("PLATFORM_API_SERVICE_BASE_URL", "http://platform-api.invalid")
 	t.Setenv("DATABASE_URL", "postgres://u:p@localhost:5432/db")
 	t.Setenv("JWKS_URL", "http://idp.invalid/jwks")
+	// The one org the platform IdP serves: Load requires it.
+	t.Setenv("PLATFORM_IDP_ORG_HANDLE", "default")
+	t.Setenv("PLATFORM_IDP_ORG_NAMESPACE", "default")
+	t.Setenv("PLATFORM_IDP_ORG_PUBLISHER_SECRET", "p")
+	t.Setenv("PLATFORM_IDP_ORG_STUDIO_SECRET", "s")
 }
 
 // With OPENBAO_ADDR set, NewOSSOptions builds the OpenBao-direct provider and
