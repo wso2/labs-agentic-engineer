@@ -9,9 +9,20 @@ unconditionally"), [ADR-0028](ADR-0028-the-platform-idp-is-neutral-infrastructur
 for two secrets).
 **Detail:** `services/aep-api/internal/platform/auth/README.md` (the token
 dialect and the one-org mapping), `services/aep-api/internal/organization/README.md`
-(`StaticOrgClients`), `tools/aectl/AGENTS.md` and `deployments/README.md`
+(`OrgClients`), `tools/aectl/AGENTS.md` and `deployments/README.md`
 ("Install with Asgardeo as the platform IdP"),
 `deployments/scripts/ae-asgardeo-apps.sh`.
+
+**Amended 2026-11-18.** Who creates AE's clients no longer follows the kind.
+`idp.clients` says it (`thunder`: `aectl` registers them; `imported`: the
+IdP's admin creates them), and `idp.kind` selects the token dialect only.
+aep-api administers no IdP on either kind. So what decisions 3, 4 and 5 say
+of aep-api on Asgardeo holds on ThunderID too: an install serves one org,
+the org's two clients are created before aep-api runs (on ThunderID by
+`aectl`), and aep-api holds their two secrets as settings. A ThunderID
+install is therefore not unchanged, and one from before this amendment is
+reinstalled. The settings that carry the IdP's endpoints are `idp.jwksURL`,
+`idp.tokenURL` and `idp.issuer`.
 
 ## Context
 
