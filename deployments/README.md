@@ -40,8 +40,15 @@ install and update, and puts their paths on `thunder.url` for the pods.
 default) means `aectl` registers them on the ThunderID of the `thunder:`
 block, `imported` means the IdP's admin created them. The optional `idp.kind`
 (`thunder` when unset) names the IdP's token dialect, the claim names and
-rules every reader of its tokens uses. `idp.org_handle` names the one org the
-install serves, by the handle the IdP's tokens carry.
+rules every reader of its tokens uses. The optional `idp.claims` block gives
+the names and values of the IdP's own claims (`org.handle`, `org.id`,
+`org.name`, `caller_type.claim`, `caller_type.machine`, `caller_type.user`):
+each comes from a preset (`idp.claims.preset`: `thunder`, `asgardeo` or
+`none`; the preset with the name of `idp.kind` when it is not set), then from
+the block's own keys. `aectl` passes them to the chart beside the kind, and
+`aectl platform config test` prints each value and where it came from.
+`idp.org_handle` names the one org the install serves, by the handle the
+IdP's tokens carry.
 
 ```bash
 # 1. One-shot bring-up — cluster + platform, via aectl (idempotent).
