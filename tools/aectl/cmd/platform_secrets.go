@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -478,6 +479,24 @@ func clientsReadingUnsynced(unsynced map[string]string) map[string]string {
 		}
 	}
 	return skip
+}
+
+// orgClientVaultPaths are the vault paths of the org's two client secrets
+// (orgThunderClients).
+var orgClientVaultPaths = []string{"aep/idp-clients/org-publisher", "aep/idp-clients/org-studio"}
+
+// regeneratedOrgClientSecrets lists the org's client secrets that a seed run
+// generated, and did not restore from a cluster Secret. aep-api stores these
+// two in the org's references when the org connects GitHub, so a new value
+// leaves an org that is already connected with the previous one.
+func regeneratedOrgClientSecrets(seeded []seededSecret) []string {
+	var paths []string
+	for _, s := range seeded {
+		if s.from == "" && slices.Contains(orgClientVaultPaths, s.path) {
+			paths = append(paths, s.path)
+		}
+	}
+	return paths
 }
 
 // describeSeeded is the one-line, value-free account of a seed run.

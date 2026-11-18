@@ -1000,6 +1000,7 @@ func reconcileReusedOpenBaoSecrets(ctx context.Context, platformNamespace string
 	for _, line := range describeSeeded(append(restored, seeded...)) {
 		ui.Detail(line)
 	}
+	warnRegeneratedOrgClientSecrets(seeded)
 	return topUpWebhookRelaySeed(st)
 }
 

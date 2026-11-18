@@ -105,6 +105,7 @@ func syncClients(ctx context.Context, st syncClientsSteps) error {
 	for _, line := range describeSeeded(seeded) {
 		ui.Success(line)
 	}
+	warnRegeneratedOrgClientSecrets(seeded)
 
 	ui.Step("Syncing platform Secrets from OpenBao")
 	unsynced, err := st.syncSecrets(ctx)
@@ -132,6 +133,18 @@ func syncClients(ctx context.Context, st syncClientsSteps) error {
 	}
 	ui.Success("Thunder configured")
 	return nil
+}
+
+// warnRegeneratedOrgClientSecrets tells the operator how to bring a connected
+// org back in step after a seed run generated one of its client secrets.
+// aectl cannot do it: only aep-api writes an org's references, on GitHub
+// connect.
+func warnRegeneratedOrgClientSecrets(seeded []seededSecret) {
+	paths := regeneratedOrgClientSecrets(seeded)
+	if len(paths) == 0 {
+		return
+	}
+	ui.Warn(fmt.Sprintf("Generated a new secret for the org's client (%s). An org that already connected GitHub still holds the previous secret, so its builds and its AE Studio cannot get a token. To repair: restart aep-api, then reconnect GitHub in the console.", strings.Join(paths, ", ")))
 }
 
 func runSyncClients(cmd *cobra.Command, args []string) error {

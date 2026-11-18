@@ -141,11 +141,16 @@ func clientsToRegister(defs []thunderClientDef, secretsByName map[string]map[str
 }
 
 // thunderSecretNames lists the distinct K8s Secrets the confidential clients
-// read their secrets from.
-func thunderSecretNames() []string {
+// read their secrets from. A client in skip (clientID -> reason) is not
+// registered, so a Secret that only skipped clients read is left out: a wait
+// for it would stop the clients that can register.
+func thunderSecretNames(skip map[string]string) []string {
 	var names []string
 	seen := map[string]bool{}
 	for _, d := range thunderClients() {
+		if _, skipped := skip[d.clientID]; skipped {
+			continue
+		}
 		if d.clientType != "confidential" || seen[d.secretNameOrDefault()] {
 			continue
 		}
@@ -187,7 +192,7 @@ func doThunderSetup(
 	secretsByName := map[string]map[string]string{}
 	var err error
 	var skippedSecrets []string
-	for _, name := range thunderSecretNames() {
+	for _, name := range thunderSecretNames(skipClients) {
 		secretsByName[name], err = waitForSecretData(ctx, k8sClient, platformNamespace, name, 60*time.Second)
 		if err != nil && secretOptional(name) {
 			skippedSecrets = append(skippedSecrets, name)

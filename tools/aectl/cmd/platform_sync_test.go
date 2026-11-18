@@ -21,6 +21,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -134,6 +135,54 @@ func TestClientsToRegister_OptionalSecretMissing(t *testing.T) {
 		if d.clientID == "aep-api-client" {
 			t.Fatal("skipped client registered")
 		}
+	}
+}
+
+// A Secret that only skipped clients read is not waited for: the wait would
+// stop the clients that can register. A Secret an unskipped client reads is
+// still waited for.
+func TestThunderSecretNames_LeavesOutASecretOnlySkippedClientsRead(t *testing.T) {
+	all := thunderSecretNames(nil)
+	for _, want := range []string{thunderSecretsName, aeStudioInternalSecretsName, orgClientSecretsName} {
+		if !slices.Contains(all, want) {
+			t.Fatalf("with nothing skipped, %s is missing from %v", want, all)
+		}
+	}
+
+	// Both org clients skipped, as when their Secret did not sync.
+	skip := clientsReadingUnsynced(map[string]string{orgClientSecretsName: "not synced"})
+	if len(skip) != 2 {
+		t.Fatalf("skip = %v, want the org's two clients", skip)
+	}
+	got := thunderSecretNames(skip)
+	if slices.Contains(got, orgClientSecretsName) {
+		t.Errorf("%s is waited for although every client that reads it is skipped: %v", orgClientSecretsName, got)
+	}
+	if !slices.Contains(got, thunderSecretsName) {
+		t.Errorf("%s is no longer waited for: %v", thunderSecretsName, got)
+	}
+
+	// One org client skipped: the other still reads the Secret.
+	one := map[string]string{"aep-publisher-" + ocOrgNamespace(): "stale"}
+	if !slices.Contains(thunderSecretNames(one), orgClientSecretsName) {
+		t.Errorf("%s must be waited for while one client that reads it registers", orgClientSecretsName)
+	}
+}
+
+// Only an org client secret that was generated, and not restored from a
+// cluster Secret, leaves a connected org with the previous value.
+func TestRegeneratedOrgClientSecrets(t *testing.T) {
+	seeded := []seededSecret{
+		{path: "aep/idp-clients/org-publisher"},                              // generated
+		{path: "aep/idp-clients/org-studio", from: "aep-org-client-secrets"}, // restored
+		{path: "aep/idp-clients/aep-api-client"},                             // not an org client
+	}
+	got := regeneratedOrgClientSecrets(seeded)
+	if len(got) != 1 || got[0] != "aep/idp-clients/org-publisher" {
+		t.Fatalf("got %v, want only the generated org-publisher", got)
+	}
+	if got := regeneratedOrgClientSecrets(nil); len(got) != 0 {
+		t.Fatalf("got %v from an empty run", got)
 	}
 }
 
