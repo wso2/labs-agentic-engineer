@@ -22,6 +22,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wso2/aep/aep-api/internal/platform/auth/dialect"
 )
 
 var validKey = base64.StdEncoding.EncodeToString(make([]byte, 32))
@@ -33,6 +35,7 @@ func validConfig() Config {
 		CredentialEncryptionKey: validKey,
 		JWKSURL:                 "https://thunder.example/oauth2/jwks",
 		PlatformIDP: PlatformIDPDefaults{
+			Claims:             dialect.Claims{OrgHandle: "ouHandle", OrgID: "ouId", CallerType: "grant_type", Machine: "client_credentials"},
 			OrgHandle:          "acmecorp",
 			OrgNamespace:       "default",
 			OrgPublisherSecret: "p",
@@ -115,6 +118,29 @@ func TestConfigValidate_RequiredFields(t *testing.T) {
 		c.AEStudio.IDP.Kind = "okta"
 		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "AE_STUDIO_IDP_KIND") {
 			t.Fatalf("Validate() = %v, want an error naming AE_STUDIO_IDP_KIND", err)
+		}
+	})
+	// The four claim settings that no reader of the IdP's tokens can work
+	// without are required, so an install missing one fails at boot with a
+	// message naming it. The org's display name claim and the user value are
+	// optional.
+	t.Run("the four mandatory claim settings are required", func(t *testing.T) {
+		for setting, unset := range map[string]func(*Config){
+			"PLATFORM_IDP_CLAIMS_ORG_HANDLE":          func(c *Config) { c.PlatformIDP.Claims.OrgHandle = "" },
+			"PLATFORM_IDP_CLAIMS_ORG_ID":              func(c *Config) { c.PlatformIDP.Claims.OrgID = " " },
+			"PLATFORM_IDP_CLAIMS_CALLER_TYPE_CLAIM":   func(c *Config) { c.PlatformIDP.Claims.CallerType = "" },
+			"PLATFORM_IDP_CLAIMS_CALLER_TYPE_MACHINE": func(c *Config) { c.PlatformIDP.Claims.Machine = "" },
+		} {
+			c := validConfig()
+			unset(&c)
+			if err := c.Validate(); err == nil || !strings.Contains(err.Error(), setting) {
+				t.Errorf("%s unset: Validate() = %v, want an error naming it", setting, err)
+			}
+		}
+		c := validConfig()
+		c.PlatformIDP.Claims.OrgName, c.PlatformIDP.Claims.User = "", ""
+		if err := c.Validate(); err != nil {
+			t.Errorf("the optional claim settings unset: Validate() = %v, want nil", err)
 		}
 	})
 	// An install serves one org, on every IdP: the org's handle in the tokens,
@@ -268,6 +294,10 @@ func setRequiredLoadEnv(t *testing.T) {
 	t.Setenv("PLATFORM_API_SERVICE_BASE_URL", "https://platform-api.example")
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/aep")
 	t.Setenv("JWKS_URL", "https://thunder.example/oauth2/jwks")
+	t.Setenv("PLATFORM_IDP_CLAIMS_ORG_HANDLE", "ouHandle")
+	t.Setenv("PLATFORM_IDP_CLAIMS_ORG_ID", "ouId")
+	t.Setenv("PLATFORM_IDP_CLAIMS_CALLER_TYPE_CLAIM", "grant_type")
+	t.Setenv("PLATFORM_IDP_CLAIMS_CALLER_TYPE_MACHINE", "client_credentials")
 	t.Setenv("PLATFORM_IDP_ORG_HANDLE", "acmecorp")
 	t.Setenv("PLATFORM_IDP_ORG_NAMESPACE", "default")
 	t.Setenv("PLATFORM_IDP_ORG_PUBLISHER_SECRET", "p")

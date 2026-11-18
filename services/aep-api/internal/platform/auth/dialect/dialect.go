@@ -30,6 +30,26 @@ import (
 	"strings"
 )
 
+// Claims names what the platform IdP calls the two things no standard
+// defines: the caller's org, and whether a token was issued to a machine or
+// to a user. Each claim is a top-level text claim of the token. The values
+// are settings of the install (PLATFORM_IDP_CLAIMS_*), which aep-api passes
+// to every org's AE Studio pod; the Dialect below reads by its Kind.
+type Claims struct {
+	// OrgHandle, OrgID and OrgName are the names of the claims that carry the
+	// caller's org: the handle the IdP knows it by, the IdP's own id for it,
+	// and a display name. OrgName is optional.
+	OrgHandle string
+	OrgID     string
+	OrgName   string
+	// CallerType is the name of the claim that says who a token was issued
+	// to. Machine is the value that means a machine. User is the value that
+	// means a user, and is optional.
+	CallerType string
+	Machine    string
+	User       string
+}
+
 // Kind names a platform IdP's token dialect.
 type Kind string
 

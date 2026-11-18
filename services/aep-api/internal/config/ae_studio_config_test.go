@@ -21,6 +21,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/wso2/aep/aep-api/internal/platform/auth/dialect"
 )
 
 // setMinimalEnv sets the variables Load requires and clears AE_STUDIO_*.
@@ -30,6 +32,10 @@ func setMinimalEnv(t *testing.T) {
 	t.Setenv("PLATFORM_API_SERVICE_BASE_URL", "http://platform-api.invalid")
 	t.Setenv("DATABASE_URL", "postgres://u:p@localhost:5432/db")
 	t.Setenv("JWKS_URL", "http://idp.invalid/jwks")
+	t.Setenv("PLATFORM_IDP_CLAIMS_ORG_HANDLE", "ouHandle")
+	t.Setenv("PLATFORM_IDP_CLAIMS_ORG_ID", "ouId")
+	t.Setenv("PLATFORM_IDP_CLAIMS_CALLER_TYPE_CLAIM", "grant_type")
+	t.Setenv("PLATFORM_IDP_CLAIMS_CALLER_TYPE_MACHINE", "client_credentials")
 	t.Setenv("PLATFORM_IDP_ORG_HANDLE", "acmecorp")
 	t.Setenv("PLATFORM_IDP_ORG_NAMESPACE", "default")
 	t.Setenv("PLATFORM_IDP_ORG_PUBLISHER_SECRET", "p")
@@ -68,6 +74,35 @@ func TestLoad_WithoutAEStudio(t *testing.T) {
 	}
 	if string(cfg.AEStudio.ExtraEgress) != "[]" || cfg.AEStudio.ListenerName != "https" || cfg.AEStudio.Storage.SizeLimit != "3Gi" || cfg.AEStudio.Storage.EphemeralRequest != "1Gi" {
 		t.Errorf("defaults wrong: %+v", cfg.AEStudio)
+	}
+}
+
+// The six claim settings are read once, trimmed, and given to the pod as
+// they are given to aep-api: the pod reads the same IdP's tokens.
+func TestLoad_IDPClaimsReachThePod(t *testing.T) {
+	setMinimalEnv(t)
+	t.Setenv("PLATFORM_IDP_CLAIMS_ORG_HANDLE", " org_handle ")
+	t.Setenv("PLATFORM_IDP_CLAIMS_ORG_ID", "org_id")
+	t.Setenv("PLATFORM_IDP_CLAIMS_ORG_NAME", "org_name")
+	t.Setenv("PLATFORM_IDP_CLAIMS_CALLER_TYPE_CLAIM", "aut")
+	t.Setenv("PLATFORM_IDP_CLAIMS_CALLER_TYPE_MACHINE", "APPLICATION")
+	t.Setenv("PLATFORM_IDP_CLAIMS_CALLER_TYPE_USER", "APPLICATION_USER")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := dialect.Claims{OrgHandle: "org_handle", OrgID: "org_id", OrgName: "org_name", CallerType: "aut", Machine: "APPLICATION", User: "APPLICATION_USER"}
+	if cfg.PlatformIDP.Claims != want {
+		t.Errorf("PlatformIDP.Claims = %+v, want %+v", cfg.PlatformIDP.Claims, want)
+	}
+	if cfg.AEStudio.IDP.Claims != want {
+		t.Errorf("AEStudio.IDP.Claims = %+v, want the platform's %+v", cfg.AEStudio.IDP.Claims, want)
+	}
+
+	// A mandatory one left out fails boot with a message that names it.
+	t.Setenv("PLATFORM_IDP_CLAIMS_ORG_ID", "")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PLATFORM_IDP_CLAIMS_ORG_ID") {
+		t.Fatalf("Load without the org id claim = %v, want an error naming PLATFORM_IDP_CLAIMS_ORG_ID", err)
 	}
 }
 

@@ -282,6 +282,7 @@ func (c Config) Validate() error {
 		// kind, it would read them by the wrong rules and refuse every one.
 		errs = append(errs, fmt.Sprintf("AE_STUDIO_IDP_KIND (%s) must be the same kind as PLATFORM_IDP_KIND (%s): the org's pod reads the same IdP's tokens; leave AE_STUDIO_IDP_KIND unset to follow it", podKind, platformKind))
 	}
+	errs = append(errs, c.PlatformIDP.claimsErrors()...)
 	errs = append(errs, c.PlatformIDP.singleOrgErrors()...)
 	if len(errs) > 0 {
 		return fmt.Errorf("configuration errors:\n%s", strings.Join(errs, "\n"))
@@ -322,6 +323,11 @@ type PlatformIDPDefaults struct {
 	// Kind names the token dialect the verifiers read the IdP's claims by
 	// (PLATFORM_IDP_KIND; dialect.ParseKind). Empty is thunder.
 	Kind string
+	// Claims are the names and values of the IdP's own claims
+	// (PLATFORM_IDP_CLAIMS_*), which aep-api passes to every org's AE Studio
+	// pod. The four mandatory ones have no default: an install that leaves
+	// one out does not boot.
+	Claims dialect.Claims
 	// OrgHandle and OrgNamespace name the one org the IdP serves.
 	// OrgHandle (PLATFORM_IDP_ORG_HANDLE) is the handle its tokens carry;
 	// OrgNamespace (PLATFORM_IDP_ORG_NAMESPACE) is the org's OpenChoreo
@@ -338,6 +344,23 @@ type PlatformIDPDefaults struct {
 	// (organization.OrgClients). Both are required.
 	OrgPublisherSecret string
 	OrgStudioSecret    string
+}
+
+// claimsErrors checks the IdP's claim settings: the four that no reader of
+// its tokens can work without. Each message names the setting.
+func (p PlatformIDPDefaults) claimsErrors() []string {
+	var errs []string
+	for _, s := range []struct{ name, value, why string }{
+		{"PLATFORM_IDP_CLAIMS_ORG_HANDLE", p.Claims.OrgHandle, "the name of the claim that carries the caller's org handle"},
+		{"PLATFORM_IDP_CLAIMS_ORG_ID", p.Claims.OrgID, "the name of the claim that carries the IdP's id of the caller's org"},
+		{"PLATFORM_IDP_CLAIMS_CALLER_TYPE_CLAIM", p.Claims.CallerType, "the name of the claim that says whether a token was issued to a machine or to a user"},
+		{"PLATFORM_IDP_CLAIMS_CALLER_TYPE_MACHINE", p.Claims.Machine, "the value of that claim that means a machine"},
+	} {
+		if strings.TrimSpace(s.value) == "" {
+			errs = append(errs, s.name+" is required: "+s.why)
+		}
+	}
+	return errs
 }
 
 // singleOrgErrors checks the settings of the one org the IdP serves. All
@@ -378,6 +401,10 @@ type AEStudioConfig struct {
 		// to it as AE_IDP_KIND (AE_STUDIO_IDP_KIND; PLATFORM_IDP_KIND when
 		// unset). It must be the platform's kind.
 		Kind string
+		// Claims is PlatformIDP.Claims (the same PLATFORM_IDP_CLAIMS_*): the
+		// names and values of the IdP's own claims, shipped to the pod as
+		// AE_IDP_CLAIMS_*.
+		Claims dialect.Claims
 		// OrgHandle is PlatformIDP.OrgHandle (the same PLATFORM_IDP_ORG_HANDLE):
 		// when set, the handle the IdP's tokens name the org by, which the
 		// pod is given as its org handle in place of the namespace name.

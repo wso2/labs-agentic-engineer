@@ -18,11 +18,13 @@ package aestudio
 
 import (
 	"encoding/json"
+	"maps"
 	"strings"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/config"
+	"github.com/wso2/aep/aep-api/internal/platform/auth/dialect"
 )
 
 type podContainer struct {
@@ -205,6 +207,28 @@ func TestTemplate_IDPKindReachesEveryContainer(t *testing.T) {
 	}
 }
 
+// The IdP's claim names and values reach every container as AE_IDP_CLAIMS_*,
+// from environmentConfigs.idp.claims: the same values aep-api is given.
+func TestTemplate_IDPClaimsReachEveryContainer(t *testing.T) {
+	cs := byName(renderedContainers(t, ""))
+	want := map[string]string{
+		"AE_IDP_CLAIMS_ORG_HANDLE":          "ouHandle",
+		"AE_IDP_CLAIMS_ORG_ID":              "ouId",
+		"AE_IDP_CLAIMS_ORG_NAME":            "ouName",
+		"AE_IDP_CLAIMS_CALLER_TYPE_CLAIM":   "grant_type",
+		"AE_IDP_CLAIMS_CALLER_TYPE_MACHINE": "client_credentials",
+		"AE_IDP_CLAIMS_CALLER_TYPE_USER":    "",
+	}
+	for _, name := range []string{"ae-design-agent", "ae-collab", "ae-studio-tools"} {
+		for key, value := range want {
+			got, ok := cs[name].env(key)
+			if !ok || got != value {
+				t.Errorf("%s %s = %q (set %v), want %q from environmentConfigs.idp.claims", name, key, got, ok, value)
+			}
+		}
+	}
+}
+
 // TestTemplate_WebhookURLEnvIsTheOutput: without a relay,
 // ae-studio-tools registers its repo hooks at AE_WEBHOOK_URL, which must
 // render to the very URL the webhookUrl output publishes, or GitHub delivers
@@ -316,6 +340,34 @@ func TestTemplate_ToolsExternalSecretHoldsOnlyThePodsClient(t *testing.T) {
 	}
 	if strings.Join(keys, ",") != "GITHUB_PAT,GITHUB_WEBHOOK_SECRET,AE_STUDIO_CLIENT_ID,AE_STUDIO_CLIENT_SECRET" {
 		t.Fatalf("es-tools secret keys = %v", keys)
+	}
+}
+
+// aep-api's claim settings map onto the RT's environmentConfigs.idp.claims
+// under the property names the RT declares, beside the kind.
+func TestEnvConfigsOf_CarriesTheIDPClaims(t *testing.T) {
+	var cfg config.AEStudioConfig
+	cfg.IDP.Kind = "asgardeo"
+	cfg.IDP.Claims = dialect.Claims{OrgHandle: "org_handle", OrgID: "org_id", OrgName: "org_name", CallerType: "aut", Machine: "APPLICATION", User: "APPLICATION_USER"}
+	raw, err := json.Marshal(envConfigsOf(cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		IDP struct {
+			Kind   string            `json:"kind"`
+			Claims map[string]string `json:"claims"`
+		} `json:"idp"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"orgHandle": "org_handle", "orgId": "org_id", "orgName": "org_name",
+		"callerTypeClaim": "aut", "callerTypeMachine": "APPLICATION", "callerTypeUser": "APPLICATION_USER",
+	}
+	if got.IDP.Kind != "asgardeo" || !maps.Equal(got.IDP.Claims, want) {
+		t.Fatalf("idp = %+v, want kind asgardeo and claims %v", got.IDP, want)
 	}
 }
 
