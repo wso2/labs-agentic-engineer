@@ -196,7 +196,7 @@ func TestOrgClientRepairWarning_StepsInOrder(t *testing.T) {
 	register := strings.Index(msg, "aectl platform sync-clients")
 	restart := strings.Index(msg, "restart aep-api")
 	reconnect := strings.Index(msg, "reconnect GitHub")
-	if register < 0 || restart < 0 || reconnect < 0 || !(register < restart && restart < reconnect) {
+	if register < 0 || restart < 0 || reconnect < 0 || register >= restart || restart >= reconnect {
 		t.Fatalf("steps missing or out of order (register=%d restart=%d reconnect=%d): %s", register, restart, reconnect, msg)
 	}
 	if msg := orgClientRepairWarning([]seededSecret{{path: "aep/idp-clients/org-studio", from: "aep-org-client-secrets"}}); msg != "" {
