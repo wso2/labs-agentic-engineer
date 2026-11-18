@@ -1,6 +1,7 @@
 {
   "idp": "asgardeo",
-  "about": "How an Asgardeo token names the caller's org and caller type, with sample token payloads and how every reader of the platform IdP's tokens must read them. caller is user, machine or refused.",
+  "about": "How an Asgardeo token names the caller's org and caller type, with sample token payloads and how every reader of the platform IdP's tokens must read them. caller is user, machine or refused. orgHandle is the handle of the one org the sample install serves: a reader that maps the install's org (aep-api) reads a token of any other org as no org at all.",
+  "orgHandle": "acmecorp",
   "claims": {
     "org": {
       "handle": "org_handle",

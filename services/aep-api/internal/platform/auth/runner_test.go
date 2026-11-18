@@ -38,8 +38,10 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 )
 
-// thunderDialect reads the Thunder claims every test token here carries.
-var thunderDialect = dialect.MustForTest(dialect.ThunderClaimsForTest())
+// thunderDialect reads the Thunder claims every test token here carries, for
+// any org: these tests send a second org's token to prove the fences below
+// the token check.
+var thunderDialect = dialect.MustAnyOrgForTest(dialect.ThunderClaimsForTest())
 
 // openCycle is an open cycle owned by org.
 func openCycle(org string) RunnerCycle { return RunnerCycle{OrgHandle: org, Open: true} }

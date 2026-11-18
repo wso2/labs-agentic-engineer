@@ -516,10 +516,17 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	deploymentService := projects.NewDeploymentService(componentClient, artifactStore)
 	deploymentService.SetWriteTargets(writeTargets)
 
-	// The platform IdP's own claims decide how its tokens are read. Validate
-	// required them at load; building the dialect here keeps this seam honest
-	// if a caller builds the config by hand.
-	claimsDialect, err := dialect.New(cfg.PlatformIDP.Claims)
+	// The platform IdP's token dialect: every verifier reads the caller's org
+	// through it, and the user edge tells a user's token from a machine's by
+	// it. It is built from the IdP's own claim names and the one org the IdP
+	// serves, which it maps from the IdP's handle to the org's namespace, the
+	// name everything here knows it by; a token of any other org reads as no
+	// org. Validate required all of it at load; building it here keeps this
+	// seam honest if a caller builds the config by hand.
+	idpDialect, err := dialect.New(cfg.PlatformIDP.Claims, dialect.OrgMapping{
+		IDPHandle:      cfg.PlatformIDP.OrgHandle,
+		PlatformHandle: cfg.PlatformIDP.OrgNamespace,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("platform IdP: %w", err)
 	}
@@ -789,14 +796,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// branch resolves the acting org by that cycle id. Every agent pod in the
 	// system is launched by the milestone supervisor, so a cycle id is the only
 	// runner identity there is; an execution id named in a path fails closed.
-	// The platform IdP's token dialect: every verifier reads the caller's org
-	// through it, and the user edge tells a user's token from a machine's by
-	// it.
-	//
-	// The IdP serves one org, under a handle of its own; the dialect maps it
-	// to the org's namespace, the name everything here knows it by. A token
-	// of any other org reads as no org.
-	idpDialect := claimsDialect.WithSingleOrg(cfg.PlatformIDP.OrgHandle, cfg.PlatformIDP.OrgNamespace)
 	slog.Info("Platform IdP token dialect",
 		"orgHandleClaim", cfg.PlatformIDP.Claims.OrgHandle, "orgIDClaim", cfg.PlatformIDP.Claims.OrgID,
 		"callerTypeClaim", cfg.PlatformIDP.Claims.CallerType, "userValueSet", cfg.PlatformIDP.Claims.User != "",

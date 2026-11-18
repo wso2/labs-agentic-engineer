@@ -19,5 +19,9 @@ package edge
 import "github.com/wso2/aep/aep-api/internal/platform/auth/dialect"
 
 // thunderDialect reads the Thunder claims every signed test token in this
-// package carries.
-func thunderDialect() dialect.Dialect { return dialect.MustForTest(dialect.ThunderClaimsForTest()) }
+// package carries, for any org: these tests send a second org's token to
+// prove the fences below the token check, which a production dialect (one
+// org per install) cannot read.
+func thunderDialect() dialect.Dialect {
+	return dialect.MustAnyOrgForTest(dialect.ThunderClaimsForTest())
+}

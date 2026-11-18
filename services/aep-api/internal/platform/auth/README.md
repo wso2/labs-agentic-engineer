@@ -75,15 +75,22 @@ other tests those claim names.
 An install serves one org. The IdP names it by a handle of its own (a
 ThunderID organization unit's handle, an Asgardeo organization's handle),
 which need not be the org's OpenChoreo namespace.
-`Dialect.WithSingleOrg(idpHandle, platformHandle)` (wired from
-`PLATFORM_IDP_ORG_HANDLE` and `PLATFORM_IDP_ORG_NAMESPACE`) maps it: a token
-declaring exactly `idpHandle` reads as the org `platformHandle`, and any
-other token (another org of the IdP, no handle claim) reads as no org, so the
-tenant gate and the machine-token verifiers refuse it. Both settings are
-required on every install (`config.Validate`), and the mapping is always
-applied. It is in the dialect because every consumer of
-the handle goes through it: the user edge, the org lookup, and the publisher
-and studio verifiers, whose clients are named after the namespace.
+The dialect is built with that org, `dialect.New(claims, OrgMapping{IDPHandle,
+PlatformHandle})` (from `PLATFORM_IDP_ORG_HANDLE` and
+`PLATFORM_IDP_ORG_NAMESPACE`), and maps it: a token declaring exactly the
+IdP's handle reads as the org under its namespace, and any other token
+(another org of the IdP, no handle claim) reads as no org, so the tenant gate
+and the machine-token verifiers refuse it. Both settings are required on
+every install (`config.Validate`), and `New` refuses a mapping missing
+either. The mapping is in the dialect because every consumer of the handle
+goes through it: the user edge, the org lookup, and the publisher and studio
+verifiers, whose clients are named after the namespace.
+
+A dialect from `New` has no other mode. aep-api's data is keyed by org and
+fenced by org below the token check (a cycle, a repository or a project of
+another org), and the tests of those fences need a second org's valid caller.
+Test support builds a reader of any org for them, `dialect.MustAnyOrgForTest`
+(`claims_fortest.go`); no production code can.
 
 Only aep-api maps. The org's pod is given the IdP's handle as its
 `AE_ORG_HANDLE` (`aestudio` `Params.Org.Handle`), so its dialect twins

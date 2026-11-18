@@ -316,7 +316,7 @@ type PlatformIDPDefaults struct {
 	// OrgNamespace (PLATFORM_IDP_ORG_NAMESPACE) is the org's OpenChoreo
 	// namespace, the name aep-api knows the org by. A token declaring
 	// OrgHandle is that org's and any other token is no org's
-	// (dialect.WithSingleOrg). Both are required.
+	// (dialect.OrgMapping). Both are required.
 	OrgHandle    string
 	OrgNamespace string
 	// OrgPublisherSecret and OrgStudioSecret are the client secrets of that

@@ -31,8 +31,10 @@ import (
 const fixtureDir = "../../../../../../packages/platform-idp-auth/test/fixtures/idp-claims"
 
 type fixture struct {
-	IDP    string `json:"idp"`
-	Claims struct {
+	IDP string `json:"idp"`
+	// OrgHandle is the handle of the one org the sample install serves.
+	OrgHandle string `json:"orgHandle"`
+	Claims    struct {
 		Org struct {
 			Handle string `json:"handle"`
 			ID     string `json:"id"`
@@ -95,16 +97,28 @@ func callerOf(d Dialect, r Raw) string {
 // Every sample token of both IdPs reads as the shared fixtures say. The same
 // files pin the pod's Go twin, the TypeScript package and the console, so the
 // four cannot drift apart.
+//
+// aep-api reads one thing its twins do not: it serves one org, so a token
+// whose handle is not that org's reads as no org at all, id and name
+// included. The fixtures give the org as the token states it, which is what
+// the other readers return; here that holds for the install's org only.
 func TestDialect_ReadsTheSharedFixtures(t *testing.T) {
 	for _, idp := range []string{"thunder", "asgardeo"} {
 		f := loadFixture(t, idp)
-		d, err := New(f.claims())
+		if f.OrgHandle == "" {
+			t.Fatalf("%s.json names no orgHandle", idp)
+		}
+		d, err := New(f.claims(), SameHandleForTest(f.OrgHandle))
 		if err != nil {
 			t.Fatalf("%s: %v", idp, err)
 		}
 		for _, tok := range f.Tokens {
 			t.Run(idp+": "+tok.Name, func(t *testing.T) {
-				if got, want := d.Org(tok.Payload), (Org{Handle: tok.Org.Handle, ID: tok.Org.ID, Name: tok.Org.Name}); got != want {
+				want := Org{}
+				if tok.Org.Handle == f.OrgHandle {
+					want = Org{Handle: tok.Org.Handle, ID: tok.Org.ID, Name: tok.Org.Name}
+				}
+				if got := d.Org(tok.Payload); got != want {
 					t.Errorf("org = %+v, want %+v", got, want)
 				}
 				if got := callerOf(d, tok.Payload); got != tok.Caller {
@@ -112,6 +126,37 @@ func TestDialect_ReadsTheSharedFixtures(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// The any-org reader that test support builds reads every sample token's org
+// as the token states it, which is what the pod's twins return. It is how
+// the tests of the fences below the token check get a second org's caller.
+func TestMustAnyOrgForTest_ReadsTheOrgAsTheTokenStatesIt(t *testing.T) {
+	for _, idp := range []string{"thunder", "asgardeo"} {
+		f := loadFixture(t, idp)
+		d := MustAnyOrgForTest(f.claims())
+		for _, tok := range f.Tokens {
+			want := Org{Handle: tok.Org.Handle, ID: tok.Org.ID, Name: tok.Org.Name}
+			if got := d.Org(tok.Payload); got != want {
+				t.Errorf("%s: %s: org = %+v, want %+v", idp, tok.Name, got, want)
+			}
+			if got := callerOf(d, tok.Payload); got != tok.Caller {
+				t.Errorf("%s: %s: caller = %s, want %s", idp, tok.Name, got, tok.Caller)
+			}
+		}
+	}
+}
+
+// New never builds the any-org reader: a dialect from New reads another
+// org's token as no org, whatever mapping it is given.
+func TestNew_NeverReadsAnotherOrg(t *testing.T) {
+	d, err := New(ThunderClaimsForTest(), SameHandleForTest("acme"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := d.Org(Raw{"ouHandle": "globex", "ouId": "ou-2"}); got != (Org{}) {
+		t.Fatalf("another org's token read as %+v, want no org", got)
 	}
 }
 
@@ -125,26 +170,28 @@ func TestForTestClaimsMatchTheSharedFixtures(t *testing.T) {
 	}
 }
 
-// A dialect that could not find the org or tell a machine from a user does
-// not get built: each missing name or value is named.
-func TestNew_RefusesIncompleteClaims(t *testing.T) {
-	full := AsgardeoClaimsForTest()
-	for name, unset := range map[string]func(*Claims){
-		"org.handle":          func(c *Claims) { c.OrgHandle = "" },
-		"org.id":              func(c *Claims) { c.OrgID = " " },
-		"caller_type.claim":   func(c *Claims) { c.CallerType = "" },
-		"caller_type.machine": func(c *Claims) { c.Machine = "" },
+// A dialect that could not find the org, tell a machine from a user, or name
+// the org it serves does not get built: each missing piece is named.
+func TestNew_RefusesAnIncompleteDialect(t *testing.T) {
+	full, org := AsgardeoClaimsForTest(), OrgMapping{IDPHandle: "acmecorp", PlatformHandle: "default"}
+	for name, unset := range map[string]func(*Claims, *OrgMapping){
+		"org.handle":                  func(c *Claims, _ *OrgMapping) { c.OrgHandle = "" },
+		"org.id":                      func(c *Claims, _ *OrgMapping) { c.OrgID = " " },
+		"caller_type.claim":           func(c *Claims, _ *OrgMapping) { c.CallerType = "" },
+		"caller_type.machine":         func(c *Claims, _ *OrgMapping) { c.Machine = "" },
+		"the org's handle at the IdP": func(_ *Claims, m *OrgMapping) { m.IDPHandle = "" },
+		"the org's namespace":         func(_ *Claims, m *OrgMapping) { m.PlatformHandle = " " },
 	} {
-		c := full
-		unset(&c)
-		if _, err := New(c); err == nil || !strings.Contains(err.Error(), name) {
+		c, m := full, org
+		unset(&c, &m)
+		if _, err := New(c, m); err == nil || !strings.Contains(err.Error(), name) {
 			t.Errorf("without %s: err = %v, want one naming it", name, err)
 		}
 	}
 	// The org's display name and the user value are optional.
 	c := full
 	c.OrgName, c.User = "", ""
-	if _, err := New(c); err != nil {
+	if _, err := New(c, org); err != nil {
 		t.Errorf("without the optional name and user value: %v", err)
 	}
 }
@@ -165,13 +212,13 @@ func TestZeroDialect_ReadsNothing(t *testing.T) {
 // With a user value configured a third value is refused; with none, any
 // value but the machine's is a user's.
 func TestMachine_UserValueDecidesHowAThirdValueReads(t *testing.T) {
-	strict := MustForTest(AsgardeoClaimsForTest())
+	strict := MustForTest(AsgardeoClaimsForTest(), SameHandleForTest("acmecorp"))
 	if _, err := strict.Machine(Raw{"aut": "DEVICE"}); !errors.Is(err, ErrUnknownMachineClaim) {
 		t.Errorf("strict: err = %v, want ErrUnknownMachineClaim", err)
 	}
 	loose := AsgardeoClaimsForTest()
 	loose.User = ""
-	if machine, err := MustForTest(loose).Machine(Raw{"aut": "DEVICE"}); err != nil || machine {
+	if machine, err := MustForTest(loose, SameHandleForTest("acmecorp")).Machine(Raw{"aut": "DEVICE"}); err != nil || machine {
 		t.Errorf("no user value: machine=%v err=%v, want a user's", machine, err)
 	}
 	// A caller type claim that is not text is no claim.
@@ -180,14 +227,14 @@ func TestMachine_UserValueDecidesHowAThirdValueReads(t *testing.T) {
 	}
 }
 
-// One org under the IdP's own handle: a token declaring exactly that handle
+// The one org the IdP serves: a token declaring exactly its handle at the IdP
 // reads as the platform's name for the org, with the IdP's id and name kept;
-// any other token reads as no org.
-func TestWithSingleOrg(t *testing.T) {
-	d := MustForTest(AsgardeoClaimsForTest()).WithSingleOrg("acmecorp", "default")
+// any other token reads as no org, id and name included.
+func TestOrg_OnlyTheInstallsOrg(t *testing.T) {
+	d := MustForTest(AsgardeoClaimsForTest(), OrgMapping{IDPHandle: "acmecorp", PlatformHandle: "default"})
 	own := Raw{"org_handle": "acmecorp", "org_id": "org-1", "org_name": "Acme Corp"}
 	if got, want := d.Org(own), (Org{Handle: "default", ID: "org-1", Name: "Acme Corp"}); got != want {
-		t.Errorf("the IdP's org = %+v, want %+v", got, want)
+		t.Errorf("the install's org = %+v, want %+v", got, want)
 	}
 	for name, r := range map[string]Raw{
 		"another org of the IdP":     {"org_handle": "globex", "org_id": "org-2"},
@@ -199,10 +246,6 @@ func TestWithSingleOrg(t *testing.T) {
 		if got := d.Org(r); got != (Org{}) {
 			t.Errorf("%s: org = %+v, want none", name, got)
 		}
-	}
-	// An install whose handle setting is empty maps nothing.
-	if got := MustForTest(AsgardeoClaimsForTest()).WithSingleOrg("", "default").Org(Raw{"org_id": "org-1"}); got != (Org{}) {
-		t.Errorf("empty handle setting: org = %+v, want none", got)
 	}
 }
 

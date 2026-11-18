@@ -21,7 +21,8 @@
 // those claims by its IdP-specific name.
 //
 // The names and values are settings (PLATFORM_IDP_CLAIMS_*), read once at
-// boot. This package knows no IdP: what a ThunderID or an Asgardeo token looks
+// boot, with the one org the install serves (PLATFORM_IDP_ORG_HANDLE,
+// PLATFORM_IDP_ORG_NAMESPACE). This package knows no IdP: what a ThunderID or an Asgardeo token looks
 // like is configuration. Claims a standard names (sub, aud, iss, exp,
 // client_id, scope, name, email) are not the dialect's: every verifier reads
 // them by their standard names.
@@ -132,63 +133,69 @@ var (
 	ErrUnknownMachineClaim = errors.New("token's machine-token claim has an unknown value")
 )
 
-// Dialect answers the dialect questions by the configured claims. The zero
-// value reads nothing: no org, and no token placed as a user's or a
-// machine's.
+// OrgMapping names the one org the platform IdP serves, by both of its names.
+// IDPHandle is what the IdP's tokens carry (a ThunderID organization unit's
+// handle, an Asgardeo organization's handle). PlatformHandle is the org's
+// OpenChoreo namespace, the name every consumer of Org.Handle knows it by.
+// The two may be the same word.
+type OrgMapping struct {
+	IDPHandle      string
+	PlatformHandle string
+}
+
+// Dialect answers the dialect questions by the configured claims, for the
+// one org the IdP serves. The zero value reads nothing: no org, and no token
+// placed as a user's or a machine's.
 type Dialect struct {
 	claims Claims
-	// single is set by WithSingleOrg: the IdP serves one org, named
-	// idpHandle in its tokens and platformHandle by the platform.
-	single         bool
-	idpHandle      string
-	platformHandle string
+	org    OrgMapping
+	// anyOrgForTest makes Org read any org's token as that org, under the
+	// handle the token carries. Only test support sets it (claims_fortest.go):
+	// aep-api's data is keyed by org and fenced by org below the token check,
+	// and the tests of those fences need a second org's caller, which a
+	// dialect built by New cannot read. New never sets it.
+	anyOrgForTest bool
 }
 
-// New returns the dialect of c. A required name or value left empty is an
-// error naming it: a dialect that could not tell a machine from a user must
-// not run.
-func New(c Claims) (Dialect, error) {
-	if m := c.missing(); len(m) != 0 {
-		return Dialect{}, fmt.Errorf("the platform IdP's claims are incomplete: %s not set", strings.Join(m, ", "))
+// New returns the dialect of c for the org m names. A required claim name or
+// value left empty, or a mapping missing either handle, is an error naming
+// it: a dialect that could not tell a machine from a user, or that had no org
+// to accept, must not run.
+func New(c Claims, m OrgMapping) (Dialect, error) {
+	missing := c.missing()
+	if strings.TrimSpace(m.IDPHandle) == "" {
+		missing = append(missing, "the org's handle at the IdP")
 	}
-	return Dialect{claims: c}, nil
+	if strings.TrimSpace(m.PlatformHandle) == "" {
+		missing = append(missing, "the org's namespace")
+	}
+	if len(missing) != 0 {
+		return Dialect{}, fmt.Errorf("the platform IdP's token dialect is incomplete: %s not set", strings.Join(missing, ", "))
+	}
+	return Dialect{claims: c, org: m}, nil
 }
 
-// WithSingleOrg returns d for an IdP that serves one org under a handle of
-// its own: a token declaring exactly idpHandle is read as the org
-// platformHandle, and any other token (another org of the IdP, no handle
-// claim) is read as no org. The org's ID and Name are kept as the IdP gave
-// them. idpHandle is what the IdP's tokens carry (a ThunderID organization
-// unit's handle, an Asgardeo organization's handle); platformHandle is the
-// org's OpenChoreo namespace, the name every consumer of Org.Handle knows it
-// by. An empty idpHandle maps nothing: every token reads as no org.
-func (d Dialect) WithSingleOrg(idpHandle, platformHandle string) Dialect {
-	d.single = true
-	d.idpHandle = idpHandle
-	d.platformHandle = platformHandle
-	return d
-}
-
-// Org reads the caller's org from the token's own claims. The handle comes
-// from the one handle claim or is empty: nothing stands in for it.
-//
-// Under WithSingleOrg the handle read this way is the IdP's; it is replaced
-// by the platform's, and a token of any other org reads as no org.
+// Org reads the caller's org from the token's own claims. A token declaring
+// exactly the IdP's handle of the install's org reads as that org, under the
+// platform's name for it, with the IdP's id and display name kept. Any other
+// token (another org of the IdP, no handle claim) reads as no org. Nothing
+// stands in for the handle claim.
 func (d Dialect) Org(r Raw) Org {
 	if d.claims.OrgHandle == "" {
 		return Org{}
 	}
-	org := Org{Handle: r.text(d.claims.OrgHandle), ID: r.text(d.claims.OrgID)}
+	handle := r.text(d.claims.OrgHandle)
+	switch {
+	case d.anyOrgForTest:
+	case handle == "" || handle != d.org.IDPHandle:
+		return Org{}
+	default:
+		handle = d.org.PlatformHandle
+	}
+	org := Org{Handle: handle, ID: r.text(d.claims.OrgID)}
 	if d.claims.OrgName != "" {
 		org.Name = r.text(d.claims.OrgName)
 	}
-	if !d.single {
-		return org
-	}
-	if org.Handle == "" || d.idpHandle == "" || org.Handle != d.idpHandle {
-		return Org{}
-	}
-	org.Handle = d.platformHandle
 	return org
 }
 

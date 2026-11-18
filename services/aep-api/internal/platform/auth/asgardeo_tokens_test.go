@@ -45,7 +45,7 @@ const (
 	asgConsoleApp = "aep-console-client"
 )
 
-var asgardeoDialect = dialect.MustForTest(dialect.AsgardeoClaimsForTest())
+var asgardeoDialect = dialect.MustAnyOrgForTest(dialect.AsgardeoClaimsForTest())
 
 // asgardeoUserClaims is a signed-in user's access token from the console app,
 // with the attributes the app lists under Access Token Attributes. Asgardeo
@@ -238,7 +238,7 @@ func TestStudioClientVerifier_Asgardeo(t *testing.T) {
 // An Asgardeo install serves one org: the tenant's handle in the token maps
 // to the org's OpenChoreo namespace, which is the name every consumer of the
 // claims and every per-org client is known by.
-var asgardeoSingleOrg = dialect.MustForTest(dialect.AsgardeoClaimsForTest()).WithSingleOrg("acme", "default")
+var asgardeoSingleOrg = dialect.MustForTest(dialect.AsgardeoClaimsForTest(), dialect.OrgMapping{IDPHandle: "acme", PlatformHandle: "default"})
 
 // The user edge binds the namespace, never the tenant's handle; a user of
 // another org of the same IdP verifies but carries no org.

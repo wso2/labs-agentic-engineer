@@ -16,6 +16,8 @@
 
 package dialect
 
+import "strings"
+
 // Test support: the claim names of the two IdPs AE ships presets for, so a
 // test that needs "a dialect" does not spell them out. The values are pinned
 // against the shared fixtures by TestForTestClaimsMatchTheSharedFixtures.
@@ -33,12 +35,30 @@ func AsgardeoClaimsForTest() Claims {
 	return Claims{OrgHandle: "org_handle", OrgID: "org_id", OrgName: "org_name", CallerType: "aut", Machine: "APPLICATION", User: "APPLICATION_USER"}
 }
 
-// MustForTest is New for claims a test knows are complete; it panics
-// otherwise.
-func MustForTest(c Claims) Dialect {
-	d, err := New(c)
+// SameHandleForTest is the mapping of an org whose handle at the IdP is its
+// namespace, as on a local ThunderID.
+func SameHandleForTest(org string) OrgMapping {
+	return OrgMapping{IDPHandle: org, PlatformHandle: org}
+}
+
+// MustForTest is New for claims and a mapping a test knows are complete; it
+// panics otherwise.
+func MustForTest(c Claims, m OrgMapping) Dialect {
+	d, err := New(c, m)
 	if err != nil {
 		panic(err)
 	}
 	return d
+}
+
+// MustAnyOrgForTest returns a dialect that reads any org's token as that
+// org, under the handle the token carries, with no mapping. Production
+// cannot build one: New always takes the one org the install serves. It is
+// for tests of the fences below the token check (a cycle, a repository or a
+// project of another org), which need a second org's valid caller.
+func MustAnyOrgForTest(c Claims) Dialect {
+	if m := c.missing(); len(m) != 0 {
+		panic("incomplete claims: " + strings.Join(m, ", "))
+	}
+	return Dialect{claims: c, anyOrgForTest: true}
 }
