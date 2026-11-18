@@ -17,6 +17,7 @@ go build -o aectl .  # build CLI
 | `internal/thunder/` | Thunder admin client (OAuth app registration over HTTP), port-forward |
 | `internal/kubernetes/` | k8s client helpers (Job runner, port-forward) |
 | `internal/config/` | Viper config defaults and init |
+| `internal/idpclaims/` | Resolves the `idp.claims` block: a preset (data files in `presets/`), then the values that the caller lays over it. `platformIDPClaims` (`cmd/platform_idp.go`) supplies the config keys and `AEP_IDP_CLAIMS_*` |
 | `internal/oidc/` | Reads the platform IdP's endpoints from its OIDC discovery document (`Discover`). `Endpoints.OnBase` puts the same paths on another address: Thunder's in-cluster Service, or the HTTPS gateway through which the environment Thunders fetch its keys |
 | `internal/envidp/` | Installs the environment-tier Thunder + its binding record + the environment's API Platform gateway — see deployments/design/two-tier-thunder.md. Org/env come from oc.default_org_namespace/oc.pipeline_source_environment (cmd.ocOrgNamespace/ocPipelineSourceEnvironment); no runtime dependency on Agent Manager |
 
@@ -45,6 +46,19 @@ required.
 `idp.kind` selects how the token readers read a token of the platform IdP:
 `thunder` (the default) or `asgardeo`. It does not select who creates the
 clients.
+
+The `idp.claims` block gives the claim names of the platform IdP
+(`internal/idpclaims`). Each value comes from three layers, in this order:
+the preset (`idp.claims.preset`: `thunder`, `asgardeo` or `none`), the
+`idp.claims.*` keys of the config, and an `AEP_IDP_CLAIMS_*` environment
+variable. If the preset is not set, it is the preset with the name of
+`idp.kind` (`ClaimsPreset`, `internal/config/config.go`). An environment
+value applies to one run: `platform config import` does not store it. An
+environment variable that is set but blank stops the command.
+`platform install`, `platform update` and `platform config test` print each
+value and its layer. With `none`, a required value that is not set stops the
+command. `aectl` passes the values to the chart. The token readers read by
+`idp.kind`.
 
 ## Thunder clients and seeds
 
@@ -81,7 +95,9 @@ clients.
   The Thunder admin client (`internal/thunder`) and the environment Thunders
   (`internal/envidp`) still name the paths of Thunder's own API.
   `platformIDPOverrides` writes the chart values: `idp.clients`, `idp.kind`
-  (`thunder` if the config key is not set), `idp.jwksURL` and `idp.tokenURL`,
+  (`thunder` if the config key is not set), the six `idp.claims.*` values
+  (the empty ones too, because the defaults of the chart are those of one
+  IdP), `idp.jwksURL` and `idp.tokenURL`,
   `aeStudio.idp.{issuer,jwksUrl,tokenUrl}`, `idp.orgHandle` and
   `idp.orgNamespace`. When `aectl` registers the clients, the JWKS and token
   URLs are the paths of the document on `thunder.url`, the address at which
