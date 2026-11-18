@@ -75,5 +75,18 @@ func runConfigTest(cmd *cobra.Command, args []string) error {
 	}
 
 	ui.Success("Config is valid")
+	// The platform IdP's claim values that aectl passes to the chart, and
+	// where each comes from. A file is shown as it stands; the cluster's
+	// config with this run's AEP_IDP_CLAIMS_* variables, as an install or
+	// update would apply them.
+	claims, err := platformIDPClaims()
+	if configTestFile != "" {
+		claims, err = config.FileClaims(configTestFile)
+	}
+	if err != nil {
+		return err
+	}
+	ui.Detail(fmt.Sprintf("Platform IdP claims (preset %s):", claims.Preset))
+	printPlatformIDPClaims(claims)
 	return nil
 }

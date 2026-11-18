@@ -37,7 +37,7 @@ var testAsgardeoIDP = func() platformIDP {
 		JWKSURL:  "https://api.asgardeo.io/t/acmecorp/oauth2/jwks",
 		TokenURL: "https://api.asgardeo.io/t/acmecorp/oauth2/token",
 	}
-	return platformIDP{Clients: "imported", Kind: "asgardeo", Public: pub, InCluster: pub, OrgHandle: "acmecorp", OrgNamespace: "default"}
+	return platformIDP{Clients: "imported", Kind: "asgardeo", Claims: presetClaims("asgardeo"), Public: pub, InCluster: pub, OrgHandle: "acmecorp", OrgNamespace: "default"}
 }()
 
 func setAsgardeoConfig(t *testing.T) {
@@ -76,7 +76,8 @@ func TestDiscoverPlatformIDP_Asgardeo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if idp.Kind != "asgardeo" || idp.Public.Issuer != issuer || idp.Public.JWKSURL != srv.URL+"/t/acmecorp/oauth2/jwks" {
+	// The config sets the kind and no preset: the claims are Asgardeo's.
+	if idp.Kind != "asgardeo" || idp.Claims.Preset != "asgardeo" || idp.Claims.Claims().OrgHandle != "org_handle" || idp.Public.Issuer != issuer || idp.Public.JWKSURL != srv.URL+"/t/acmecorp/oauth2/jwks" {
 		t.Fatalf("public: %+v", idp)
 	}
 	if idp.InCluster != idp.Public {
@@ -98,6 +99,12 @@ func TestPlatformIDPOverrides_Asgardeo(t *testing.T) {
 	for _, want := range []string{
 		"--set idp.clients=imported",
 		"--set idp.kind=asgardeo",
+		"--set idp.claims.org.handle=org_handle",
+		"--set idp.claims.org.id=org_id",
+		"--set idp.claims.org.name=org_name",
+		"--set idp.claims.callerType.claim=aut",
+		"--set idp.claims.callerType.machine=APPLICATION",
+		"--set idp.claims.callerType.user=APPLICATION_USER",
 		"--set idp.orgHandle=acmecorp",
 		"--set idp.orgNamespace=default",
 		"--set idp.jwksURL=https://api.asgardeo.io/t/acmecorp/oauth2/jwks",

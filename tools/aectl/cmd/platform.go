@@ -355,7 +355,8 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	ui.Success(fmt.Sprintf("Platform IdP %s (token dialect %s)", idp.Public.Issuer, idp.Kind))
+	ui.Success(fmt.Sprintf("Platform IdP %s (token dialect %s; claims from preset %s, then config and environment)", idp.Public.Issuer, idp.Kind, idp.Claims.Preset))
+	printPlatformIDPClaims(idp.Claims)
 
 	if _, err := exec.LookPath("helm"); err != nil {
 		return fmt.Errorf("helm not found in PATH — install from https://helm.sh/docs/intro/install/")

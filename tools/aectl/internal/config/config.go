@@ -18,6 +18,7 @@ package config
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -27,6 +28,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+
+	"github.com/wso2/aep/aectl/internal/idpclaims"
 )
 
 // ConfigMapName is the in-cluster ConfigMap written by `aectl init` and read by
@@ -51,6 +54,13 @@ var ConfigMapKeys = []string{
 	"thunder.public_url",
 	"idp.clients",
 	"idp.kind",
+	"idp.claims.preset",
+	"idp.claims.org.handle",
+	"idp.claims.org.id",
+	"idp.claims.org.name",
+	"idp.claims.caller_type.claim",
+	"idp.claims.caller_type.machine",
+	"idp.claims.caller_type.user",
 	"idp.issuer",
 	"idp.org_handle",
 	"console.public_url",
@@ -128,6 +138,19 @@ var keyRegistry = map[string]configKeyMeta{
 	// reader of its tokens uses: aep-api, the AE Studio pod, the console).
 	// Optional; unset is thunder.
 	"idp.kind": {required: false, kind: kindEnum, enumValues: []string{IDPKindThunder, IDPKindAsgardeo}},
+	// The claim names and values of the platform IdP: how its tokens name the
+	// caller's org and caller type (internal/idpclaims). aectl passes them to
+	// the chart beside idp.kind. Every key is optional here: a value comes
+	// from the preset (ClaimsPreset when the key is unset), then from these
+	// keys. validateViper requires the block to be complete after that
+	// layering.
+	"idp.claims.preset":              {required: false, kind: kindEnum, enumValues: idpclaims.Presets()},
+	"idp.claims.org.handle":          {kind: kindString},
+	"idp.claims.org.id":              {kind: kindString},
+	"idp.claims.org.name":            {kind: kindString},
+	"idp.claims.caller_type.claim":   {kind: kindString},
+	"idp.claims.caller_type.machine": {kind: kindString},
+	"idp.claims.caller_type.user":    {kind: kindString},
 	// The platform IdP's issuer: the iss of every token, and where the
 	// discovery document is read. Required with imported clients, where it
 	// must be https (see validateViper). Optional on a ThunderID aectl
@@ -250,6 +273,38 @@ func ValidateLoaded() []string {
 	return validateViper(viper.GetViper())
 }
 
+// ClaimsPreset is the preset v's idp.claims block starts from:
+// idp.claims.preset, or, when the config names none, the preset with the
+// name of idp.kind. The kind is what every reader of the IdP's tokens still
+// reads by, so a config that sets only the kind gets the claim values of the
+// same IdP and the two cannot disagree by omission. With neither set it is
+// "", which idpclaims.Resolve takes for its default.
+func ClaimsPreset(v *viper.Viper) string {
+	if preset := strings.TrimSpace(v.GetString("idp.claims.preset")); preset != "" {
+		return preset
+	}
+	return strings.TrimSpace(v.GetString("idp.kind"))
+}
+
+// FileClaims resolves the idp.claims block of a config file: the preset it
+// starts from (ClaimsPreset), then its own idp.claims.* keys.
+func FileClaims(path string) (idpclaims.Resolved, error) {
+	fv := viper.New()
+	fv.SetConfigFile(path)
+	if err := fv.ReadInConfig(); err != nil {
+		return idpclaims.Resolved{}, fmt.Errorf("cannot read config file: %w", err)
+	}
+	return idpclaims.Resolve(ClaimsPreset(fv), ClaimsOverride(fv))
+}
+
+// ClaimsOverride answers the idp.claims.* values v sets itself, for layering
+// over a preset (idpclaims.Resolve). An empty value sets nothing.
+func ClaimsOverride(v *viper.Viper) idpclaims.Override {
+	return func(key string) (string, idpclaims.Source) {
+		return v.GetString("idp.claims." + key), idpclaims.SourceConfig
+	}
+}
+
 // clientsOf is who creates the IdP's clients in v: idp.clients, thunder when
 // unset. An unknown value is returned as it is; the enum check reports it,
 // and the keys tied to a value are then all "another value's".
@@ -263,6 +318,12 @@ func clientsOf(v *viper.Viper) string {
 func validateViper(v *viper.Viper) []string {
 	var errs []string
 	clients := clientsOf(v)
+	// The IdP's claims have to be complete once the preset and the config's
+	// own keys are layered: every reader of its tokens refuses a partial set.
+	// An unknown preset is the enum check's to report, once.
+	if _, err := idpclaims.Resolve(ClaimsPreset(v), ClaimsOverride(v)); err != nil && !errors.Is(err, idpclaims.ErrUnknownPreset) {
+		errs = append(errs, err.Error())
+	}
 	// An IdP aectl does not run is reached over the public internet, by the
 	// operator's machine and by every pod: its issuer has to be https.
 	if issuer := v.GetString("idp.issuer"); clients == ClientsImported && issuer != "" && !strings.HasPrefix(issuer, "https://") {

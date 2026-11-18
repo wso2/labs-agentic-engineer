@@ -162,6 +162,21 @@ spec:
             # token it verifies (values.yaml idp.kind).
             - name: PLATFORM_IDP_KIND
               value: {{ .Values.idp.kind | quote }}
+            # The names and values of the IdP's own claims (values.yaml
+            # idp.claims). aep-api requires the four mandatory ones and passes
+            # all six to every org's AE Studio pod.
+            - name: PLATFORM_IDP_CLAIMS_ORG_HANDLE
+              value: {{ required "idp.claims.org.handle is required: the name of the claim that carries the org's handle in the platform IdP's tokens" .Values.idp.claims.org.handle | quote }}
+            - name: PLATFORM_IDP_CLAIMS_ORG_ID
+              value: {{ required "idp.claims.org.id is required: the name of the claim that carries the IdP's id of the org in the platform IdP's tokens" .Values.idp.claims.org.id | quote }}
+            - name: PLATFORM_IDP_CLAIMS_ORG_NAME
+              value: {{ .Values.idp.claims.org.name | quote }}
+            - name: PLATFORM_IDP_CLAIMS_CALLER_TYPE_CLAIM
+              value: {{ required "idp.claims.callerType.claim is required: the name of the claim that says whether a platform IdP token was issued to a machine or to a user" .Values.idp.claims.callerType.claim | quote }}
+            - name: PLATFORM_IDP_CLAIMS_CALLER_TYPE_MACHINE
+              value: {{ required "idp.claims.callerType.machine is required: the value of idp.claims.callerType.claim that means a machine" .Values.idp.claims.callerType.machine | quote }}
+            - name: PLATFORM_IDP_CLAIMS_CALLER_TYPE_USER
+              value: {{ .Values.idp.claims.callerType.user | quote }}
             # The one org the IdP serves: the handle its tokens name the org
             # by, and the org's namespace (values.yaml idp.orgHandle,
             # idp.orgNamespace).

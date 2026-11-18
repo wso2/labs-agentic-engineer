@@ -44,3 +44,7 @@ spec:
             # The IdP's token dialect: which claims name a token's org.
             - name: VITE_IDP_KIND
               value: {{ .Values.idp.kind | quote }}
+            # The claim that carries the org's handle in the IdP's tokens
+            # (values.yaml idp.claims.org.handle; aep-api's env requires it).
+            - name: VITE_IDP_CLAIMS_ORG_HANDLE
+              value: {{ .Values.idp.claims.org.handle | quote }}
