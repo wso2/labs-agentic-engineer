@@ -226,15 +226,14 @@ func TestEnsurePublisherClient_RecordsIDsAndRowAndAudits_DB(t *testing.T) {
 		t.Fatalf("ensure: %v", err)
 	}
 
-	// The profile records the client's id (which stands in for the entity id
-	// column too); the secret is only in the reference the
-	// ae-publisher-client row names, never in a column.
+	// The profile records the client's id; the secret is only in the
+	// reference the ae-publisher-client row names, never in a column.
 	row, err := svc.GetProfile(ctx, "acme")
 	if err != nil {
 		t.Fatalf("get after ensure: %v", err)
 	}
-	if row.PublisherClientID != "aep-publisher-acme" || row.PublisherThunderAppID != "aep-publisher-acme" {
-		t.Fatalf("publisher ids not persisted: %+v", row)
+	if row.PublisherClientID != "aep-publisher-acme" {
+		t.Fatalf("publisher client id not persisted: %+v", row)
 	}
 	if publisherRef(t, gormDB, "acme") == "" {
 		t.Fatal("the ae-publisher-client row was not recorded")
@@ -281,7 +280,8 @@ func TestEnsurePublisherClient_AnotherOrgAuditsFailure_DB(t *testing.T) {
 	}
 }
 
-// A profile row from before the id columns existed (NULL) reads as "no id".
+// A profile row from before the studio client id column existed (NULL) reads
+// as "no id".
 func TestProfile_NullIDColumnsReadAsEmpty_DB(t *testing.T) {
 	t.Parallel()
 	svc, gormDB := idpDBService(t, idpDBAcme())
@@ -290,13 +290,12 @@ func TestProfile_NullIDColumnsReadAsEmpty_DB(t *testing.T) {
 	if err := svc.EnsureClient(ctx, "acme", organization.ClientPublisher); err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
-	if err := gormDB.Exec(`UPDATE organization_idp_profiles SET publisher_thunder_app_id = NULL,
-		studio_client_id = NULL, studio_thunder_app_id = NULL WHERE org_id = 'acme'`).Error; err != nil {
-		t.Fatalf("null the id columns: %v", err)
+	if err := gormDB.Exec(`UPDATE organization_idp_profiles SET studio_client_id = NULL WHERE org_id = 'acme'`).Error; err != nil {
+		t.Fatalf("null the id column: %v", err)
 	}
 	row, err := svc.GetProfile(ctx, "acme")
-	if err != nil || row.PublisherThunderAppID != "" || row.StudioClientID != "" || row.StudioThunderAppID != "" {
-		t.Fatalf("NULL id columns must read as empty: %+v err %v", row, err)
+	if err != nil || row.StudioClientID != "" {
+		t.Fatalf("a NULL id column must read as empty: %+v err %v", row, err)
 	}
 }
 
@@ -378,8 +377,8 @@ func TestUpdateProfile_KindChangeKeepsThePublisher_DB(t *testing.T) {
 	if updated.Kind != "custom" {
 		t.Fatalf("kind not switched: %+v", updated)
 	}
-	if updated.PublisherClientID != "aep-publisher-acme" || updated.PublisherThunderAppID != "aep-publisher-acme" || publisherRef(t, gormDB, "acme") != ref {
-		t.Fatalf("kind switch must keep the publisher ids and its reference: %+v", updated)
+	if updated.PublisherClientID != "aep-publisher-acme" || publisherRef(t, gormDB, "acme") != ref {
+		t.Fatalf("kind switch must keep the publisher's client id and its reference: %+v", updated)
 	}
 	if err := svc.RequirePublisherForBuild(ctx, "acme"); err != nil {
 		t.Fatalf("after the kind switch the build gate must still pass, got %v", err)

@@ -167,8 +167,7 @@ model-connection / idp services.*
   (above).
 - **The publisher client secret lives only in vault; builds and deploys only read** ([ADR-0047](../../../../docs/decisions/ADR-0047-an-org-secrets-value-lives-only-in-vault.md)).
   The gitpat submit's `EnsureClient(publisher)` is the one writer of the publisher client's
-  `ae-publisher-client` reference; the profile keeps `publisher_client_id` and
-  `publisher_thunder_app_id`, never the secret or a reference to it. `POST /build` runs
+  `ae-publisher-client` reference; the profile keeps `publisher_client_id`, never the secret or a reference to it. `POST /build` runs
   `RequirePublisherForBuild`: a read of the `ae-publisher-client` row (no IdP call, no write); no
   row is `delivery.ErrPublisherCredentialsMissing`, answered `409 publisher_credentials_missing`
   "Reconnect GitHub to set up this organization's build credentials". The deploy reads only the
@@ -179,8 +178,6 @@ model-connection / idp services.*
   refuses an `asgardeo` or `custom` profile with a blank issuer: 400 `validation_failed` at
   `body.idp`. The deploy pins protected APIs to that issuer, and with none they would trust every
   keymanager on the cluster. `platform` takes the cluster's issuer, so it needs none.
-- **The profile's `publisher_thunder_app_id` and `studio_thunder_app_id` hold the client id.** Only the
-  IdP has an entity id, and aep-api looks no client up on it, so the client id stands in for it.
 - **The org secrets are written as a new reference per write** (`OrgSecretWriter`): new
   reference → row (compare-and-swap) → repoint → delete the previous one by its stored name, under
   a per-(org, secret) advisory lock taken after any caller lock and never inside a repoint. The

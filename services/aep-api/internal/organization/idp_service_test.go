@@ -70,11 +70,10 @@ func TestProfileSummary_NilIsZero(t *testing.T) {
 func TestProfileSummary_ProjectsAuditFields(t *testing.T) {
 	t.Parallel()
 	p := &OrganizationIDPProfile{
-		Kind:                  "platform",
-		Issuer:                "https://idp.test",
-		JWKSURL:               "https://idp.test/jwks",
-		PublisherClientID:     "aep-publisher-acme",
-		PublisherThunderAppID: "app-acme",
+		Kind:              "platform",
+		Issuer:            "https://idp.test",
+		JWKSURL:           "https://idp.test/jwks",
+		PublisherClientID: "aep-publisher-acme",
 	}
 	got := profileSummary(p)
 	if got.Kind != "platform" || got.Issuer != "https://idp.test" || got.JWKSURL != "https://idp.test/jwks" {

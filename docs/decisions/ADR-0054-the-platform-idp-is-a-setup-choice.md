@@ -134,6 +134,13 @@ Two separate things differ between IdPs, and the kind tied them together:
   `aep/idp-clients/`, the Secret `aep-idp-client-secrets`). Names that
   describe a ThunderID AE administers keep ThunderID's name (`thunder.*`,
   `aep-thunder-admin-creds`).
+- Three names still say "thunder" for a value every IdP has, because each
+  is a wide rename left for its own change (issue #972): the organization
+  row's `thunder_org_uuid`, which holds the IdP's id for the org; the
+  console's `VITE_THUNDER_*` settings; and "Thunder OU" in some of aep-api's
+  error text.
+- aep-api keeps no IdP entity id of a client: the two columns that held one
+  are dropped. It records the client ids only.
 - An install from before this decision is reinstalled, not upgraded.
 
 ## Alternatives rejected

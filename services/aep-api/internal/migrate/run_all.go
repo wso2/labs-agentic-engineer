@@ -290,6 +290,11 @@ func Steps(db *gorm.DB, deploymentTier string) []database.Step {
 		// column, no backfill (a row without it is bounded by the apply cap).
 		// Appended last because the list is append-only.
 		ctxStep("phase31_run_cycle_startup_clock", RunPhase31RunCycleStartupClock),
+		// organization_idp_profiles loses the two columns that held an IdP's
+		// entity id of an org client: aep-api looks no client up on an IdP any
+		// more, and they had no reader. Appended last because the list is
+		// append-only.
+		ctxStep("phase32_drop_idp_client_entity_ids", RunPhase32DropIDPClientEntityIDs),
 	}
 }
 

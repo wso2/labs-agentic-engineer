@@ -83,12 +83,8 @@ func (r *memIDPRepo) UpdateProfileColumns(_ context.Context, _ *OrganizationIDPP
 			row.JWKSURL = memColStr(v)
 		case "publisher_client_id":
 			row.PublisherClientID = memColStr(v)
-		case "publisher_thunder_app_id":
-			row.PublisherThunderAppID = memColStr(v)
 		case "studio_client_id":
 			row.StudioClientID = memColStr(v)
-		case "studio_thunder_app_id":
-			row.StudioThunderAppID = memColStr(v)
 		case "updated_at":
 			if t, ok := v.(time.Time); ok {
 				row.UpdatedAt = t

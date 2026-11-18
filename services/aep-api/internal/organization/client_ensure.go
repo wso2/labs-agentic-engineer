@@ -133,7 +133,7 @@ func (s *idpService) EnsureClient(ctx context.Context, orgID string, kind Client
 }
 
 // storePublisherClient writes aep-publisher-<org>'s secret as the org's
-// ae-publisher-client reference and records its ids on the profile. The
+// ae-publisher-client reference and records its client id on the profile. The
 // secret lives only in the reference: no column holds it.
 func (s *idpService) storePublisherClient(ctx context.Context, l *OrgSecretLocked, orgID, vaultOU string) error {
 	client, err := s.recordPublisherClient(ctx, orgID, ClientEnsureActor)
@@ -141,15 +141,14 @@ func (s *idpService) storePublisherClient(ctx context.Context, l *OrgSecretLocke
 		return err
 	}
 	_, err = s.secretRefWriter.writeOrgClient(ctx, l, orgID, vaultOU, ClientPublisher, client.ClientID, client.Secret, map[string]any{
-		"publisher_client_id":      client.ClientID,
-		"publisher_thunder_app_id": client.ClientID,
-		"updated_at":               time.Now().UTC(),
+		"publisher_client_id": client.ClientID,
+		"updated_at":          time.Now().UTC(),
 	})
 	return err
 }
 
 // storeStudioClient writes ae-studio-<org>'s secret as the org's
-// ae-studio-client reference and records its ids on the profile.
+// ae-studio-client reference and records its client id on the profile.
 func (s *idpService) storeStudioClient(ctx context.Context, l *OrgSecretLocked, orgID, vaultOU string) error {
 	// The write stamps the profile row, so the row has to exist.
 	if _, err := s.GetOrCreateProfile(ctx, orgID); err != nil {
@@ -160,9 +159,8 @@ func (s *idpService) storeStudioClient(ctx context.Context, l *OrgSecretLocked, 
 		return err
 	}
 	_, err = s.secretRefWriter.writeOrgClient(ctx, l, orgID, vaultOU, ClientStudio, client.ClientID, client.Secret, map[string]any{
-		"studio_client_id":      client.ClientID,
-		"studio_thunder_app_id": client.ClientID,
-		"updated_at":            time.Now().UTC(),
+		"studio_client_id": client.ClientID,
+		"updated_at":       time.Now().UTC(),
 	})
 	return err
 }

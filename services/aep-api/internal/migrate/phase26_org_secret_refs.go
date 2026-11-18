@@ -25,8 +25,10 @@ import (
 
 // RunPhase26OrgSecretRefs lets org_secrets hold the org secrets' reference
 // rows (key = the secret, value NULL, secret_ref_name = the SecretReference
-// holding the value) beside the legacy value rows, and adds the columns the
-// AE Studio Thunder clients are recorded in. phase29 then drops the value
+// holding the value) beside the legacy value rows, and adds the column the
+// org's AE Studio client id is recorded in. (It also added two columns for an
+// IdP's entity id of each org client; nothing reads those any more, so it no
+// longer adds them, and phase32 drops them where they exist.) phase29 then drops the value
 // rows and the value column, so the NOT NULL relaxation runs only while value
 // exists. Idempotent.
 func RunPhase26OrgSecretRefs(ctx context.Context, db *gorm.DB) error {
@@ -39,9 +41,7 @@ func RunPhase26OrgSecretRefs(ctx context.Context, db *gorm.DB) error {
 		stmts = append(stmts, `ALTER TABLE org_secrets ALTER COLUMN value DROP NOT NULL`)
 	}
 	stmts = append(stmts,
-		`ALTER TABLE organization_idp_profiles ADD COLUMN IF NOT EXISTS publisher_thunder_app_id TEXT`,
 		`ALTER TABLE organization_idp_profiles ADD COLUMN IF NOT EXISTS studio_client_id TEXT`,
-		`ALTER TABLE organization_idp_profiles ADD COLUMN IF NOT EXISTS studio_thunder_app_id TEXT`,
 	)
 	for _, stmt := range stmts {
 		if err := db.Exec(stmt).Error; err != nil {

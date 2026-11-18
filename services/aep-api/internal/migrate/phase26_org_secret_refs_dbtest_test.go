@@ -33,9 +33,7 @@ func TestPhase26OrgSecretRefs(t *testing.T) {
 		`ALTER TABLE org_secrets DROP COLUMN secret_ref_name`,
 		`ALTER TABLE org_secrets DROP COLUMN written_at`,
 		`ALTER TABLE org_secrets ALTER COLUMN value SET NOT NULL`,
-		`ALTER TABLE organization_idp_profiles DROP COLUMN publisher_thunder_app_id`,
 		`ALTER TABLE organization_idp_profiles DROP COLUMN studio_client_id`,
-		`ALTER TABLE organization_idp_profiles DROP COLUMN studio_thunder_app_id`,
 	} {
 		if err := db.Exec(stmt).Error; err != nil {
 			t.Fatalf("rebuild the pre-phase26 shape (%s): %v", stmt, err)
@@ -54,9 +52,7 @@ func TestPhase26OrgSecretRefs(t *testing.T) {
 		{"org_secrets", "secret_ref_name", "YES"},
 		{"org_secrets", "written_at", "YES"},
 		{"org_secrets", "value", "YES"},
-		{"organization_idp_profiles", "publisher_thunder_app_id", "YES"},
 		{"organization_idp_profiles", "studio_client_id", "YES"},
-		{"organization_idp_profiles", "studio_thunder_app_id", "YES"},
 	}
 	for _, c := range columns {
 		var nullable string

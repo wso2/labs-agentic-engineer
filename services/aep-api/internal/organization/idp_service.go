@@ -244,13 +244,10 @@ func (s *idpService) recordPublisherClient(ctx context.Context, orgID, actor str
 		return OrgClient{}, fmt.Errorf("idp_service.recordPublisherClient: %w", cerr)
 	}
 
-	// The client id stands in for the entity id column too: only the IdP has
-	// an entity id, and nothing here looks a client up on it. The secret is
-	// never persisted here.
+	// The secret is never persisted here.
 	updates := map[string]interface{}{
-		"publisher_client_id":      client.ClientID,
-		"publisher_thunder_app_id": client.ClientID,
-		"updated_at":               time.Now().UTC(),
+		"publisher_client_id": client.ClientID,
+		"updated_at":          time.Now().UTC(),
 	}
 	if err := s.repo.UpdateProfileColumns(ctx, profile, orgID, updates); err != nil {
 		s.audit(ctx, orgID, IDPAuditEnsurePublisher, actor, beforeJSON, nil, err)
