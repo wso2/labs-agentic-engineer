@@ -17,7 +17,6 @@
 package idpclaims
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,44 +29,27 @@ const repoRoot = "../../../.."
 
 func none(string) (string, Source) { return "", "" }
 
-// A shipped preset holds exactly the claim values of the shared sample-token
-// fixture of the same name: the file aep-api, the AE Studio pod and the
-// console are tested against. So what aectl installs for an IdP is what its
-// readers are proven to read.
-func TestPresets_MatchTheSharedFixtures(t *testing.T) {
-	for _, name := range Presets() {
-		if name == NoPreset {
-			continue
-		}
-		raw, err := os.ReadFile(filepath.Join(repoRoot, "packages/platform-idp-auth/test/fixtures/idp-claims", name+".json"))
-		if err != nil {
-			t.Fatalf("preset %s has no shared fixture: %v", name, err)
-		}
-		var fx struct {
-			Claims struct {
-				Org        struct{ Handle, ID, Name string }
-				CallerType struct{ Claim, Machine, User string }
-			}
-		}
-		if err := json.Unmarshal(raw, &fx); err != nil {
-			t.Fatal(err)
-		}
-		want := Claims{
-			OrgHandle: fx.Claims.Org.Handle, OrgID: fx.Claims.Org.ID, OrgName: fx.Claims.Org.Name,
-			CallerType: fx.Claims.CallerType.Claim, Machine: fx.Claims.CallerType.Machine, User: fx.Claims.CallerType.User,
-		}
+// Each shipped preset holds the claim names and values of its IdP.
+func TestPresets_HoldTheNamesOfEachIdP(t *testing.T) {
+	for name, want := range map[string]Claims{
+		"thunder":  {OrgHandle: "ouHandle", OrgID: "ouId", OrgName: "ouName", CallerType: "grant_type", Machine: "client_credentials"},
+		"asgardeo": {OrgHandle: "org_handle", OrgID: "org_id", OrgName: "org_name", CallerType: "aut", Machine: "APPLICATION", User: "APPLICATION_USER"},
+	} {
 		got, err := Resolve(name, none)
 		if err != nil {
 			t.Fatalf("preset %s: %v", name, err)
 		}
 		if got.Claims() != want {
-			t.Errorf("preset %s = %+v, fixture %+v", name, got.Claims(), want)
+			t.Errorf("preset %s = %+v, want %+v", name, got.Claims(), want)
 		}
+	}
+	if got := strings.Join(Presets(), ","); got != "asgardeo,thunder,none" {
+		t.Errorf("Presets() = %s, want asgardeo,thunder,none", got)
 	}
 }
 
 // The chart's own defaults are the default preset's values, so a chart
-// installed without aectl reads ThunderID's tokens the same way.
+// installed without aectl delivers ThunderID's claim names.
 func TestDefaultPreset_IsTheChartsDefault(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(repoRoot, "deployments/helm-charts/platform/values.yaml"))
 	if err != nil {

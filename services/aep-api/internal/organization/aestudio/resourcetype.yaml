@@ -88,15 +88,15 @@ spec:
             kind: { type: string, default: thunder }
             # The names and values of the IdP's own claims, which say a
             # caller's org and caller type. The same values aep-api is given.
+            # The containers read tokens by kind, so each may be empty.
             claims:
               type: object
-              required: [orgHandle, orgId, callerTypeClaim, callerTypeMachine]
               properties:
-                orgHandle: { type: string }
-                orgId: { type: string }
+                orgHandle: { type: string, default: "" }
+                orgId: { type: string, default: "" }
                 orgName: { type: string, default: "" }
-                callerTypeClaim: { type: string }
-                callerTypeMachine: { type: string }
+                callerTypeClaim: { type: string, default: "" }
+                callerTypeMachine: { type: string, default: "" }
                 callerTypeUser: { type: string, default: "" }
             userAudiences: { type: array, items: { type: string }, default: [APP_FACTORY_CONSOLE] }
         aepApiBaseUrl: { type: string }

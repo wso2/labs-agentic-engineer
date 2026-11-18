@@ -34,7 +34,8 @@ import (
 // defines: the caller's org, and whether a token was issued to a machine or
 // to a user. Each claim is a top-level text claim of the token. The values
 // are settings of the install (PLATFORM_IDP_CLAIMS_*), which aep-api passes
-// to every org's AE Studio pod; the Dialect below reads by its Kind.
+// to every org's AE Studio pod. The Dialect below does not read by them: it
+// reads by its Kind.
 type Claims struct {
 	// OrgHandle, OrgID and OrgName are the names of the claims that carry the
 	// caller's org: the handle the IdP knows it by, the IdP's own id for it,

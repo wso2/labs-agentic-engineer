@@ -32,10 +32,6 @@ func setMinimalEnv(t *testing.T) {
 	t.Setenv("PLATFORM_API_SERVICE_BASE_URL", "http://platform-api.invalid")
 	t.Setenv("DATABASE_URL", "postgres://u:p@localhost:5432/db")
 	t.Setenv("JWKS_URL", "http://idp.invalid/jwks")
-	t.Setenv("PLATFORM_IDP_CLAIMS_ORG_HANDLE", "ouHandle")
-	t.Setenv("PLATFORM_IDP_CLAIMS_ORG_ID", "ouId")
-	t.Setenv("PLATFORM_IDP_CLAIMS_CALLER_TYPE_CLAIM", "grant_type")
-	t.Setenv("PLATFORM_IDP_CLAIMS_CALLER_TYPE_MACHINE", "client_credentials")
 	t.Setenv("PLATFORM_IDP_ORG_HANDLE", "acmecorp")
 	t.Setenv("PLATFORM_IDP_ORG_NAMESPACE", "default")
 	t.Setenv("PLATFORM_IDP_ORG_PUBLISHER_SECRET", "p")
@@ -77,8 +73,8 @@ func TestLoad_WithoutAEStudio(t *testing.T) {
 	}
 }
 
-// The six claim settings are read once, trimmed, and given to the pod as
-// they are given to aep-api: the pod reads the same IdP's tokens.
+// The six claim settings are read trimmed and given to the pod as they are
+// given to aep-api. None is required: unset, each is empty.
 func TestLoad_IDPClaimsReachThePod(t *testing.T) {
 	setMinimalEnv(t)
 	t.Setenv("PLATFORM_IDP_CLAIMS_ORG_HANDLE", " org_handle ")
@@ -99,10 +95,15 @@ func TestLoad_IDPClaimsReachThePod(t *testing.T) {
 		t.Errorf("AEStudio.IDP.Claims = %+v, want the platform's %+v", cfg.AEStudio.IDP.Claims, want)
 	}
 
-	// A mandatory one left out fails boot with a message that names it.
-	t.Setenv("PLATFORM_IDP_CLAIMS_ORG_ID", "")
-	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PLATFORM_IDP_CLAIMS_ORG_ID") {
-		t.Fatalf("Load without the org id claim = %v, want an error naming PLATFORM_IDP_CLAIMS_ORG_ID", err)
+	for _, k := range []string{"ORG_HANDLE", "ORG_ID", "ORG_NAME", "CALLER_TYPE_CLAIM", "CALLER_TYPE_MACHINE", "CALLER_TYPE_USER"} {
+		t.Setenv("PLATFORM_IDP_CLAIMS_"+k, "")
+	}
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load without the claim settings = %v, want no error", err)
+	}
+	if cfg.PlatformIDP.Claims != (dialect.Claims{}) || cfg.AEStudio.IDP.Claims != (dialect.Claims{}) {
+		t.Errorf("unset claim settings: %+v / %+v, want both empty", cfg.PlatformIDP.Claims, cfg.AEStudio.IDP.Claims)
 	}
 }
 

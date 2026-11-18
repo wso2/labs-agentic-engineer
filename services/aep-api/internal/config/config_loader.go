@@ -514,7 +514,7 @@ func loadEnvFile(path string) error {
 
 // idpClaims reads the platform IdP's claim names and values
 // (PLATFORM_IDP_CLAIMS_*). Trimmed: a stray space would make a name match no
-// claim. There are no defaults: Validate requires the four mandatory ones.
+// claim. There are no defaults: an unset one is passed on empty.
 func (r *configReader) idpClaims() dialect.Claims {
 	get := func(key string) string { return strings.TrimSpace(r.readOptionalString(key, "")) }
 	return dialect.Claims{

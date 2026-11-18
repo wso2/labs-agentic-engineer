@@ -558,7 +558,6 @@ func TestPlatformIDPClaims_LayersPresetConfigAndEnvironment(t *testing.T) {
 	viper.Set("idp.claims.preset", "asgardeo")
 	viper.Set("idp.claims.org.handle", "from_config")
 	t.Setenv("AEP_IDP_CLAIMS_CALLER_TYPE_MACHINE", "FROM_ENV")
-	t.Setenv("AEP_IDP_CLAIMS_ORG_NAME", "  ")
 
 	got, err := platformIDPClaims()
 	if err != nil {
@@ -579,6 +578,19 @@ func TestPlatformIDPClaims_LayersPresetConfigAndEnvironment(t *testing.T) {
 		if sources[key] != src {
 			t.Errorf("%s came from %q, want %q", key, sources[key], src)
 		}
+	}
+}
+
+// A variable that is set but blank is refused by name. The config's own
+// reader maps the same variables, so a blank one would replace the stored
+// key with nothing and bring the preset's value back unnoticed.
+func TestPlatformIDPClaims_BlankEnvironmentVariableRefused(t *testing.T) {
+	t.Cleanup(viper.Reset)
+	viper.Set("idp.claims.org.handle", "from_config")
+	t.Setenv("AEP_IDP_CLAIMS_ORG_HANDLE", "  ")
+	_, err := platformIDPClaims()
+	if err == nil || !strings.Contains(err.Error(), "AEP_IDP_CLAIMS_ORG_HANDLE") {
+		t.Fatalf("err = %v, want one naming AEP_IDP_CLAIMS_ORG_HANDLE", err)
 	}
 }
 

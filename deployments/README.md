@@ -45,7 +45,8 @@ the names and values of the IdP's own claims (`org.handle`, `org.id`,
 `org.name`, `caller_type.claim`, `caller_type.machine`, `caller_type.user`):
 each comes from a preset (`idp.claims.preset`: `thunder`, `asgardeo` or
 `none`; the preset with the name of `idp.kind` when it is not set), then from
-the block's own keys. `aectl` passes them to the chart beside the kind, and
+the block's own keys, then from an `AEP_IDP_CLAIMS_*` environment variable
+for one run. `aectl` passes them to the chart beside the kind, and
 `aectl platform config test` prints each value and where it came from.
 `idp.org_handle` names the one org the install serves, by the handle the
 IdP's tokens carry.

@@ -205,13 +205,22 @@ func TestClaimsPreset_FollowsTheKind(t *testing.T) {
 		keys map[string]string
 		want string
 	}{
-		"only the kind":       {map[string]string{"idp.kind": "asgardeo"}, "asgardeo"},
-		"a preset and a kind": {map[string]string{"idp.kind": "asgardeo", "idp.claims.preset": "none"}, "none"},
-		"neither":             {map[string]string{}, ""},
+		"only the kind":        {map[string]string{"idp.kind": "asgardeo"}, "asgardeo"},
+		"a preset and a kind":  {map[string]string{"idp.kind": "asgardeo", "idp.claims.preset": "none"}, "none"},
+		"neither":              {map[string]string{}, ""},
+		"a kind in upper case": {map[string]string{"idp.kind": "Asgardeo"}, "asgardeo"},
+		// A kind this build does not know names no preset: the enum check
+		// reports the kind, and the claims are not blamed for it.
+		"an unknown kind": {map[string]string{"idp.kind": "okta"}, ""},
+		"the kind none":   {map[string]string{"idp.kind": "none"}, ""},
 	} {
 		if got := ClaimsPreset(idpConfig(tc.keys)); got != tc.want {
 			t.Errorf("%s: preset %q, want %q", name, got, tc.want)
 		}
+	}
+	// The kind "none" is not a kind: one error, which names idp.kind.
+	if errs := validateViper(idpConfig(with(thunderKeys, "idp.kind", "none"))); len(errs) != 1 || !hasErrorNaming(errs, "idp.kind") {
+		t.Errorf("kind none: errors %v, want one naming idp.kind", errs)
 	}
 	// The Asgardeo config of an install from before the claims block is
 	// valid as it is, and resolves to Asgardeo's claim names.

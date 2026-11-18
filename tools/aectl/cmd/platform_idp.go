@@ -50,8 +50,7 @@ type platformIDP struct {
 	Kind string
 	// Claims is the idp.claims block: the names and values of the claims
 	// that say a caller's org and caller type. aectl passes them to the
-	// chart, which gives them to aep-api, the AE Studio pod and the console.
-	// The readers of tokens still read by Kind.
+	// chart beside Kind, by which the readers of tokens read.
 	Claims idpclaims.Resolved
 	// Public is what the discovery document names: the issuer every token's
 	// iss equals, and the endpoints at the IdP's public address.
@@ -144,7 +143,16 @@ func claimsEnvKey(key string) string {
 // AEP_IDP_CLAIMS_* for this run. An environment value lasts for the run
 // only: the stored config keeps what the config file said, so a value meant
 // to stay belongs in that file.
+//
+// A variable that is set but blank is refused. The config's own reader maps
+// the same variables, so a blank one would replace the stored key with
+// nothing and the preset's value would come back under the preset's name.
 func platformIDPClaims() (idpclaims.Resolved, error) {
+	for _, f := range idpclaims.Fields {
+		if v, set := os.LookupEnv(claimsEnvKey(f.Key)); set && strings.TrimSpace(v) == "" {
+			return idpclaims.Resolved{}, fmt.Errorf("%s is set but blank: give it a value, or unset it to use idp.claims.%s of the config", claimsEnvKey(f.Key), f.Key)
+		}
+	}
 	fromConfig := config.ClaimsOverride(viper.GetViper())
 	return idpclaims.Resolve(config.ClaimsPreset(viper.GetViper()), func(key string) (string, idpclaims.Source) {
 		if v := strings.TrimSpace(os.Getenv(claimsEnvKey(key))); v != "" {

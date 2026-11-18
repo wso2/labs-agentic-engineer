@@ -278,12 +278,18 @@ func ValidateLoaded() []string {
 // name of idp.kind. The kind is what every reader of the IdP's tokens still
 // reads by, so a config that sets only the kind gets the claim values of the
 // same IdP and the two cannot disagree by omission. With neither set it is
-// "", which idpclaims.Resolve takes for its default.
+// "", which idpclaims.Resolve takes for its default. A kind this build does
+// not know names no preset: the enum check of idp.kind reports it, and the
+// claims are not blamed for it.
 func ClaimsPreset(v *viper.Viper) string {
 	if preset := strings.TrimSpace(v.GetString("idp.claims.preset")); preset != "" {
 		return preset
 	}
-	return strings.TrimSpace(v.GetString("idp.kind"))
+	switch kind := strings.ToLower(strings.TrimSpace(v.GetString("idp.kind"))); kind {
+	case IDPKindThunder, IDPKindAsgardeo:
+		return kind
+	}
+	return ""
 }
 
 // FileClaims resolves the idp.claims block of a config file: the preset it
@@ -319,8 +325,8 @@ func validateViper(v *viper.Viper) []string {
 	var errs []string
 	clients := clientsOf(v)
 	// The IdP's claims have to be complete once the preset and the config's
-	// own keys are layered: every reader of its tokens refuses a partial set.
-	// An unknown preset is the enum check's to report, once.
+	// own keys are layered. An unknown preset is the enum check's to report,
+	// once.
 	if _, err := idpclaims.Resolve(ClaimsPreset(v), ClaimsOverride(v)); err != nil && !errors.Is(err, idpclaims.ErrUnknownPreset) {
 		errs = append(errs, err.Error())
 	}
