@@ -24,18 +24,27 @@ go build -o aectl .  # build CLI
 
 CLI has no local config file. After `aectl platform install` runs, it writes non-sensitive config to the
 `aep-cli-config` ConfigMap in `wso2-aep`. All subsequent commands read from it automatically
-via `PersistentPreRunE`. Sensitive values (Thunder admin secret) come from the ESO-synced
-`aep-idp-client-secrets` Secret. CLI flags and `AEP_*` env vars always override the ConfigMap.
+via `PersistentPreRunE`. The ThunderID admin secret is not in the ConfigMap: `aectl` reads it
+from the ESO-synced `aep-thunder-admin-creds` Secret, key `client-secret`
+(`LoadThunderSecretFromCluster`, `internal/config/config.go`). CLI flags and `AEP_*` env vars
+always override the ConfigMap.
 `platform update` and `sre install` refuse to run without a valid loaded config
 (`requireAEStudioConfig`, `cmd/update.go`): both re-derive and re-apply the
 `aeStudio.*` values from it (`sre install` flips `sreAgent.*` through an
 in-process `platform update`).
 
-`idp.kind` selects the platform IdP: `thunder` (the default) or `asgardeo`.
-A key in `keyRegistry` (`internal/config/config.go`) can belong to one kind
-(`idpKind`). The four `thunder.*` keys are required for `thunder` and are not
-read for `asgardeo`. `idp.issuer` and `idp.org_handle` are required for
-`asgardeo` and are refused for `thunder` (`exclusive`).
+`idp.clients` selects who creates the clients of the platform IdP: `thunder`
+(the default) or `imported`. A key in `keyRegistry`
+(`internal/config/config.go`) can belong to one value of `idp.clients`
+(`clients`). The four `thunder.*` keys are required for `thunder` and are
+refused for `imported` (`exclusive`). `idp.issuer` is required for
+`imported`, where it must be an https URL. For `thunder` it is optional: if
+it is not set, the issuer is `thunder.public_url`. `idp.org_handle` is always
+required.
+
+`idp.kind` selects how the token readers read a token of the platform IdP:
+`thunder` (the default) or `asgardeo`. It does not select who creates the
+clients.
 
 ## Thunder clients and seeds
 
@@ -47,6 +56,14 @@ read for `asgardeo`. `idp.issuer` and `idp.org_handle` are required for
   `AE_STUDIO_INTERNAL_CLIENT_SECRET`) carries no org claims
   (`noUserAttributes`), and is `optional` (its own Secret, `aep-ae-studio-internal-secrets`; a
   missing Secret skips the client with a warning).
+- `orgThunderClients` (`cmd/thunder_cli.go`) adds the two clients of the org:
+  `aep-publisher-<org>` and `ae-studio-<org>`. `aectl` registers them under
+  the organization unit that `idp.org_handle` names (`OrgOUHandle`,
+  `internal/thunder`). It does not create an organization unit. Their vault
+  names are `org-publisher` and `org-studio`, and aep-api reads their secrets
+  from the `aep-org-client-secrets` Secret. `aectl` does not register
+  `aep-system-client` on the platform ThunderID, because aep-api administers
+  no IdP.
 - `aeStudioOverrides` (`cmd/platform.go`) derives the chart's `aeStudio.*`
   values for `platform install` and `platform update`. The public scheme,
   listener and port suffix come from `tls.enabled` alone (`http`/`http`/`:19080`
@@ -54,7 +71,8 @@ read for `asgardeo`. `idp.issuer` and `idp.org_handle` are required for
   http://localhost:8090]`.
 - `discoverPlatformIDP` (`cmd/platform_idp.go`) reads the platform IdP's
   endpoints from `<issuer>/.well-known/openid-configuration`. The issuer is
-  `thunder.public_url`, or `idp.issuer` for `asgardeo`.
+  `idp.issuer`. If `idp.issuer` is not set, the issuer is
+  `thunder.public_url` (`platformIssuerKey`).
   `platform install`, `platform update` and `sre install` each fetch the
   document once, from the operator's machine. `platform install` fetches it
   before it changes anything in the cluster. If the document cannot be
@@ -62,14 +80,17 @@ read for `asgardeo`. `idp.issuer` and `idp.org_handle` are required for
   builds the platform IdP's issuer, JWKS or token URL by appending a path.
   The Thunder admin client (`internal/thunder`) and the environment Thunders
   (`internal/envidp`) still name the paths of Thunder's own API.
-  `platformIDPOverrides` writes the chart values: `idp.kind` (the optional
-  config key `idp.kind`; `thunder` when unset), `thunder.jwksURL` and
-  `thunder.tokenURL` (the document's paths on `thunder.url`, the address at
-  which pods reach the IdP), and `aeStudio.idp.{issuer,jwksUrl,tokenUrl}`.
+  `platformIDPOverrides` writes the chart values: `idp.clients`, `idp.kind`
+  (`thunder` if the config key is not set), `idp.jwksURL` and `idp.tokenURL`,
+  `aeStudio.idp.{issuer,jwksUrl,tokenUrl}`, `idp.orgHandle` and
+  `idp.orgNamespace`. When `aectl` registers the clients, the JWKS and token
+  URLs are the paths of the document on `thunder.url`, the address at which
+  pods reach the IdP. If not, they are the URLs that the document gives.
+  `platformIDPInstallArgs` writes `idp.issuer`.
   `envidp` builds the environment Thunders' trust of the platform IdP from
   the same endpoints on `https://<host>:8443`.
 - `platform install` overwrites (plain PUT) every OpenBao seed it owns: the
-  `aep/idp-clients/<vaultName>` secrets, `aep/idp-clients/system-client-id`,
+  `aep/idp-clients/<vaultName>` secrets,
   `aep/anthropic-api-key`, `aep/postgres-password`, `aep/webhook-relay-seed`
   (relay on or off), `aep/opensearch-{username,password}` and
   `aep/thunder-admin/client-{id,secret}` (`cmd/platform.go`, the `secrets`
@@ -81,15 +102,16 @@ read for `asgardeo`. `idp.issuer` and `idp.org_handle` are required for
   while the new key is unset) (`cmd/webhook_relay.go`). `aep/agents-jwt-secret`, `aep/task-signing-key`,
   `aep/webhook-secret` and `aep/openbao-token` are no longer seeded or required.
 
-## Asgardeo as the platform IdP
+## Imported clients
 
-With `idp.kind: asgardeo` the platform IdP is an Asgardeo organization, and
-`aectl` administers nothing on it. `onAsgardeo` (`cmd/platform_idp.go`)
-reads the kind from config. What differs from the sections above:
+With `idp.clients: imported`, the admin of the platform IdP creates the
+clients, and `aectl` administers nothing on the IdP. An Asgardeo organization
+is an example. `registersClients` (`cmd/platform_idp.go`) reads the setting.
+What differs from the sections above:
 
 - **Secrets.** `aectl` generates no client secret and asks for no admin
-  secret. The organization's admin creates the clients
-  (`deployments/scripts/ae-asgardeo-apps.sh`) and imports four secrets under
+  secret. The admin of the IdP creates the clients (for Asgardeo:
+  `deployments/scripts/ae-asgardeo-apps.sh`) and imports four secrets under
   `aep/idp-clients/`: `aep-api-client`, `ae-studio-internal`,
   `org-publisher` and `org-studio` (`importedClientNames`,
   `cmd/platform_secrets.go`). `requireImportedClientSecrets` restores a
@@ -98,17 +120,15 @@ reads the kind from config. What differs from the sections above:
   `platform install` calls it before it writes its own inputs.
   `install --reuse-secrets` and `platform sync-clients` call it too.
   `platformInputPaths`, `requiredOpenBaoPaths` and `generatedClientSecrets`
-  leave out the Thunder admin credentials, `system-client-id` and the
-  Thunder client secrets.
-- **Helm values.** `platformIDPOverrides` adds `idp.orgHandle` (from
-  `idp.org_handle`) and `idp.orgNamespace` (from `oc.default_org_namespace`).
-  The JWKS and token URLs are the public ones. `platformIDPInstallArgs` sets
-  no `thunder.adminURL`. `aeStudioExtraEgress` has no IdP rule, because the
-  pod's NetworkPolicy already allows public HTTPS.
+  leave out the Thunder admin credentials and the Thunder client secrets.
+- **Helm values.** The JWKS and token URLs are the public ones.
+  `aeStudioExtraEgress` has no IdP rule, because the pod's NetworkPolicy
+  already allows public HTTPS.
 - **No registration.** `platform install` and `platform sync-clients` do not
   call `doThunderSetup`.
 - **Environment Thunders.** `envIDPPlatformTrust` gives `envidp` no platform
-  IdP to trust. Only Agent Manager uses that trust, and Agent Manager
-  installs on a Thunder platform only.
-- **`sre install`** refuses (`sreIDPSupported`, `cmd/sre.go`). It registers
-  OpenChoreo's observer and RCA clients on the platform IdP.
+  IdP to trust. Only Agent Manager uses that trust, and Agent Manager needs
+  clients that `aectl` registers.
+- **`sre install`** refuses (`sreIDPSupported`, `cmd/sre.go`). It uses the
+  observer and RCA clients of OpenChoreo, which `platform install` registers
+  only with `idp.clients: thunder`.
