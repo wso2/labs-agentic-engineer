@@ -543,13 +543,14 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		ui.Success("The platform IdP's clients are imported: none registered")
 	} else {
 		ui.Step("Registering Thunder OAuth clients")
+		skip := clientsReadingUnsynced(unsynced)
 		if err := doThunderSetup(ctx, k8sClient, initPlatformNamespace,
 			viper.GetString("thunder.namespace"),
-			consoleURL, clientsReadingUnsynced(unsynced),
+			consoleURL, skip,
 		); err != nil {
 			return err
 		}
-		ui.Success("Thunder configured")
+		reportThunderSetup(skip)
 	}
 
 	if err := waitForAllPodsReady(ctx, k8sClient, initPlatformNamespace, platformPodsReadyTimeout); err != nil {
@@ -995,6 +996,9 @@ func reconcileReusedOpenBaoSecrets(ctx context.Context, platformNamespace string
 	}
 	seeded, err := seedGeneratedSecrets(generatedClientSecrets(), st)
 	if err != nil {
+		// What the seed wrote before it failed stays written, and the next
+		// run finds it there and says nothing: warn now.
+		warnRegeneratedOrgClientSecrets(seeded)
 		return err
 	}
 	for _, line := range describeSeeded(append(restored, seeded...)) {
@@ -1127,14 +1131,23 @@ func provisionOpenBao(ctx context.Context, platformNamespace, anthropicKey, thun
 	}
 	sp.Update("Writing secrets")
 	seeded, err := writePlatformSecrets(ctx, session, inputs, recover)
+	// A first install generates every secret and no org can have connected,
+	// so the warning would mean nothing there.
+	warnOrgClients := !firstInstallSeed(generatedPlatformSecrets(), seeded)
 	if err != nil {
 		sp.Fail("Writing secrets failed")
+		if warnOrgClients {
+			warnRegeneratedOrgClientSecrets(seeded)
+		}
 		return err
 	}
 	sp.Success(fmt.Sprintf("%d inputs written, %d of %d generated secrets seeded (the rest kept)",
 		len(inputs), len(seeded), len(generatedPlatformSecrets())))
 	for _, line := range describeSeeded(seeded) {
 		ui.Detail(line)
+	}
+	if warnOrgClients {
+		warnRegeneratedOrgClientSecrets(seeded)
 	}
 	return nil
 }

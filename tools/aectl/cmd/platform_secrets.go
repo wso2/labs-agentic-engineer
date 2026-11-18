@@ -499,6 +499,40 @@ func regeneratedOrgClientSecrets(seeded []seededSecret) []string {
 	return paths
 }
 
+// orgClientRepairWarning is the warning for the org client secrets that a
+// seed run generated, or "" when it generated none. The steps are in the
+// order that works: a restart of aep-api or a GitHub reconnect before aectl
+// has registered the new secret stores, in the org, a secret that the IdP
+// does not accept. aectl cannot do the repair: only aep-api writes an org's
+// references, on GitHub connect.
+func orgClientRepairWarning(seeded []seededSecret) string {
+	paths := regeneratedOrgClientSecrets(seeded)
+	if len(paths) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("Generated a new secret for the org's client (%s). An org that already connected GitHub still holds the previous secret, so its builds and its AE Studio cannot get a token. To repair, in this order: 1. make sure that aectl registered the org's clients (if this command stopped or skipped them, run 'aectl platform sync-clients' until it registers them); 2. restart aep-api; 3. reconnect GitHub in the console.", strings.Join(paths, ", "))
+}
+
+// firstInstallSeed reports whether a seed run wrote a new value for every
+// one of secrets that aectl generates: the store kept none and the cluster
+// restored none. That is an install onto a cluster that held nothing, so no
+// org can have connected. A run that stopped on an error did not write
+// every secret and is not taken for a first install.
+func firstInstallSeed(secrets []generatedSecret, seeded []seededSecret) bool {
+	generated := map[string]bool{}
+	for _, s := range seeded {
+		if s.from == "" {
+			generated[s.path] = true
+		}
+	}
+	for _, g := range secrets {
+		if g.generate != nil && !generated[g.path] {
+			return false
+		}
+	}
+	return true
+}
+
 // describeSeeded is the one-line, value-free account of a seed run.
 func describeSeeded(seeded []seededSecret) []string {
 	var lines []string

@@ -19,6 +19,8 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -97,6 +99,9 @@ func syncClients(ctx context.Context, st syncClientsSteps) error {
 	ui.Step("Seeding missing client secrets")
 	seeded, err := st.seed(ctx)
 	if err != nil {
+		// What the seed wrote before it failed stays written, and the next
+		// run finds it there and says nothing: warn now.
+		warnRegeneratedOrgClientSecrets(seeded)
 		return fmt.Errorf("seed client secrets: %w", err)
 	}
 	if len(seeded) == 0 {
@@ -128,23 +133,43 @@ func syncClients(ctx context.Context, st syncClientsSteps) error {
 		return nil
 	}
 	ui.Step("Registering Thunder OAuth clients")
-	if err := st.setupThunder(ctx, clientsReadingUnsynced(unsynced)); err != nil {
+	skip := clientsReadingUnsynced(unsynced)
+	if err := st.setupThunder(ctx, skip); err != nil {
 		return err
 	}
-	ui.Success("Thunder configured")
+	reportThunderSetup(skip)
 	return nil
 }
 
-// warnRegeneratedOrgClientSecrets tells the operator how to bring a connected
-// org back in step after a seed run generated one of its client secrets.
-// aectl cannot do it: only aep-api writes an org's references, on GitHub
-// connect.
-func warnRegeneratedOrgClientSecrets(seeded []seededSecret) {
-	paths := regeneratedOrgClientSecrets(seeded)
-	if len(paths) == 0 {
+// thunderSetupOutcome is the closing line of a client registration, and
+// whether every client was registered. Skipped clients (clientID -> reason)
+// are not on the platform IdP after the run, so the line names them and the
+// command that registers them.
+func thunderSetupOutcome(skip map[string]string) (msg string, complete bool) {
+	if len(skip) == 0 {
+		return "Thunder configured", true
+	}
+	ids := slices.Sorted(maps.Keys(skip))
+	return fmt.Sprintf("Thunder configured, except %d client(s) that this run did not register: %s. Run 'aectl platform sync-clients' when their Secret has synced.", len(ids), strings.Join(ids, ", ")), false
+}
+
+// reportThunderSetup prints thunderSetupOutcome: a success line, or a
+// warning when clients were skipped.
+func reportThunderSetup(skip map[string]string) {
+	msg, complete := thunderSetupOutcome(skip)
+	if complete {
+		ui.Success(msg)
 		return
 	}
-	ui.Warn(fmt.Sprintf("Generated a new secret for the org's client (%s). An org that already connected GitHub still holds the previous secret, so its builds and its AE Studio cannot get a token. To repair: restart aep-api, then reconnect GitHub in the console.", strings.Join(paths, ", ")))
+	ui.Warn(msg)
+}
+
+// warnRegeneratedOrgClientSecrets prints orgClientRepairWarning for a seed
+// run, also for one that failed after it wrote.
+func warnRegeneratedOrgClientSecrets(seeded []seededSecret) {
+	if msg := orgClientRepairWarning(seeded); msg != "" {
+		ui.Warn(msg)
+	}
 }
 
 func runSyncClients(cmd *cobra.Command, args []string) error {

@@ -186,6 +186,82 @@ func TestRegeneratedOrgClientSecrets(t *testing.T) {
 	}
 }
 
+// The warning gives the repair steps in the order that works: the org's
+// clients registered first, then aep-api restarted, then GitHub reconnected.
+func TestOrgClientRepairWarning_StepsInOrder(t *testing.T) {
+	msg := orgClientRepairWarning([]seededSecret{{path: "aep/idp-clients/org-publisher"}})
+	if !strings.Contains(msg, "aep/idp-clients/org-publisher") {
+		t.Fatalf("the warning does not name the secret: %s", msg)
+	}
+	register := strings.Index(msg, "aectl platform sync-clients")
+	restart := strings.Index(msg, "restart aep-api")
+	reconnect := strings.Index(msg, "reconnect GitHub")
+	if register < 0 || restart < 0 || reconnect < 0 || !(register < restart && restart < reconnect) {
+		t.Fatalf("steps missing or out of order (register=%d restart=%d reconnect=%d): %s", register, restart, reconnect, msg)
+	}
+	if msg := orgClientRepairWarning([]seededSecret{{path: "aep/idp-clients/org-studio", from: "aep-org-client-secrets"}}); msg != "" {
+		t.Fatalf("a restored secret needs no repair, got: %s", msg)
+	}
+}
+
+// A seed that wrote an org secret and then failed still warns: the next run
+// finds the secret in the store and would say nothing.
+func TestSyncClients_SeedErrorStillWarnsForWhatItWrote(t *testing.T) {
+	r := &syncRecorder{}
+	st := r.steps(nil, nil, nil)
+	st.seed = func(context.Context) ([]seededSecret, error) {
+		return []seededSecret{{path: "aep/idp-clients/org-publisher"}}, errors.New("boom")
+	}
+	var err error
+	out := captureStdout(t, func() { err = syncClients(context.Background(), st) })
+	if err == nil || r.setup != 0 {
+		t.Fatalf("err=%v setup=%d, want the seed error and no registration", err, r.setup)
+	}
+	if !strings.Contains(out, "aep/idp-clients/org-publisher") || !strings.Contains(out, "reconnect GitHub") {
+		t.Fatalf("the warning for the written secret is missing:\n%s", out)
+	}
+}
+
+// A first install generates every secret; an install that existed before
+// keeps or restores at least one.
+func TestFirstInstallSeed(t *testing.T) {
+	gen := func() (string, error) { return "v", nil }
+	secrets := []generatedSecret{
+		{path: "aep/postgres-password", generate: gen},
+		{path: "aep/idp-clients/org-publisher", generate: gen},
+		{path: "aep/jev-api-key"}, // imported: aectl never generates it
+	}
+	allNew := []seededSecret{{path: "aep/postgres-password"}, {path: "aep/idp-clients/org-publisher"}}
+	if !firstInstallSeed(secrets, allNew) {
+		t.Error("every generated secret is new: want a first install")
+	}
+	oneKept := []seededSecret{{path: "aep/idp-clients/org-publisher"}}
+	if firstInstallSeed(secrets, oneKept) {
+		t.Error("the store kept aep/postgres-password: not a first install")
+	}
+	oneRestored := []seededSecret{{path: "aep/postgres-password", from: "postgres-secrets"}, {path: "aep/idp-clients/org-publisher"}}
+	if firstInstallSeed(secrets, oneRestored) {
+		t.Error("the cluster restored aep/postgres-password: not a first install")
+	}
+}
+
+// A run that skipped clients does not end on the success line: it names the
+// clients that are not registered and the command that registers them.
+func TestThunderSetupOutcome(t *testing.T) {
+	if msg, complete := thunderSetupOutcome(nil); !complete || msg != "Thunder configured" {
+		t.Fatalf("nothing skipped: got %q complete=%v", msg, complete)
+	}
+	msg, complete := thunderSetupOutcome(map[string]string{"ae-studio-default": "not synced", "aep-publisher-default": "not synced"})
+	if complete {
+		t.Fatal("clients were skipped: the run is not complete")
+	}
+	for _, want := range []string{"ae-studio-default, aep-publisher-default", "aectl platform sync-clients"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the outcome does not contain %q: %s", want, msg)
+		}
+	}
+}
+
 func TestGeneratedNamesMatchClientVaultNames(t *testing.T) {
 	have := map[string]bool{}
 	for _, d := range thunderClients() {
