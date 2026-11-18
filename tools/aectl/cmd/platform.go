@@ -539,11 +539,13 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	// With imported clients there is nothing to register: the IdP's admin
 	// created the clients and aectl holds no rights on it.
 	fmt.Println()
+	// skip is the clients this run does not register (clientID -> reason).
+	var skip map[string]string
 	if !registersClients() {
 		ui.Success("The platform IdP's clients are imported: none registered")
 	} else {
 		ui.Step("Registering Thunder OAuth clients")
-		skip := clientsReadingUnsynced(unsynced)
+		skip = clientsReadingUnsynced(unsynced)
 		if err := doThunderSetup(ctx, k8sClient, initPlatformNamespace,
 			viper.GetString("thunder.namespace"),
 			consoleURL, skip,
@@ -604,7 +606,7 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	if err := installAddons(ctx, k8sClient, platformVersion); err != nil {
 		return err
 	}
-	ui.Ready(consoleURL)
+	reportInstallOutcome(consoleURL, skip)
 	return nil
 }
 
@@ -1131,14 +1133,11 @@ func provisionOpenBao(ctx context.Context, platformNamespace, anthropicKey, thun
 	}
 	sp.Update("Writing secrets")
 	seeded, err := writePlatformSecrets(ctx, session, inputs, recover)
-	// A first install generates every secret and no org can have connected,
-	// so the warning would mean nothing there.
-	warnOrgClients := !firstInstallSeed(generatedPlatformSecrets(), seeded)
 	if err != nil {
 		sp.Fail("Writing secrets failed")
-		if warnOrgClients {
-			warnRegeneratedOrgClientSecrets(seeded)
-		}
+		// What the seed wrote before it failed stays written, and the next
+		// run finds it there and says nothing: warn now.
+		warnRegeneratedOrgClientSecrets(seeded)
 		return err
 	}
 	sp.Success(fmt.Sprintf("%d inputs written, %d of %d generated secrets seeded (the rest kept)",
@@ -1146,9 +1145,10 @@ func provisionOpenBao(ctx context.Context, platformNamespace, anthropicKey, thun
 	for _, line := range describeSeeded(seeded) {
 		ui.Detail(line)
 	}
-	if warnOrgClients {
-		warnRegeneratedOrgClientSecrets(seeded)
-	}
+	// Also on a first install, where no org can have connected: aectl has
+	// no way to tell one from an install that lost every secret, and only
+	// aep-api knows whether an org is connected.
+	warnRegeneratedOrgClientSecrets(seeded)
 	return nil
 }
 

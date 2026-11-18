@@ -153,6 +153,32 @@ func thunderSetupOutcome(skip map[string]string) (msg string, complete bool) {
 	return fmt.Sprintf("Thunder configured, except %d client(s) that this run did not register: %s. Run 'aectl platform sync-clients' when their Secret has synced.", len(ids), strings.Join(ids, ", ")), false
 }
 
+// installNotReadyRows are the rows of the closing panel of an install that
+// skipped clients (clientID -> reason): the clients that are not on the
+// platform IdP and the command that registers them.
+func installNotReadyRows(consoleURL string, skip map[string]string) [][2]string {
+	var rows [][2]string
+	if consoleURL != "" {
+		rows = append(rows, [2]string{"Console", ui.Orange(consoleURL)})
+	}
+	return append(rows,
+		[2]string{"Status", ui.Yellow("NOT READY")},
+		[2]string{"Not registered", strings.Join(slices.Sorted(maps.Keys(skip)), ", ")},
+		[2]string{"Next step", "aectl platform sync-clients"},
+	)
+}
+
+// reportInstallOutcome prints the closing panel of `platform install`. An
+// install that skipped clients is not reported as ready: what needs those
+// clients does not work until they are registered.
+func reportInstallOutcome(consoleURL string, skip map[string]string) {
+	if len(skip) == 0 {
+		ui.Ready(consoleURL)
+		return
+	}
+	ui.Panel("AEP is installed, but clients are not registered", installNotReadyRows(consoleURL, skip))
+}
+
 // reportThunderSetup prints thunderSetupOutcome: a success line, or a
 // warning when clients were skipped.
 func reportThunderSetup(skip map[string]string) {

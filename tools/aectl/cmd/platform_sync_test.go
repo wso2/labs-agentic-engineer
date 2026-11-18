@@ -222,29 +222,6 @@ func TestSyncClients_SeedErrorStillWarnsForWhatItWrote(t *testing.T) {
 	}
 }
 
-// A first install generates every secret; an install that existed before
-// keeps or restores at least one.
-func TestFirstInstallSeed(t *testing.T) {
-	gen := func() (string, error) { return "v", nil }
-	secrets := []generatedSecret{
-		{path: "aep/postgres-password", generate: gen},
-		{path: "aep/idp-clients/org-publisher", generate: gen},
-		{path: "aep/jev-api-key"}, // imported: aectl never generates it
-	}
-	allNew := []seededSecret{{path: "aep/postgres-password"}, {path: "aep/idp-clients/org-publisher"}}
-	if !firstInstallSeed(secrets, allNew) {
-		t.Error("every generated secret is new: want a first install")
-	}
-	oneKept := []seededSecret{{path: "aep/idp-clients/org-publisher"}}
-	if firstInstallSeed(secrets, oneKept) {
-		t.Error("the store kept aep/postgres-password: not a first install")
-	}
-	oneRestored := []seededSecret{{path: "aep/postgres-password", from: "postgres-secrets"}, {path: "aep/idp-clients/org-publisher"}}
-	if firstInstallSeed(secrets, oneRestored) {
-		t.Error("the cluster restored aep/postgres-password: not a first install")
-	}
-}
-
 // A run that skipped clients does not end on the success line: it names the
 // clients that are not registered and the command that registers them.
 func TestThunderSetupOutcome(t *testing.T) {
@@ -258,6 +235,25 @@ func TestThunderSetupOutcome(t *testing.T) {
 	for _, want := range []string{"ae-studio-default, aep-publisher-default", "aectl platform sync-clients"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("the outcome does not contain %q: %s", want, msg)
+		}
+	}
+}
+
+// An install that skipped clients does not end on the ready panel: its panel
+// says it is not ready, names the clients and gives the command.
+func TestReportInstallOutcome(t *testing.T) {
+	ready := captureStdout(t, func() { reportInstallOutcome("http://console.example", nil) })
+	if !strings.Contains(ready, "AEP is ready") {
+		t.Fatalf("nothing skipped: want the ready panel, got:\n%s", ready)
+	}
+	skip := map[string]string{"ae-studio-default": "not synced", "aep-publisher-default": "not synced"}
+	out := captureStdout(t, func() { reportInstallOutcome("http://console.example", skip) })
+	if strings.Contains(out, "AEP is ready") {
+		t.Fatalf("clients were skipped: the panel must not say ready:\n%s", out)
+	}
+	for _, want := range []string{"NOT READY", "ae-studio-default, aep-publisher-default", "aectl platform sync-clients", "http://console.example"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the panel does not contain %q:\n%s", want, out)
 		}
 	}
 }
