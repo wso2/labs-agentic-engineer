@@ -226,13 +226,13 @@ func TestEnsureClient_StoresThePreCreatedClient(t *testing.T) {
 			}
 			// No column holds the secret: memIDPRepo refuses any column the
 			// profile does not have, so a secret write would have failed the
-			// ensure. The client id stands in for the entity id column.
+			// ensure.
 			p := f.profile(t)
-			if tc.kind == ClientPublisher && (p.PublisherClientID != tc.clientID || p.PublisherThunderAppID != tc.clientID) {
-				t.Fatalf("publisher ids = %q %q", p.PublisherClientID, p.PublisherThunderAppID)
+			if tc.kind == ClientPublisher && p.PublisherClientID != tc.clientID {
+				t.Fatalf("publisher client id = %q", p.PublisherClientID)
 			}
-			if tc.kind == ClientStudio && (p.StudioClientID != tc.clientID || p.StudioThunderAppID != tc.clientID) {
-				t.Fatalf("studio ids = %q %q", p.StudioClientID, p.StudioThunderAppID)
+			if tc.kind == ClientStudio && p.StudioClientID != tc.clientID {
+				t.Fatalf("studio client id = %q", p.StudioClientID)
 			}
 
 			if err := f.svc.EnsureClient(ensureCtx(), "default", tc.kind); err != nil {
@@ -383,8 +383,8 @@ func TestKindSwitch_KeepsThePublisher(t *testing.T) {
 			}
 			ref := f.row(OrgSecretPublisherClient)
 			before := *f.profile(t)
-			if before.Kind != "platform" || before.PublisherClientID == "" || before.PublisherThunderAppID == "" || ref == "" {
-				t.Fatalf("setup: kind %q client %q app %q ref %q", before.Kind, before.PublisherClientID, before.PublisherThunderAppID, ref)
+			if before.Kind != "platform" || before.PublisherClientID == "" || ref == "" {
+				t.Fatalf("setup: kind %q client %q ref %q", before.Kind, before.PublisherClientID, ref)
 			}
 
 			if err := switchKind(f.svc); err != nil {
@@ -395,8 +395,8 @@ func TestKindSwitch_KeepsThePublisher(t *testing.T) {
 			if after.Kind != "custom" {
 				t.Fatalf("kind = %q, want custom", after.Kind)
 			}
-			if after.PublisherClientID != before.PublisherClientID || after.PublisherThunderAppID != before.PublisherThunderAppID {
-				t.Fatalf("the publisher ids were cleared: client %q app %q", after.PublisherClientID, after.PublisherThunderAppID)
+			if after.PublisherClientID != before.PublisherClientID {
+				t.Fatalf("the publisher's client id was cleared: %q", after.PublisherClientID)
 			}
 			if got := f.row(OrgSecretPublisherClient); got != ref || !f.vault.refs[ref] {
 				t.Fatalf("the publisher reference was dropped: row %q, live refs %v", got, f.vault.refs)

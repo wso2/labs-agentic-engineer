@@ -22,7 +22,7 @@ import "time"
 // per-org Thunder publisher client (docs/design/api-platform-integration.md).
 // One row per OC organisation. Every row has Kind="platform" + Thunder
 // issuer/jwks_url until the org brings its own IDP; PublisherClientID and
-// PublisherThunderAppID are recorded by the gitpat submit's client ensure.
+// StudioClientID are recorded by the gitpat submit's client ensure.
 // No secret, and no reference to one, lives here: the publisher's and the
 // studio client's credentials live only in vault, and the org's
 // ae-publisher-client / ae-studio-client org_secrets rows record their
@@ -38,17 +38,12 @@ type OrganizationIDPProfile struct {
 	JWKSURL             string `gorm:"column:jwks_url;not null" json:"jwksUrl"`
 	AdminCredsSecretRef string `gorm:"column:admin_creds_secret_ref" json:"adminCredsSecretRef,omitempty"`
 	PublisherClientID   string `gorm:"column:publisher_client_id" json:"publisherClientId,omitempty"`
-	// PublisherThunderAppID holds the client id of aep-publisher-<org> again:
-	// only the IdP has an entity id, and aep-api looks no client up on it.
-	// The column keeps its name.
-	PublisherThunderAppID string `gorm:"column:publisher_thunder_app_id" json:"-"`
-	// StudioClientID and StudioThunderAppID are the AE Studio client
-	// (ae-studio-<org>): both hold its client id. Its secret lives only in
-	// the org's ae-studio-client SecretReference, never in a column.
-	StudioClientID     string    `gorm:"column:studio_client_id" json:"-"`
-	StudioThunderAppID string    `gorm:"column:studio_thunder_app_id" json:"-"`
-	CreatedAt          time.Time `gorm:"column:created_at" json:"createdAt"`
-	UpdatedAt          time.Time `gorm:"column:updated_at" json:"updatedAt"`
+	// StudioClientID is the client id of the AE Studio client
+	// (ae-studio-<org>). Its secret lives only in the org's ae-studio-client
+	// SecretReference, never in a column.
+	StudioClientID string    `gorm:"column:studio_client_id" json:"-"`
+	CreatedAt      time.Time `gorm:"column:created_at" json:"createdAt"`
+	UpdatedAt      time.Time `gorm:"column:updated_at" json:"updatedAt"`
 }
 
 // TableName pins the GORM table name (the auto-pluraliser would

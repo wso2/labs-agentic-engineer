@@ -88,6 +88,7 @@ var goldenStepOrder = []string{
 	"phase29_secrets_refs_only",
 	"phase30_run_cycle_startup_wait",
 	"phase31_run_cycle_startup_clock",
+	"phase32_drop_idp_client_entity_ids",
 }
 
 // TestStepOrderGolden pins the ordered list. Steps is a pure builder, so this
