@@ -772,8 +772,8 @@ func (s *DeploymentService) DeleteComponentCascade(ctx context.Context, orgID, p
 
 // resolveIssuers returns the issuer list a protected component's JWT
 // validation is pinned to: a BYO org's profile issuer, else none (the
-// platform IDP). It only reads the profile: the publisher app is the
-// gitpat submit's to create, and a deploy never creates or heals it.
+// platform IDP). It only reads the profile: the publisher client's record
+// is the gitpat submit's to write, and a deploy never writes it.
 //
 // Fails closed: an empty list leaves the api-configuration trait accepting
 // tokens from every keymanager registered on the cluster, which for a BYO org

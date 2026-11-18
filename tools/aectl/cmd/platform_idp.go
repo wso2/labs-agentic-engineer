@@ -29,8 +29,8 @@ import (
 	"github.com/wso2/aep/aectl/internal/oidc"
 )
 
-// platformIDPKindDefault is the platform IdP an install has unless it says
-// otherwise: the in-cluster ThunderID. idp.kind unset means it.
+// platformIDPKindDefault is the token dialect an install has unless it says
+// otherwise: ThunderID's. idp.kind unset means it.
 const platformIDPKindDefault = config.IDPKindThunder
 
 // platformIDP is the platform IdP as the install writes it into the chart.

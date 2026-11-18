@@ -14,24 +14,20 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package thundersvc is the BFF-side Thunder admin client. It mints
-// `scope=system` access tokens via client_credentials against a Thunder
-// OAuth app (aep-system-client) that has the Administrator role
-// assigned, then uses those tokens to manage per-org publisher OAuth
-// apps via Thunder's /applications endpoint.
+// Package thundersvc is aep-api's admin client of an environment's ThunderID.
+// It mints `scope=system` access tokens via client_credentials against that
+// ThunderID's OAuth app (aep-system-client), which has the Administrator
+// role assigned, then uses those tokens on Thunder's admin API: the
+// directory of groups and users (directory.go), resource servers
+// (resourceservers.go) and roles (roles.go). The identity domain builds one
+// client per environment. aep-api administers nothing on the platform IdP.
 //
 // Every token request names the System resource server as its `resource`
 // indicator — see Config.SystemResourceIdentifier for why a request without
 // one gets a valid-looking token that every admin endpoint rejects.
 //
-// See docs/design/api-platform-integration.md §6.
-//
-//   - Org app naming: `aep-publisher-<orgHandle>` and `ae-studio-<orgHandle>`
-//     (clientId = name), registered in the org's OU.
-//   - Thunder has no lookup by name or clientId, so callers store each app's
-//     entity id and pass it back; a miss costs one full list scan (apps.go).
-//   - The publisher falls back to the default OU when the caller knows no
-//     org OU (looked up once, cached on the client).
+// Everything is written to the default OU (looked up once, cached on the
+// client).
 //
 // The system token has a TTL (Thunder default ~1h); the cache uses a
 // 30 s skew so concurrent callers don't all hit the slow path right
@@ -374,7 +370,7 @@ func (c *client) getSystemToken(ctx context.Context) (string, error) {
 func (c *client) fetchSystemToken(ctx context.Context) (string, int, error) {
 	// The system client is registered with
 	// `tokenEndpointAuthMethod: client_secret_post` (see
-	// single-cluster/thunder-resources/81-aep-system-client.yaml), so
+	// deployments/design/two-tier-thunder.md), so
 	// client_id + client_secret go in the form body — NOT in a Basic auth
 	// header.
 	data := url.Values{

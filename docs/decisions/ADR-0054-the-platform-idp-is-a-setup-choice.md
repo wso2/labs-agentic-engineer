@@ -114,9 +114,9 @@ client lifecycle, into `aectl` and into the chart.
   `ae-asgardeo-apps.sh --with-openchoreo-publisher` creates the client, and
   the dev-env then puts its secret in a default value of the cluster-wide
   build template, which is why this is for a local cluster only.
-- The settings that carry the IdP's endpoints keep their ThunderID names
-  (`thunder.jwksURL`, `console.thunderPublicURL`, the vault path family
-  `aep/idp-clients/`).
+- The settings that carry the IdP's endpoints, and the vault path family of
+  the client secrets, do not name an IdP (`idp.jwksURL`, `idp.tokenURL`,
+  `idp.issuer`, `aep/idp-clients/`).
 
 ## Alternatives rejected
 

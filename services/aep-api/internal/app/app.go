@@ -594,7 +594,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		JWKSURL: cfg.PlatformIDP.JWKSURL,
 	}).WithSecretRefWriter(secretRefWriter).WithOrgSecretRefs(orgSecretRepo)
 	// The deployment projection reads the org's IDP profile (the issuer a
-	// protected API is pinned to); it never creates the publisher app.
+	// protected API is pinned to); it never writes the publisher client's record.
 	deploymentService.SetIDPService(idpService)
 
 	// asServiceIdentity marks OC API calls made from inside dispatch, webhook

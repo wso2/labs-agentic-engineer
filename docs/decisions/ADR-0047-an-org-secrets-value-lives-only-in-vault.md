@@ -1,8 +1,8 @@
 # ADR-0047 — An org secret's value lives only in vault
 
-**Status:** Accepted · 2026-10-06 · decision 3 amended for two secrets on an
-Asgardeo install by [ADR-0054](ADR-0054-the-platform-idp-is-a-setup-choice.md)
-(decision 5): aep-api is given the publisher and AE Studio client secrets as
+**Status:** Accepted · 2026-10-06 · decision 3 amended for two secrets by
+[ADR-0054](ADR-0054-the-platform-idp-is-a-setup-choice.md) (decision 5, on
+every install since its amendment): aep-api is given the publisher and AE Studio client secrets as
 settings and writes them into the org's references
 **Related:** [CONTEXT.md](../../CONTEXT.md) **Org secret** ·
 [ADR-0045](ADR-0045-design-work-runs-in-the-organizations-ae-studio.md) (the
@@ -77,9 +77,9 @@ the name of the SecretReference that holds it, and a recorded name means
 
 - The platform database holds no org secret. A database dump, a backup or the
   column cipher's key reveals none of them.
-- The platform cannot read a value back. Agent Manager's copy and the client
-  heal both rely on a user re-entering, or the platform regenerating, the
-  value.
+- The platform cannot read a value back. Agent Manager's copy relies on a
+  user re-entering the value. The two client secrets are written again from
+  aep-api's settings at GitHub connect (ADR-0054).
 - A write of any org secret but `coding-agent-key` rolls the org's pod
   (ADR-0045), so it interrupts turns and Room sessions in flight.
 - An AI-gateway binding created after the key save needs the key saved again

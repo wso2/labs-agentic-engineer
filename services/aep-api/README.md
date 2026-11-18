@@ -38,7 +38,7 @@ flowchart TB
   DOMAINS --> PG[("Postgres")]
   DEP --> OC[[OpenChoreo]]
   SC --> AES[["the org's AE Studio pod (git + GitHub)"]]
-  IDN --> TH
+  IDN --> TH[["an environment's ThunderID"]]
   DEL --> TMP[[Temporal]]
 ```
 
