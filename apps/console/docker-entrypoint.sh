@@ -59,10 +59,32 @@ EOF_INNER
 # The file that is served has to name the org handle's claim, whether this
 # script wrote it or the deployment mounted its own read-only copy. This is
 # an early stop that shows in the pod's log. It reads the file as text with
-# its comments removed, so it cannot judge every file: the console itself
-# checks the value that is in effect and fails at load without one
-# (src/auth/claims.ts resolveOrgHandleClaim).
-if ! sed -e 's#/\*.*\*/##g' -e 's#^[[:space:]]*//.*$##' -e 's#[[:space:]]//.*$##' -e '/^[[:space:]]*\/\{0,1\}\*/d' "$ENV_CONFIG" |
+# its comments removed (// to the end of a line, and /* */ also over several
+# lines), so it cannot judge every file: the console itself checks the value
+# that is in effect and fails at load without one (src/auth/claims.ts
+# resolveOrgHandleClaim). A // counts as a comment at the start of a line or
+# after white space, so the // of a URL is kept.
+without_js_comments() {
+  awk '
+    {
+      line = $0; out = ""
+      while (length(line) > 0) {
+        if (inblock) {
+          i = index(line, "*/")
+          if (i == 0) { line = ""; break }
+          line = substr(line, i + 2); inblock = 0
+          continue
+        }
+        b = index(line, "/*")
+        c = match(line, /(^|[ \t])\/\//)
+        if (c > 0 && (b == 0 || c < b)) { out = out substr(line, 1, c - 1); line = ""; break }
+        if (b == 0) { out = out line; line = ""; break }
+        out = out substr(line, 1, b - 1); line = substr(line, b + 2); inblock = 1
+      }
+      print out
+    }' "$1"
+}
+if ! without_js_comments "$ENV_CONFIG" |
   grep -Eq "(^|[{,[:space:]])[\"']?VITE_IDP_CLAIMS_ORG_HANDLE[\"']?[[:space:]]*:[[:space:]]*[\"'][[:space:]]*[^\"'[:space:]]"; then
   echo "VITE_IDP_CLAIMS_ORG_HANDLE is required: the name of the claim that carries the org handle in the platform IdP's tokens. Set the variable, or name it in the env-config.js that is served." >&2
   exit 1
