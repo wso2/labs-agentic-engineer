@@ -16,8 +16,10 @@
 # under the License.
 
 # Prints an aectl config whose platform IdP is an Asgardeo organization: the
-# given base config with its `idp:` block set to imported clients, kind
-# asgardeo, the organization's issuer and its handle, and with the four keys
+# given base config with its `idp:` block set to imported clients, Asgardeo's
+# claim names written out in full under `preset: "none"` (the shape a config
+# for any other IdP takes), the organization's issuer and its handle, and
+# with the four keys
 # of its `thunder:` block commented out (aectl refuses them where it
 # administers no ThunderID). `make dev-env AE_DEV_IDP=asgardeo` uses it so a
 # developer's organization handle is never written into the repository;
@@ -29,8 +31,9 @@
 #   [base URL]              default https://api.asgardeo.io
 #
 # It edits lines of the base that must be in the shape skaffold/defaults.yaml
-# ships them: in the `idp:` block `  clients: "thunder"`, `  kind: "thunder"`,
-# `  org_handle: "default"` and the commented `  # issuer: ""`; in the
+# ships them: in the `idp:` block `  clients: "thunder"`,
+# `    preset: "thunder"`, `  org_handle: "default"` and the commented
+# `  # issuer: ""`; in the
 # `thunder:` block its four keys. A base without them is refused, not guessed
 # at.
 set -euo pipefail
@@ -55,11 +58,23 @@ out="$(awk '
 ' "$base")" || { echo "❌ ${base}: its thunder: block does not hold the four keys this script comments out (see the header)" >&2; exit 1; }
 out="$(printf '%s\n' "$out" | sed \
     -e 's|^  clients: "thunder"$|  clients: "imported"|' \
-    -e 's|^  kind: "thunder"$|  kind: "asgardeo"|' \
     -e 's|^  # issuer: ""$|  issuer: "'"${issuer}"'"|' \
     -e 's|^  org_handle: "default"$|  org_handle: "'"${tenant}"'"|')"
 
-for line in '  clients: "imported"' '  kind: "asgardeo"' "  issuer: \"${issuer}\"" "  org_handle: \"${tenant}\""; do
+# The claims block: no preset, every value written out. These are the names
+# an Asgardeo token carries (the values of aectl's own `asgardeo` preset).
+claims='    preset: "none"\
+    org:\
+      handle: "org_handle"\
+      id: "org_id"\
+      name: "org_name"\
+    caller_type:\
+      claim: "aut"\
+      machine: "APPLICATION"\
+      user: "APPLICATION_USER"'
+out="$(printf '%s\n' "$out" | sed -e 's|^    preset: "thunder"$|'"${claims}"'|')"
+
+for line in '  clients: "imported"' '    preset: "none"' '      user: "APPLICATION_USER"' "  issuer: \"${issuer}\"" "  org_handle: \"${tenant}\""; do
     if [ "$(printf '%s\n' "$out" | grep -cxF -- "$line")" != "1" ]; then
         echo "❌ ${base}: its idp: block is not in the shape this script edits (see the header); could not set: ${line}" >&2
         exit 1

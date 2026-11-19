@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	"github.com/spf13/viper"
+
+	"github.com/wso2/aep/aectl/internal/idpclaims"
 )
 
 // idpConfig is a viper holding the keys every install needs, plus extra.
@@ -43,10 +45,10 @@ var thunderKeys = map[string]string{
 }
 
 var asgardeoKeys = map[string]string{
-	"idp.clients":    "imported",
-	"idp.kind":       "asgardeo",
-	"idp.issuer":     "https://api.asgardeo.io/t/acmecorp/oauth2/token",
-	"idp.org_handle": "acmecorp",
+	"idp.clients":       "imported",
+	"idp.claims.preset": "asgardeo",
+	"idp.issuer":        "https://api.asgardeo.io/t/acmecorp/oauth2/token",
+	"idp.org_handle":    "acmecorp",
 }
 
 func without(m map[string]string, key string) map[string]string {
@@ -74,17 +76,18 @@ func hasErrorNaming(errs []string, key string) bool {
 	return false
 }
 
-// A Thunder install needs the four thunder.* keys and the handle of the org
-// it serves, whether idp.kind is unset or says thunder.
+// An install where aectl registers the clients needs the four thunder.* keys
+// and the handle of the org it serves, whether idp.clients is unset or says
+// thunder.
 func TestValidate_ThunderKeysRequiredUnderThunder(t *testing.T) {
-	for _, kind := range []string{"", "thunder"} {
-		if errs := validateViper(idpConfig(with(thunderKeys, "idp.kind", kind))); len(errs) != 0 {
-			t.Fatalf("kind %q: a complete Thunder config is invalid: %v", kind, errs)
+	for _, clients := range []string{"", "thunder"} {
+		if errs := validateViper(idpConfig(with(thunderKeys, "idp.clients", clients))); len(errs) != 0 {
+			t.Fatalf("clients %q: a complete Thunder config is invalid: %v", clients, errs)
 		}
 		for key := range thunderKeys {
-			errs := validateViper(idpConfig(with(without(thunderKeys, key), "idp.kind", kind)))
+			errs := validateViper(idpConfig(with(without(thunderKeys, key), "idp.clients", clients)))
 			if !hasErrorNaming(errs, key) {
-				t.Errorf("kind %q without %s: errors %v do not name it", kind, key, errs)
+				t.Errorf("clients %q without %s: errors %v do not name it", clients, key, errs)
 			}
 		}
 	}
@@ -148,10 +151,29 @@ func TestValidate_ImportedClientsIssuerMustBeHTTPS(t *testing.T) {
 	}
 }
 
-func TestValidate_UnknownKindRefused(t *testing.T) {
-	errs := validateViper(idpConfig(with(thunderKeys, "idp.kind", "okta")))
-	if !hasErrorNaming(errs, "idp.kind") {
-		t.Fatalf("errors %v do not refuse the kind", errs)
+// idp.kind was a key. A config that still sets it is refused whatever the
+// value, once, with what to set instead: accepted in silence, a config that
+// said only `kind: asgardeo` would get ThunderID's claim names.
+func TestValidate_RemovedKindRefused(t *testing.T) {
+	for _, kind := range []string{"thunder", "asgardeo", "okta"} {
+		errs := validateViper(idpConfig(with(thunderKeys, "idp.kind", kind)))
+		if len(errs) != 1 || !hasErrorNaming(errs, "idp.kind") {
+			t.Fatalf("kind %q: errors %v, want one naming idp.kind", kind, errs)
+		}
+		for _, want := range []string{"idp.claims.preset", "aectl platform config import"} {
+			if !strings.Contains(errs[0], want) {
+				t.Errorf("kind %q: the message does not name %q: %s", kind, want, errs[0])
+			}
+		}
+	}
+	// Also beside a preset: the key is gone, not only unused.
+	errs := validateViper(idpConfig(with(asgardeoKeys, "idp.kind", "asgardeo")))
+	if len(errs) != 1 || !hasErrorNaming(errs, "idp.kind") {
+		t.Fatalf("errors %v, want one naming idp.kind", errs)
+	}
+	// An empty value sets nothing.
+	if errs := validateViper(idpConfig(with(thunderKeys, "idp.kind", " "))); len(errs) != 0 {
+		t.Fatalf("an empty idp.kind: %v", errs)
 	}
 }
 
@@ -197,36 +219,23 @@ func TestValidate_NoPresetRequiresEveryClaim(t *testing.T) {
 	}
 }
 
-// While idp.kind exists, a config that names no preset starts from the
-// preset with the kind's name; a preset the config names wins; with neither
-// it is the default.
-func TestClaimsPreset_FollowsTheKind(t *testing.T) {
-	for name, tc := range map[string]struct {
-		keys map[string]string
-		want string
-	}{
-		"only the kind":        {map[string]string{"idp.kind": "asgardeo"}, "asgardeo"},
-		"a preset and a kind":  {map[string]string{"idp.kind": "asgardeo", "idp.claims.preset": "none"}, "none"},
-		"neither":              {map[string]string{}, ""},
-		"a kind in upper case": {map[string]string{"idp.kind": "Asgardeo"}, "asgardeo"},
-		// A kind this build does not know names no preset: the enum check
-		// reports the kind, and the claims are not blamed for it.
-		"an unknown kind": {map[string]string{"idp.kind": "okta"}, ""},
-		"the kind none":   {map[string]string{"idp.kind": "none"}, ""},
-	} {
-		if got := ClaimsPreset(idpConfig(tc.keys)); got != tc.want {
-			t.Errorf("%s: preset %q, want %q", name, got, tc.want)
-		}
+// A config that names no preset starts from the default one, ThunderID's.
+// An Asgardeo config names its preset.
+func TestClaims_AnUnsetPresetIsThunder(t *testing.T) {
+	got, err := idpclaims.Resolve(idpConfig(thunderKeys).GetString("idp.claims.preset"), ClaimsOverride(idpConfig(thunderKeys)))
+	if err != nil {
+		t.Fatal(err)
 	}
-	// The kind "none" is not a kind: one error, which names idp.kind.
-	if errs := validateViper(idpConfig(with(thunderKeys, "idp.kind", "none"))); len(errs) != 1 || !hasErrorNaming(errs, "idp.kind") {
-		t.Errorf("kind none: errors %v, want one naming idp.kind", errs)
+	if got.Preset != "thunder" || got.Claims().OrgHandle != "ouHandle" {
+		t.Fatalf("no preset: preset %q, org handle claim %q; want thunder, ouHandle", got.Preset, got.Claims().OrgHandle)
 	}
-	// The Asgardeo config of an install from before the claims block is
-	// valid as it is, and resolves to Asgardeo's claim names.
 	v := idpConfig(asgardeoKeys)
 	if errs := validateViper(v); len(errs) != 0 {
-		t.Fatalf("an Asgardeo config with only the kind is invalid: %v", errs)
+		t.Fatalf("an Asgardeo config that names its preset is invalid: %v", errs)
+	}
+	got, err = idpclaims.Resolve(v.GetString("idp.claims.preset"), ClaimsOverride(v))
+	if err != nil || got.Claims().OrgHandle != "org_handle" {
+		t.Fatalf("the asgardeo preset: org handle claim %q, err %v; want org_handle", got.Claims().OrgHandle, err)
 	}
 }
 
@@ -236,12 +245,16 @@ func TestIDPKeys_ArePersisted(t *testing.T) {
 	for _, k := range ConfigMapKeys {
 		persisted[k] = true
 	}
-	for _, k := range []string{"idp.clients", "idp.kind", "idp.claims.preset", "idp.claims.org.handle", "idp.claims.caller_type.user", "idp.issuer", "idp.org_handle"} {
+	for _, k := range []string{"idp.clients", "idp.claims.preset", "idp.claims.org.handle", "idp.claims.caller_type.user", "idp.issuer", "idp.org_handle"} {
 		if !persisted[k] {
 			t.Errorf("%s is not in ConfigMapKeys", k)
 		}
 		if _, ok := keyRegistry[k]; !ok {
 			t.Errorf("%s is not in keyRegistry", k)
 		}
+	}
+	// The removed key is neither validated as a key nor stored.
+	if _, ok := keyRegistry[RemovedKeyIDPKind]; ok || persisted[RemovedKeyIDPKind] {
+		t.Errorf("%s is still a key", RemovedKeyIDPKind)
 	}
 }
