@@ -148,9 +148,7 @@ Two separate things differ between IdPs, and the kind tied them together:
   error text.
 - aep-api keeps no IdP entity id of a client: the two columns that held one
   are dropped. It records the client ids only.
-- An install from before this decision is reinstalled, not upgraded. A
-  config or a chart value that still sets `idp.kind` is refused, with what
-  to set in its place.
+- An install from before this decision is reinstalled, not upgraded.
 
 ## Alternatives rejected
 

@@ -217,32 +217,3 @@ func TestLoadFromCluster_LegacyWorkspacesAccessMode_Tolerated(t *testing.T) {
 		t.Errorf("gateway.hostname = %q", got)
 	}
 }
-
-// An install from before idp.kind was removed has the key in its stored
-// config. The load reads it, and validation stops the update with the
-// message: accepted in silence, a stored `asgardeo` would be replaced by
-// ThunderID's claim names.
-func TestLoadFromCluster_StoredIDPKindIsRefused(t *testing.T) {
-	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: ConfigMapName, Namespace: "aep"},
-		Data: map[string]string{
-			"thunder.namespace":       "thunder",
-			"thunder.url":             "http://thunder.example.com",
-			"thunder.admin_client_id": "admin",
-			"thunder.public_url":      "http://thunder.example.com",
-			"oc.api_url":              "http://oc.example.com",
-			"oc.system_namespace":     "openchoreo-system",
-			"idp.org_handle":          "default",
-			"idp.kind":                "thunder",
-		},
-	}
-	viper.Reset()
-	t.Cleanup(viper.Reset)
-	if _, err := LoadFromCluster(context.Background(), fake.NewSimpleClientset(cm), "aep"); err != nil {
-		t.Fatal(err)
-	}
-	errs := ValidateLoaded()
-	if len(errs) != 1 || !strings.HasPrefix(errs[0], "idp.kind:") {
-		t.Fatalf("errors %v, want one naming idp.kind", errs)
-	}
-}

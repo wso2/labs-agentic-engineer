@@ -17,12 +17,12 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/spf13/viper"
-
-	"github.com/wso2/aep/aectl/internal/idpclaims"
 )
 
 // idpConfig is a viper holding the keys every install needs, plus extra.
@@ -151,32 +151,6 @@ func TestValidate_ImportedClientsIssuerMustBeHTTPS(t *testing.T) {
 	}
 }
 
-// idp.kind was a key. A config that still sets it is refused whatever the
-// value, once, with what to set instead: accepted in silence, a config that
-// said only `kind: asgardeo` would get ThunderID's claim names.
-func TestValidate_RemovedKindRefused(t *testing.T) {
-	for _, kind := range []string{"thunder", "asgardeo", "okta"} {
-		errs := validateViper(idpConfig(with(thunderKeys, "idp.kind", kind)))
-		if len(errs) != 1 || !hasErrorNaming(errs, "idp.kind") {
-			t.Fatalf("kind %q: errors %v, want one naming idp.kind", kind, errs)
-		}
-		for _, want := range []string{"idp.claims.preset", "aectl platform config import"} {
-			if !strings.Contains(errs[0], want) {
-				t.Errorf("kind %q: the message does not name %q: %s", kind, want, errs[0])
-			}
-		}
-	}
-	// Also beside a preset: the key is gone, not only unused.
-	errs := validateViper(idpConfig(with(asgardeoKeys, "idp.kind", "asgardeo")))
-	if len(errs) != 1 || !hasErrorNaming(errs, "idp.kind") {
-		t.Fatalf("errors %v, want one naming idp.kind", errs)
-	}
-	// An empty value sets nothing.
-	if errs := validateViper(idpConfig(with(thunderKeys, "idp.kind", " "))); len(errs) != 0 {
-		t.Fatalf("an empty idp.kind: %v", errs)
-	}
-}
-
 // A preset aectl does not ship is refused by name, once.
 func TestValidate_UnknownPresetRefused(t *testing.T) {
 	errs := validateViper(idpConfig(with(thunderKeys, "idp.claims.preset", "okta")))
@@ -222,7 +196,7 @@ func TestValidate_NoPresetRequiresEveryClaim(t *testing.T) {
 // A config that names no preset starts from the default one, ThunderID's.
 // An Asgardeo config names its preset.
 func TestClaims_AnUnsetPresetIsThunder(t *testing.T) {
-	got, err := idpclaims.Resolve(idpConfig(thunderKeys).GetString("idp.claims.preset"), ClaimsOverride(idpConfig(thunderKeys)))
+	got, err := ResolveClaims(idpConfig(thunderKeys))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +207,7 @@ func TestClaims_AnUnsetPresetIsThunder(t *testing.T) {
 	if errs := validateViper(v); len(errs) != 0 {
 		t.Fatalf("an Asgardeo config that names its preset is invalid: %v", errs)
 	}
-	got, err = idpclaims.Resolve(v.GetString("idp.claims.preset"), ClaimsOverride(v))
+	got, err = ResolveClaims(v)
 	if err != nil || got.Claims().OrgHandle != "org_handle" {
 		t.Fatalf("the asgardeo preset: org handle claim %q, err %v; want org_handle", got.Claims().OrgHandle, err)
 	}
@@ -253,8 +227,44 @@ func TestIDPKeys_ArePersisted(t *testing.T) {
 			t.Errorf("%s is not in keyRegistry", k)
 		}
 	}
-	// The removed key is neither validated as a key nor stored.
-	if _, ok := keyRegistry[RemovedKeyIDPKind]; ok || persisted[RemovedKeyIDPKind] {
-		t.Errorf("%s is still a key", RemovedKeyIDPKind)
+	// idp.kind is no longer a key: it is neither validated nor stored, and a
+	// config that still has the line is valid, as with any unknown key.
+	if _, ok := keyRegistry["idp.kind"]; ok || persisted["idp.kind"] {
+		t.Error("idp.kind is still a key")
+	}
+	if errs := validateViper(idpConfig(with(thunderKeys, "idp.kind", "thunder"))); len(errs) != 0 {
+		t.Errorf("a config with the old idp.kind line: %v", errs)
+	}
+}
+
+// A claim value is not taken from the environment. Every command that
+// validates a config stops on an AEP_IDP_CLAIMS_* variable first, the
+// loaded config and a config file alike, and names the variable.
+func TestValidate_ClaimsFromTheEnvironmentAreRefused(t *testing.T) {
+	if err := ClaimsEnvRefusal(); err != nil {
+		t.Fatalf("no variable is set: %v", err)
+	}
+	got := claimsEnvSet([]string{"AEP_IDP_CLAIMS_ORG_HANDLE=x", "AEP_IDP_ORG_HANDLE=default", "AEP_IDP_CLAIMS_PRESET=", "PATH=/bin"})
+	if strings.Join(got, ",") != "AEP_IDP_CLAIMS_ORG_HANDLE,AEP_IDP_CLAIMS_PRESET" {
+		t.Fatalf("claimsEnvSet = %v, want the two claim variables, the blank one included", got)
+	}
+
+	t.Setenv("AEP_IDP_CLAIMS_PRESET", "okta")
+	err := ClaimsEnvRefusal()
+	if err == nil || !strings.Contains(err.Error(), "AEP_IDP_CLAIMS_PRESET") || !strings.Contains(err.Error(), "idp.claims") {
+		t.Fatalf("err = %v, want one naming the variable and idp.claims", err)
+	}
+	// The refusal comes first: the variable can cause the other errors.
+	errs := withClaimsEnvRefusal([]string{"idp.claims.preset: unknown"})
+	if len(errs) != 2 || !strings.HasPrefix(errs[0], "AEP_IDP_CLAIMS_PRESET:") {
+		t.Fatalf("errors %v, want the refusal first", errs)
+	}
+	// A config file is read alone, and is refused too.
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("idp:\n  org_handle: default\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if errs := ValidateFile(path); len(errs) == 0 || !strings.HasPrefix(errs[0], "AEP_IDP_CLAIMS_PRESET:") {
+		t.Fatalf("ValidateFile errors %v, want the refusal first", errs)
 	}
 }

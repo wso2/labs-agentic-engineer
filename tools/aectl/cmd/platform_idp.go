@@ -20,8 +20,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"os"
-	"sort"
 	"strings"
 	"time"
 
@@ -116,37 +114,15 @@ func discoverPlatformIDP(ctx context.Context) (platformIDP, error) {
 	return idp, nil
 }
 
-// claimsEnvPrefix is the prefix of the environment variables that aectl's
-// config reader maps onto the idp.claims.* keys, as it maps every AEP_*
-// variable onto its key.
-const claimsEnvPrefix = "AEP_IDP_CLAIMS_"
-
-// claimsEnvSet lists the AEP_IDP_CLAIMS_* variables that are set, sorted.
-func claimsEnvSet(environ []string) []string {
-	var set []string
-	for _, kv := range environ {
-		if name, _, _ := strings.Cut(kv, "="); strings.HasPrefix(name, claimsEnvPrefix) {
-			set = append(set, name)
-		}
-	}
-	sort.Strings(set)
-	return set
-}
-
-// platformIDPClaims resolves the idp.claims block: the preset
-// (idp.claims.preset, thunder when unset), then the config's idp.claims.*
-// keys.
-//
-// An AEP_IDP_CLAIMS_* variable stops the command. A value from the
-// environment would hold for this run only: the stored config keeps what
-// the config file said, and the next update without the variable would send
-// that value to the chart, where every reader would then read a claim the
-// tokens do not carry. A claim value belongs in the config.
+// platformIDPClaims resolves the idp.claims block of the loaded config: the
+// preset (idp.claims.preset, thunder when unset), then the config's
+// idp.claims.* keys. An AEP_IDP_CLAIMS_* variable stops it
+// (config.ClaimsEnvRefusal): a claim value belongs in the config.
 func platformIDPClaims() (idpclaims.Resolved, error) {
-	if set := claimsEnvSet(os.Environ()); len(set) != 0 {
-		return idpclaims.Resolved{}, fmt.Errorf("%s: the platform IdP's claim values are not taken from the environment. Set them in the config (idp.claims.*), import it (aectl platform config import --config <file>), and unset the variable", strings.Join(set, ", "))
+	if err := config.ClaimsEnvRefusal(); err != nil {
+		return idpclaims.Resolved{}, err
 	}
-	return idpclaims.Resolve(viper.GetString("idp.claims.preset"), config.ClaimsOverride(viper.GetViper()))
+	return config.ResolveClaims(viper.GetViper())
 }
 
 // printPlatformIDPClaims shows the claim values aectl passes to the chart
@@ -168,10 +144,6 @@ func platformIDPOverrides(idp platformIDP) []string {
 	}
 	args := []string{
 		"--set", "idp.clients=" + idp.Clients,
-		// idp.kind was a chart value, and the chart stops when it is set.
-		// An update keeps the values of the installed release, so null
-		// deletes the one an earlier install left there.
-		"--set", "idp.kind=null",
 		"--set", "idp.jwksURL=" + idp.InCluster.JWKSURL,
 		"--set", "idp.tokenURL=" + idp.InCluster.TokenURL,
 		"--set", "aeStudio.idp.issuer=" + idp.Public.Issuer,

@@ -226,7 +226,6 @@ func TestPlatformIDPOverrides(t *testing.T) {
 	got := strings.Join(platformIDPOverrides(testPlatformIDP), " ")
 	for _, want := range []string{
 		"--set idp.clients=thunder",
-		"--set idp.kind=null",
 		"--set-string idp.claims.org.handle=ouHandle",
 		"--set-string idp.claims.org.id=ouId",
 		"--set-string idp.claims.org.name=ouName",
@@ -398,7 +397,7 @@ func TestHelmUpgradeArgs_CarriesAEStudioValues(t *testing.T) {
 			t.Errorf("update args lack %s %s", want[i], want[i+1])
 		}
 	}
-	for _, key := range []string{"aeStudio.gatewayHost=", "aeStudio.idp.issuer=", "aeStudio.idp.jwksUrl=", "aeStudio.idp.tokenUrl=", "idp.clients=", "idp.kind=", "idp.claims.org.handle=", "idp.claims.callerType.user=", "idp.tokenURL=", "aeStudio.consoleOrigins=", "aeStudio.extraEgress="} {
+	for _, key := range []string{"aeStudio.gatewayHost=", "aeStudio.idp.issuer=", "aeStudio.idp.jwksUrl=", "aeStudio.idp.tokenUrl=", "idp.clients=", "idp.claims.org.handle=", "idp.claims.callerType.user=", "idp.tokenURL=", "aeStudio.consoleOrigins=", "aeStudio.extraEgress="} {
 		if !strings.Contains(joined, key) {
 			t.Errorf("update args lack %s", key)
 		}
@@ -694,17 +693,20 @@ func TestPlatformIDPClaims_AnUnsetPresetIsTheDefault(t *testing.T) {
 }
 
 // Every claim value is passed to the chart, the empty optional ones too: the
-// chart's own defaults are one IdP's, and a pair left out would keep it. The
-// removed value idp.kind is passed as null: an update keeps the values of the
-// installed release, and the chart stops when that one is set.
+// chart's own defaults are one IdP's, and a pair left out would keep it. No
+// kind is passed.
 func TestPlatformIDPOverrides_SetsEveryClaimValue(t *testing.T) {
 	args := platformIDPOverrides(testPlatformIDP)
 	pairs := map[string]bool{}
 	for i := 0; i+1 < len(args); i += 2 {
 		pairs[args[i]+" "+args[i+1]] = true
 	}
+	for pair := range pairs {
+		if strings.Contains(pair, "idp.kind") {
+			t.Errorf("a kind is still passed to the chart: %s", pair)
+		}
+	}
 	for _, want := range []string{
-		"--set idp.kind=null",
 		"--set-string idp.claims.org.handle=ouHandle",
 		"--set-string idp.claims.org.id=ouId",
 		"--set-string idp.claims.org.name=ouName",

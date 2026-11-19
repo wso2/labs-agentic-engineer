@@ -297,8 +297,8 @@ type KubeAPIConfig struct {
 }
 
 // PlatformIDPDefaults are the issuer + JWKS URL of the cluster's
-// platform IDP (Thunder in v1), seeded into every new
-// organization_idp_profiles row, and the IdP's token dialect kind.
+// platform IDP, seeded into every new organization_idp_profiles row, the
+// IdP's token dialect and the one org it serves.
 type PlatformIDPDefaults struct {
 	Issuer  string
 	JWKSURL string

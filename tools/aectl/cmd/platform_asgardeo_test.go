@@ -99,7 +99,6 @@ func TestPlatformIDPOverrides_Asgardeo(t *testing.T) {
 	got := strings.Join(platformIDPOverrides(testAsgardeoIDP), " ")
 	for _, want := range []string{
 		"--set idp.clients=imported",
-		"--set idp.kind=null",
 		"--set-string idp.claims.org.handle=org_handle",
 		"--set-string idp.claims.org.id=org_id",
 		"--set-string idp.claims.org.name=org_name",

@@ -105,7 +105,7 @@ type Resolved struct {
 
 // Override answers the value a higher layer sets for a field's key, and that
 // layer's source; "" means the layer does not set it. The caller supplies it
-// from the config and the environment.
+// from the config.
 type Override func(key string) (value string, source Source)
 
 // ErrUnknownPreset is a preset name aectl does not ship.

@@ -21,6 +21,8 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -91,10 +93,6 @@ const (
 	kindURL
 	kindEnum
 )
-
-// RemovedKeyIDPKind is a key aectl no longer has. validateViper refuses a
-// config that sets it.
-const RemovedKeyIDPKind = "idp.kind"
 
 // Who creates AE's clients on the platform IdP (idp.clients). ClientsThunder:
 // aectl registers them on a ThunderID it administers. ClientsImported: the
@@ -254,14 +252,14 @@ func ValidateFile(path string) []string {
 	if err := fv.ReadInConfig(); err != nil {
 		return []string{fmt.Sprintf("cannot read config file: %s", err)}
 	}
-	return validateViper(fv)
+	return withClaimsEnvRefusal(validateViper(fv))
 }
 
 // ValidateLoaded checks the currently resolved global viper state (populated
 // after LoadFromCluster) and returns one error string per invalid or missing
 // required key.
 func ValidateLoaded() []string {
-	return validateViper(viper.GetViper())
+	return withClaimsEnvRefusal(validateViper(viper.GetViper()))
 }
 
 // FileClaims resolves the idp.claims block of a config file: the preset it
@@ -272,7 +270,54 @@ func FileClaims(path string) (idpclaims.Resolved, error) {
 	if err := fv.ReadInConfig(); err != nil {
 		return idpclaims.Resolved{}, fmt.Errorf("cannot read config file: %w", err)
 	}
-	return idpclaims.Resolve(fv.GetString("idp.claims.preset"), ClaimsOverride(fv))
+	return ResolveClaims(fv)
+}
+
+// ResolveClaims resolves the idp.claims block of v: the preset it names
+// (idp.claims.preset, thunder when unset), then its own idp.claims.* keys.
+func ResolveClaims(v *viper.Viper) (idpclaims.Resolved, error) {
+	return idpclaims.Resolve(v.GetString("idp.claims.preset"), ClaimsOverride(v))
+}
+
+// claimsEnvPrefix is the prefix of the environment variables that the config
+// reader maps onto the idp.claims.* keys, as it maps every AEP_* variable
+// onto its key.
+const claimsEnvPrefix = "AEP_IDP_CLAIMS_"
+
+// claimsEnvSet lists the AEP_IDP_CLAIMS_* variables in environ, sorted.
+func claimsEnvSet(environ []string) []string {
+	var set []string
+	for _, kv := range environ {
+		if name, _, _ := strings.Cut(kv, "="); strings.HasPrefix(name, claimsEnvPrefix) {
+			set = append(set, name)
+		}
+	}
+	sort.Strings(set)
+	return set
+}
+
+// ClaimsEnvRefusal is the error for a claim value given in the environment,
+// or nil when no AEP_IDP_CLAIMS_* variable is set. Such a value would hold
+// for one run: the stored config keeps what the config file said, and the
+// next update without the variable would send that value to the chart,
+// where every reader would then read a claim the tokens do not carry. A
+// claim value belongs in the config. Every command that validates a config
+// stops on it first.
+func ClaimsEnvRefusal() error {
+	set := claimsEnvSet(os.Environ())
+	if len(set) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s: the platform IdP's claim values are not taken from the environment. Set them in the config (idp.claims.*), import it (aectl platform config import --config <file>), and unset the variable", strings.Join(set, ", "))
+}
+
+// withClaimsEnvRefusal puts ClaimsEnvRefusal first in errs: a variable that
+// is set can cause the other errors, and it is the one to fix.
+func withClaimsEnvRefusal(errs []string) []string {
+	if err := ClaimsEnvRefusal(); err != nil {
+		return append([]string{err.Error()}, errs...)
+	}
+	return errs
 }
 
 // ClaimsOverride answers the idp.claims.* values v sets itself, for layering
@@ -299,14 +344,8 @@ func validateViper(v *viper.Viper) []string {
 	// The IdP's claims have to be complete once the preset and the config's
 	// own keys are layered. An unknown preset is the enum check's to report,
 	// once.
-	if _, err := idpclaims.Resolve(v.GetString("idp.claims.preset"), ClaimsOverride(v)); err != nil && !errors.Is(err, idpclaims.ErrUnknownPreset) {
+	if _, err := ResolveClaims(v); err != nil && !errors.Is(err, idpclaims.ErrUnknownPreset) {
 		errs = append(errs, err.Error())
-	}
-	// idp.kind was a key. A config that still sets it must not be accepted
-	// in silence: one that said only `kind: asgardeo` would now get
-	// ThunderID's claim names, the default preset's.
-	if strings.TrimSpace(v.GetString(RemovedKeyIDPKind)) != "" {
-		errs = append(errs, RemovedKeyIDPKind+": this key is gone. Remove it. The claim names of the platform IdP come from idp.claims: for an Asgardeo organization set idp.claims.preset to asgardeo (ThunderID's are the default). Then import the config again: aectl platform config import --config <file>")
 	}
 	// An IdP aectl does not run is reached over the public internet, by the
 	// operator's machine and by every pod: its issuer has to be https.
