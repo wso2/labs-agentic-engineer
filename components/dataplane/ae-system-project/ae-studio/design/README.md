@@ -106,7 +106,7 @@ user's: `AE_IDP_CLAIMS_ORG_HANDLE`, `_ORG_ID`, `_ORG_NAME` (optional),
 knows an IdP, so the four mandatory ones have no default and a pod missing
 one does not start.
 
-`AE_IDP_KIND` (from `environmentConfigs.idp.kind`) is still set on the three
+`AE_IDP_KIND` (from `environmentConfigs.idp.kind`) is set on the three
 containers. No container reads it.
 `AE_USER_AUDIENCES` and `AE_ALLOWED_ORIGINS` are comma lists. `ae-collab`
 checks `Origin` itself, because a WebSocket upgrade carries no CORS.

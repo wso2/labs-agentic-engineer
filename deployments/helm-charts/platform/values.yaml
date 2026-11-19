@@ -261,11 +261,11 @@ idp:
   #   imported  the IdP's admin created them and stored their secrets; the
   #             chart renders none of the above.
   clients: "thunder"
-  # The platform IdP's token dialect: the claim names and rules every reader
-  # of its tokens uses to say who the caller is. One value reaches aep-api
-  # (PLATFORM_IDP_KIND), every org's AE Studio pod (AE_STUDIO_IDP_KIND, then
-  # AE_IDP_KIND) and the console (VITE_IDP_KIND): `thunder` or `asgardeo`.
-  # `aectl` sets it from its idp.kind config.
+  # The kind of the platform IdP: `thunder` or `asgardeo`. The value reaches
+  # aep-api (PLATFORM_IDP_KIND), every org's AE Studio pod (AE_STUDIO_IDP_KIND,
+  # then AE_IDP_KIND) and the console (VITE_IDP_KIND). No reader of tokens
+  # reads it: they read by `claims`, below. `aectl` sets it from its idp.kind
+  # config.
   kind: "thunder"
   # The names and values of the claims that say which org a caller belongs to
   # and whether a token was issued to a machine or to a user. No standard
@@ -273,9 +273,9 @@ idp:
   # aud, client_id, ...) are not set here. Each is a top-level text claim of
   # the token. The values reach aep-api (PLATFORM_IDP_CLAIMS_*), every org's
   # AE Studio pod (AE_IDP_CLAIMS_*) and, for the org's handle, the console
-  # (VITE_IDP_CLAIMS_ORG_HANDLE), beside `kind`: the readers of tokens read
-  # by `kind`, so the values here must be those of the same IdP. `aectl` sets
-  # them from its idp.claims config, and the defaults here are ThunderID's.
+  # (VITE_IDP_CLAIMS_ORG_HANDLE). Every reader of the IdP's tokens reads by
+  # them and knows no IdP. `aectl` sets them from its idp.claims config, and
+  # the defaults here are ThunderID's.
   claims:
     org:
       # The claim that carries the handle the IdP knows the caller's org by.

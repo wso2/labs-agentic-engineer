@@ -300,8 +300,8 @@ func (r *configReader) aeStudio() AEStudioConfig {
 	c.IDP.Issuer = r.readOptionalString("AE_STUDIO_IDP_ISSUER", "")
 	c.IDP.JWKSURL = r.readOptionalString("AE_STUDIO_IDP_JWKS_URL", "")
 	c.IDP.TokenURL = r.readOptionalString("AE_STUDIO_IDP_TOKEN_URL", "")
-	// Still passed on to the pod, which no longer reads it.
-	c.IDP.Kind = r.readOptionalString("AE_STUDIO_IDP_KIND", r.readOptionalString("PLATFORM_IDP_KIND", "thunder"))
+	// Passed on to the pod as AE_IDP_KIND. Nothing reads it there.
+	c.IDP.Kind = r.readOptionalString("AE_STUDIO_IDP_KIND", "thunder")
 	// The pod reads the platform IdP's tokens, by the same claims as aep-api.
 	c.IDP.Claims = r.idpClaims()
 	c.IDP.OrgHandle = strings.TrimSpace(r.readOptionalString("PLATFORM_IDP_ORG_HANDLE", ""))

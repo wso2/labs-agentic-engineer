@@ -238,6 +238,7 @@ func TestOrg_OnlyTheInstallsOrg(t *testing.T) {
 	}
 	for name, r := range map[string]Raw{
 		"another org of the IdP":     {"org_handle": "globex", "org_id": "org-2"},
+		"the match is exact":         {"org_handle": "AcmeCorp", "org_id": "org-1"},
 		"the platform's own name":    {"org_handle": "default", "org_id": "org-1"},
 		"no handle claim":            {"org_id": "org-1", "org_name": "acmecorp"},
 		"a handle that is not text":  {"org_handle": []any{"acmecorp"}, "org_id": "org-1"},

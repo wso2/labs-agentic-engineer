@@ -129,6 +129,80 @@
         "name": ""
       },
       "caller": "refused"
+    },
+    {
+      "name": "an org handle that is not text: only text claims are read",
+      "payload": {
+        "sub": "5a1b9c0e-user",
+        "aud": "aep-console-client",
+        "grant_type": "authorization_code",
+        "ouId": "0195a3c1-7d2e-7c41-9b8a-2f6d4e8a1c30",
+        "ouHandle": [
+          "default"
+        ],
+        "ouName": "Default"
+      },
+      "org": {
+        "handle": "",
+        "id": "0195a3c1-7d2e-7c41-9b8a-2f6d4e8a1c30",
+        "name": "Default"
+      },
+      "caller": "user"
+    },
+    {
+      "name": "an org handle inside an object: only top-level text claims are read",
+      "payload": {
+        "sub": "5a1b9c0e-user",
+        "aud": "aep-console-client",
+        "grant_type": "authorization_code",
+        "ouId": "0195a3c1-7d2e-7c41-9b8a-2f6d4e8a1c30",
+        "ouHandle": {
+          "value": "default"
+        },
+        "ouName": "Default"
+      },
+      "org": {
+        "handle": "",
+        "id": "0195a3c1-7d2e-7c41-9b8a-2f6d4e8a1c30",
+        "name": "Default"
+      },
+      "caller": "user"
+    },
+    {
+      "name": "an empty org handle is no handle",
+      "payload": {
+        "sub": "5a1b9c0e-user",
+        "aud": "aep-console-client",
+        "grant_type": "authorization_code",
+        "ouId": "0195a3c1-7d2e-7c41-9b8a-2f6d4e8a1c30",
+        "ouHandle": "",
+        "ouName": "Default"
+      },
+      "org": {
+        "handle": "",
+        "id": "0195a3c1-7d2e-7c41-9b8a-2f6d4e8a1c30",
+        "name": "Default"
+      },
+      "caller": "user"
+    },
+    {
+      "name": "a caller type claim that is not text is no claim",
+      "payload": {
+        "sub": "5a1b9c0e-user",
+        "aud": "aep-console-client",
+        "grant_type": [
+          "client_credentials"
+        ],
+        "ouId": "0195a3c1-7d2e-7c41-9b8a-2f6d4e8a1c30",
+        "ouHandle": "default",
+        "ouName": "Default"
+      },
+      "org": {
+        "handle": "default",
+        "id": "0195a3c1-7d2e-7c41-9b8a-2f6d4e8a1c30",
+        "name": "Default"
+      },
+      "caller": "refused"
     }
   ]
 }

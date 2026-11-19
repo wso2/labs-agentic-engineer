@@ -279,14 +279,14 @@ func TestLoad_AEStudioCPURequestsMalformedFailBootNamingTheKey(t *testing.T) {
 	}
 }
 
-// The kind is still passed on to the pod (AE_IDP_KIND), where nothing reads
-// it any more: AE_STUDIO_IDP_KIND, or PLATFORM_IDP_KIND when that is unset,
-// or thunder. aep-api does not check the value.
+// The kind is passed on to the pod (AE_IDP_KIND), where nothing reads it:
+// AE_STUDIO_IDP_KIND, or thunder when it is unset. aep-api does not check
+// the value, and it does not read PLATFORM_IDP_KIND.
 func TestLoad_AEStudioIDPKindIsPassedOn(t *testing.T) {
 	for _, tc := range []struct{ platform, studio, want string }{
 		{"", "", "thunder"},
-		{"asgardeo", "", "asgardeo"},
-		{"asgardeo", "thunder", "thunder"},
+		{"asgardeo", "", "thunder"},
+		{"", "asgardeo", "asgardeo"},
 	} {
 		setMinimalEnv(t)
 		t.Setenv("PLATFORM_IDP_KIND", tc.platform)
@@ -298,6 +298,24 @@ func TestLoad_AEStudioIDPKindIsPassedOn(t *testing.T) {
 		if cfg.AEStudio.IDP.Kind != tc.want {
 			t.Errorf("platform %q studio %q: AEStudio.IDP.Kind = %q, want %q", tc.platform, tc.studio, cfg.AEStudio.IDP.Kind, tc.want)
 		}
+	}
+}
+
+// The claim settings are read trimmed: a stray space would make a name match
+// no claim.
+func TestLoad_IDPClaimsAreTrimmed(t *testing.T) {
+	setMinimalEnv(t)
+	t.Setenv("PLATFORM_IDP_CLAIMS_ORG_HANDLE", " org_handle ")
+	t.Setenv("PLATFORM_IDP_CLAIMS_CALLER_TYPE_MACHINE", "\tAPPLICATION\n")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.PlatformIDP.Claims.OrgHandle; got != "org_handle" {
+		t.Errorf("PlatformIDP.Claims.OrgHandle = %q, want org_handle", got)
+	}
+	if got := cfg.AEStudio.IDP.Claims.Machine; got != "APPLICATION" {
+		t.Errorf("AEStudio.IDP.Claims.Machine = %q, want APPLICATION", got)
 	}
 }
 

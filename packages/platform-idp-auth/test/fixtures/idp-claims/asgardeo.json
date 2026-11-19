@@ -152,6 +152,61 @@
         "name": ""
       },
       "caller": "refused"
+    },
+    {
+      "name": "an org handle inside an object: only top-level text claims are read",
+      "payload": {
+        "sub": "9c8b7a6d-user",
+        "aud": "aep-console-client",
+        "aut": "APPLICATION_USER",
+        "org_id": "8f1d2c3b-4a5e-4f60-9a7b-1c2d3e4f5a6b",
+        "org_handle": {
+          "value": "acmecorp"
+        },
+        "org_name": "Acme Corp"
+      },
+      "org": {
+        "handle": "",
+        "id": "8f1d2c3b-4a5e-4f60-9a7b-1c2d3e4f5a6b",
+        "name": "Acme Corp"
+      },
+      "caller": "user"
+    },
+    {
+      "name": "an empty org handle is no handle",
+      "payload": {
+        "sub": "9c8b7a6d-user",
+        "aud": "aep-console-client",
+        "aut": "APPLICATION_USER",
+        "org_id": "8f1d2c3b-4a5e-4f60-9a7b-1c2d3e4f5a6b",
+        "org_handle": "",
+        "org_name": "Acme Corp"
+      },
+      "org": {
+        "handle": "",
+        "id": "8f1d2c3b-4a5e-4f60-9a7b-1c2d3e4f5a6b",
+        "name": "Acme Corp"
+      },
+      "caller": "user"
+    },
+    {
+      "name": "a caller type claim that is not text is no claim",
+      "payload": {
+        "sub": "9c8b7a6d-user",
+        "aud": "aep-console-client",
+        "aut": [
+          "APPLICATION"
+        ],
+        "org_id": "8f1d2c3b-4a5e-4f60-9a7b-1c2d3e4f5a6b",
+        "org_handle": "acmecorp",
+        "org_name": "Acme Corp"
+      },
+      "org": {
+        "handle": "acmecorp",
+        "id": "8f1d2c3b-4a5e-4f60-9a7b-1c2d3e4f5a6b",
+        "name": "Acme Corp"
+      },
+      "caller": "refused"
     }
   ]
 }

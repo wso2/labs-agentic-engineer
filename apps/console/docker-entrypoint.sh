@@ -32,7 +32,7 @@ THUNDER_SCOPES="${VITE_THUNDER_SCOPES:-openid profile email}"
 # says which claim it is (the chart's idp.claims.org.handle).
 # Spaces alone are not a claim name: the console would fall back to its dev
 # default and read no org from this IdP's tokens.
-IDP_ORG_HANDLE_CLAIM="$(printf '%s' "${VITE_IDP_CLAIMS_ORG_HANDLE:-}" | tr -d '[:space:]')"
+IDP_ORG_HANDLE_CLAIM="$(printf '%s' "${VITE_IDP_CLAIMS_ORG_HANDLE:-}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
 if [ -z "$IDP_ORG_HANDLE_CLAIM" ]; then
   echo "VITE_IDP_CLAIMS_ORG_HANDLE is required: the name of the claim that carries the org handle in the platform IdP's tokens" >&2
   exit 1
