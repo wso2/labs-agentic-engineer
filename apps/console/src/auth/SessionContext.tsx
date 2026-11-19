@@ -28,7 +28,7 @@ export interface Session {
    * teammate's. `""` when the token carries none.
    */
   user: { id: string; name: string; email: string; role?: string };
-  /** Active org, read from the token by the platform IdP's token dialect (`env.idpKind`, `auth/claims.ts`). */
+  /** Active org, read from the token's org handle claim (`env.orgHandleClaim`, `auth/claims.ts`). */
   orgHandle: string | null;
   signOut: () => void;
 }

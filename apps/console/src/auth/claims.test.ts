@@ -17,6 +17,8 @@
  */
 
 import { describe, expect, it } from "vitest";
+import asgardeoFixture from "../../../../packages/platform-idp-auth/test/fixtures/idp-claims/asgardeo.json?raw";
+import thunderFixture from "../../../../packages/platform-idp-auth/test/fixtures/idp-claims/thunder.json?raw";
 import {
   decodeJwtClaims,
   identityFromClaims,
@@ -56,40 +58,46 @@ describe("decodeJwtClaims", () => {
   });
 });
 
+// The sample tokens every reader of the platform IdP's tokens is tested
+// against (aep-api's dialect, the pod's two, and this file): for each IdP AE
+// ships claim values for, token payloads and the org each must read as.
+interface ClaimsFixture {
+  idp: string;
+  claims: { org: { handle: string } };
+  tokens: { name: string; payload: Record<string, unknown>; org: { handle: string } }[];
+}
+
+const fixtures = [thunderFixture, asgardeoFixture].map((raw) => JSON.parse(raw) as ClaimsFixture);
+
 describe("resolveOrgHandle", () => {
-  it("thunder: mirrors the BFF's Thunder dialect, ouHandle > ouName > ouId", () => {
-    expect(
-      resolveOrgHandle({ ouHandle: "h", ouName: "n", ouId: "i" }, "thunder"),
-    ).toBe("h");
-    expect(resolveOrgHandle({ ouName: "n", ouId: "i" }, "thunder")).toBe("n");
-    expect(resolveOrgHandle({ ouId: "i" }, "thunder")).toBe("i");
+  for (const fixture of fixtures) {
+    for (const token of fixture.tokens) {
+      it(`${fixture.idp}: ${token.name}`, () => {
+        // The console's "no org" is null where the server's is an empty handle.
+        expect(resolveOrgHandle(token.payload, fixture.claims.org.handle)).toBe(
+          token.org.handle === "" ? null : token.org.handle,
+        );
+      });
+    }
+  }
+
+  it("reads the named claim only: nothing stands in for the handle", () => {
+    expect(resolveOrgHandle({ ouHandle: "h", ouName: "n", ouId: "i" }, "ouHandle")).toBe("h");
+    expect(resolveOrgHandle({ ouName: "n", ouId: "i" }, "ouHandle")).toBeNull();
+    expect(resolveOrgHandle({ org_handle: "h" }, "ouHandle")).toBeNull();
   });
 
   it("skips empty and non-string values", () => {
-    expect(resolveOrgHandle({ ouHandle: "", ouName: "n" }, "thunder")).toBe("n");
-    expect(resolveOrgHandle({ ouHandle: 42, ouName: "n" }, "thunder")).toBe("n");
-    expect(resolveOrgHandle({}, "thunder")).toBeNull();
-  });
-
-  it("asgardeo: org_handle names the org, with no fallback", () => {
-    expect(
-      resolveOrgHandle({ org_handle: "h", org_name: "n", org_id: "i" }, "asgardeo"),
-    ).toBe("h");
-    expect(resolveOrgHandle({ org_name: "n", org_id: "i" }, "asgardeo")).toBeNull();
-    // Thunder's claims name no org under asgardeo, nor asgardeo's under thunder.
-    expect(resolveOrgHandle({ ouHandle: "h" }, "asgardeo")).toBeNull();
-    expect(resolveOrgHandle({ org_handle: "h" }, "thunder")).toBeNull();
-  });
-
-  it("an IdP kind this build does not know names no org", () => {
-    expect(resolveOrgHandle({ ouHandle: "h", org_handle: "h" }, "okta")).toBeNull();
+    expect(resolveOrgHandle({ ouHandle: "" }, "ouHandle")).toBeNull();
+    expect(resolveOrgHandle({ ouHandle: 42 }, "ouHandle")).toBeNull();
+    expect(resolveOrgHandle({}, "ouHandle")).toBeNull();
   });
 });
 
 describe("identityFromClaims", () => {
-  it("asgardeo: no name claim, so given and family name; the org from org_handle", () => {
+  it("a token with no name claim: given and family name; the org from the configured claim", () => {
     // An Asgardeo access token's identity claims (names as issued, values made up).
-    const identity = identityFromClaims("asgardeo", {
+    const identity = identityFromClaims("org_handle", {
       sub: "u1",
       aut: "APPLICATION_USER",
       org_handle: "acme",
@@ -104,19 +112,19 @@ describe("identityFromClaims", () => {
   });
 
   it("prefers name, then given/family, then username, email, sub", () => {
-    expect(identityFromClaims("thunder", { name: "N", given_name: "G" }).name).toBe("N");
+    expect(identityFromClaims("ouHandle", { name: "N", given_name: "G" }).name).toBe("N");
     expect(
-      identityFromClaims("thunder", { given_name: "G", family_name: "F", username: "u" })
+      identityFromClaims("ouHandle", { given_name: "G", family_name: "F", username: "u" })
         .name,
     ).toBe("G F");
-    expect(identityFromClaims("thunder", { username: "u", email: "e@x" }).name).toBe("u");
-    expect(identityFromClaims("thunder", { email: "e@x" }).name).toBe("e@x");
-    expect(identityFromClaims("thunder", { sub: "s" }).name).toBe("s");
-    expect(identityFromClaims("thunder", {}).name).toBe("User");
+    expect(identityFromClaims("ouHandle", { username: "u", email: "e@x" }).name).toBe("u");
+    expect(identityFromClaims("ouHandle", { email: "e@x" }).name).toBe("e@x");
+    expect(identityFromClaims("ouHandle", { sub: "s" }).name).toBe("s");
+    expect(identityFromClaims("ouHandle", {}).name).toBe("User");
   });
 
   it("takes the first source that has a value (ID token before access token)", () => {
-    const identity = identityFromClaims("thunder",
+    const identity = identityFromClaims("ouHandle",
       { name: "From ID" },
       { name: "From access", ouHandle: "acme" },
     );
@@ -125,16 +133,19 @@ describe("identityFromClaims", () => {
     expect(identity.orgHandle).toBe("acme");
   });
 
-  it("resolves the org per-source, not per-claim across sources", () => {
-    // ID token has ouName only; access token has ouHandle. The first source
-    // with any org claim wins (ouName), matching a BFF that reads one token.
+  it("takes the org from the first source that carries the handle claim", () => {
+    // The ID token has the org's name only, which is not the handle; the
+    // access token has the handle.
     expect(
-      identityFromClaims("thunder", { ouName: "n" }, { ouHandle: "h" }).orgHandle,
-    ).toBe("n");
+      identityFromClaims("ouHandle", { ouName: "n" }, { ouHandle: "h" }).orgHandle,
+    ).toBe("h");
+    expect(
+      identityFromClaims("ouHandle", { ouHandle: "id-token" }, { ouHandle: "access" }).orgHandle,
+    ).toBe("id-token");
   });
 
   it("returns empty email when no source has one", () => {
-    expect(identityFromClaims("thunder", { name: "N" }).email).toBe("");
+    expect(identityFromClaims("ouHandle", { name: "N" }).email).toBe("");
   });
 });
 
