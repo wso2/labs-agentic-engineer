@@ -105,9 +105,6 @@ user's: `AE_IDP_CLAIMS_ORG_HANDLE`, `_ORG_ID`, `_ORG_NAME` (optional),
 (optional). They are the values aep-api reads its own tokens by. No container
 knows an IdP, so the four mandatory ones have no default and a pod missing
 one does not start.
-
-`AE_IDP_KIND` (from `environmentConfigs.idp.kind`) is set on the three
-containers. No container reads it.
 `AE_USER_AUDIENCES` and `AE_ALLOWED_ORIGINS` are comma lists. `ae-collab`
 checks `Origin` itself, because a WebSocket upgrade carries no CORS.
 `AE_WEBHOOK_URL` is the relay channel when `webhookRelayUrl` is set, else the
@@ -239,7 +236,6 @@ its own deployment.
 | `consoleOrigins` | `AE_STUDIO_CONSOLE_ORIGINS` | the console's public URL and `http://localhost:8090` (Vite `pnpm dev`) |
 | `idp.issuer` | `AE_STUDIO_IDP_ISSUER` | the platform IdP's issuer: aectl `idp.issuer`, or `thunder.public_url` where that is unset |
 | `idp.jwksUrl`, `idp.tokenUrl` | `AE_STUDIO_IDP_JWKS_URL`, `AE_STUDIO_IDP_TOKEN_URL` | the IdP's OIDC discovery document (`jwks_uri`, `token_endpoint`). A ThunderID aectl administers (`idp.clients` `thunder`): its paths on aectl `thunder.url` (in-cluster: the issuer's host is loopback inside a pod). Otherwise: the public endpoints as the document names them |
-| `idp.kind` | `AE_STUDIO_IDP_KIND` | the chart's `idp.kind`, from aectl `idp.kind` (`thunder` when unset). It becomes the containers' `AE_IDP_KIND`, which none of them reads |
 | `idp.claims.*` | `PLATFORM_IDP_CLAIMS_*` (aep-api's own settings; the pod gets the same values) | the chart's `idp.claims`, from aectl's `idp.claims` block (a preset, then its keys): the token dialect the three containers read the IdP's claims by, their `AE_IDP_CLAIMS_*` |
 | `idp.userAudiences` | `AE_STUDIO_IDP_USER_AUDIENCES` | the console's client id (chart default) |
 | `aepApiBaseUrl` | `AE_STUDIO_AEP_API_BASE_URL` | the chart: `aep-api`'s in-cluster Service URL |
