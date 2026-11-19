@@ -57,9 +57,13 @@ window._env_ = {
 EOF_INNER
 
 # The file that is served has to name the org handle's claim, whether this
-# script wrote it or the deployment mounted its own read-only copy. Without
-# it the console would read its dev default, a claim nobody configured.
-if ! grep -Eq "VITE_IDP_CLAIMS_ORG_HANDLE[\"']?[[:space:]]*:[[:space:]]*[\"'][[:space:]]*[^\"'[:space:]]" "$ENV_CONFIG"; then
+# script wrote it or the deployment mounted its own read-only copy. This is
+# an early stop that shows in the pod's log. It reads the file as text with
+# its comments removed, so it cannot judge every file: the console itself
+# checks the value that is in effect and fails at load without one
+# (src/auth/claims.ts resolveOrgHandleClaim).
+if ! sed -e 's#/\*.*\*/##g' -e 's#^[[:space:]]*//.*$##' -e 's#[[:space:]]//.*$##' -e '/^[[:space:]]*\/\{0,1\}\*/d' "$ENV_CONFIG" |
+  grep -Eq "(^|[{,[:space:]])[\"']?VITE_IDP_CLAIMS_ORG_HANDLE[\"']?[[:space:]]*:[[:space:]]*[\"'][[:space:]]*[^\"'[:space:]]"; then
   echo "VITE_IDP_CLAIMS_ORG_HANDLE is required: the name of the claim that carries the org handle in the platform IdP's tokens. Set the variable, or name it in the env-config.js that is served." >&2
   exit 1
 fi

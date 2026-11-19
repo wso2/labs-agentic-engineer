@@ -23,6 +23,7 @@ import {
   decodeJwtClaims,
   identityFromClaims,
   resolveOrgHandle,
+  resolveOrgHandleClaim,
   sessionUserId,
 } from "./claims";
 
@@ -166,5 +167,26 @@ describe("sessionUserId", () => {
 
   it("is empty when neither carries one", () => {
     expect(sessionUserId({}, { email: "ada@x.com" })).toBe("");
+  });
+});
+
+// The console is told which claim carries the org's handle. Only the local
+// dev server has a default: a built console with no value fails at load,
+// because it would otherwise read a claim nobody configured.
+describe("resolveOrgHandleClaim", () => {
+  it("takes the configured name, trimmed", () => {
+    expect(resolveOrgHandleClaim(false, " org_handle ")).toBe("org_handle");
+    expect(resolveOrgHandleClaim(true, "org_handle")).toBe("org_handle");
+  });
+
+  it("falls back to the dev ThunderID's claim in the dev server only", () => {
+    expect(resolveOrgHandleClaim(true, undefined)).toBe("ouHandle");
+    expect(resolveOrgHandleClaim(true, "   ")).toBe("ouHandle");
+  });
+
+  it("fails a built console that is not told the claim, naming the setting", () => {
+    expect(() => resolveOrgHandleClaim(false, undefined)).toThrow(/VITE_IDP_CLAIMS_ORG_HANDLE/);
+    expect(() => resolveOrgHandleClaim(false, "")).toThrow(/VITE_IDP_CLAIMS_ORG_HANDLE/);
+    expect(() => resolveOrgHandleClaim(false, "   ")).toThrow(/VITE_IDP_CLAIMS_ORG_HANDLE/);
   });
 });

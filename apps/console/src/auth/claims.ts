@@ -51,6 +51,23 @@ export function resolveOrgHandle(claims: TokenClaims, orgHandleClaim: string): s
   return str(claims[orgHandleClaim]) ?? null;
 }
 
+// The claim the dev ThunderID's tokens carry the org's handle in.
+const DEV_ORG_HANDLE_CLAIM = "ouHandle";
+
+// The name of the claim the console reads the org's handle from
+// (VITE_IDP_CLAIMS_ORG_HANDLE, in the env-config.js that is served). A built
+// console has to be told it: with no value it would read a claim nobody
+// configured, so it fails at load and names the setting. Only the local dev
+// server falls back, to the dev ThunderID's claim.
+export function resolveOrgHandleClaim(dev: boolean, configured: string | undefined): string {
+  const claim = configured?.trim();
+  if (claim) return claim;
+  if (dev) return DEV_ORG_HANDLE_CLAIM;
+  throw new Error(
+    "VITE_IDP_CLAIMS_ORG_HANDLE is not set: the console does not know which claim of the platform IdP's tokens carries the org's handle. Name it in the env-config.js that is served.",
+  );
+}
+
 export interface SessionIdentity {
   name: string;
   email: string;
