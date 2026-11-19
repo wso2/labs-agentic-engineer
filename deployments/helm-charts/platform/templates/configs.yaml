@@ -9,6 +9,12 @@ look as if it took effect, so the install stops and says where it went. */}}
 {{- if .Values.console.thunder }}
 {{- fail "the chart value block console.thunder moved: set console.idp.clientId and console.idp.scopes" }}
 {{- end }}
+{{- /* idp.kind is gone: it chose the claim names that idp.claims now holds.
+A kind still set would be read by nothing, and a chart told only
+`asgardeo` would read tokens by the default claim names, ThunderID's. */}}
+{{- if .Values.idp.kind }}
+{{- fail "the chart value idp.kind is gone: set the IdP's claim names and values under idp.claims (aectl's idp.claims.preset names ThunderID's and Asgardeo's)" }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
