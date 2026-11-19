@@ -212,7 +212,7 @@ point at enforcement, they don't restate it.
   `edge/tenant_gate_test.go` + every domain's `*_component_test.go`
 - **One org per install.** A token that does not declare the install's org handle reads
   as no org, on the user edge and on every machine-token verifier; aep-api asks no IdP
-  about an org → `platform/auth/dialect/dialect_test.go` (`TestWithSingleOrg`)
+  about an org → `platform/auth/dialect/dialect_test.go` (`TestOrg_OnlyTheInstallsOrg`)
 
 ## Where to look
 

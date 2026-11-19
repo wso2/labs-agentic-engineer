@@ -88,17 +88,26 @@ the mirrors or the reference store. Budget and eviction:
 
 | Container | Plain env | Secret env (from its ExternalSecret) |
 |---|---|---|
-| `ae-design-agent` | `AE_ORG_ID`, `AE_ORG_HANDLE`, `AE_IDP_ISSUER`, `AE_IDP_JWKS_URL`, `AE_IDP_KIND` (the IdP's token dialect, from `environmentConfigs.idp.kind`; each container defaults to `thunder` when it is unset), `AE_IDP_CLAIMS_*` (six: the IdP's claim names and values, from `environmentConfigs.idp.claims`; the containers read tokens by `AE_IDP_KIND`), `AE_USER_AUDIENCES`, `AE_MCP_SOCKET`, `AE_TURN_SOCKET`, `AE_ROOM_SOCKET`, `AE_SNAPSHOTS_DIR`, `AE_MODEL_CONNECTION`, `AE_EXPECTED_SECRET_REV` (`""` without a key), `AE_LISTEN_PORT`, `AE_HEALTH_PORT` | `ANTHROPIC_API_KEY`, `AE_SECRET_REV` |
-| `ae-collab` | `AE_ORG_ID`, `AE_ORG_HANDLE`, `AE_IDP_ISSUER`, `AE_IDP_JWKS_URL`, `AE_IDP_KIND`, `AE_IDP_CLAIMS_*`, `AE_USER_AUDIENCES`, `AE_ALLOWED_ORIGINS`, `AE_FILES_SOCKET`, `AE_ROOM_SOCKET`, `AE_LISTEN_PORT`, `AE_HEALTH_PORT` | none |
-| `ae-studio-tools` | `AE_ORG_ID`, `AE_ORG_HANDLE`, `AE_IDP_ISSUER`, `AE_IDP_JWKS_URL`, `AE_IDP_TOKEN_URL`, `AE_IDP_KIND`, `AE_IDP_CLAIMS_*`, `AE_USER_AUDIENCES`, `AE_M2M_CLIENT_ID`, `AEP_API_BASE_URL`, `AE_FILES_SOCKET`, `AE_MCP_SOCKET`, `AE_TURN_SOCKET`, `AE_STUDIO_DATA_DIR`, `AE_STORAGE_BUDGET_BYTES`, `AE_EXPECTED_SECRET_REV`, `AE_LISTEN_PORT`, `AE_HEALTH_PORT`, `AE_GITHUB_OWNER`, `AE_WEBHOOK_URL` | `GITHUB_PAT`, `GITHUB_WEBHOOK_SECRET`, `AE_STUDIO_CLIENT_ID`, `AE_STUDIO_CLIENT_SECRET`, `AE_SECRET_REV` |
+| `ae-design-agent` | `AE_ORG_ID`, `AE_ORG_HANDLE`, `AE_IDP_ISSUER`, `AE_IDP_JWKS_URL`, `AE_IDP_CLAIMS_*` (the IdP's token dialect, from `environmentConfigs.idp.claims`; see below), `AE_USER_AUDIENCES`, `AE_MCP_SOCKET`, `AE_TURN_SOCKET`, `AE_ROOM_SOCKET`, `AE_SNAPSHOTS_DIR`, `AE_MODEL_CONNECTION`, `AE_EXPECTED_SECRET_REV` (`""` without a key), `AE_LISTEN_PORT`, `AE_HEALTH_PORT` | `ANTHROPIC_API_KEY`, `AE_SECRET_REV` |
+| `ae-collab` | `AE_ORG_ID`, `AE_ORG_HANDLE`, `AE_IDP_ISSUER`, `AE_IDP_JWKS_URL`, `AE_IDP_CLAIMS_*`, `AE_USER_AUDIENCES`, `AE_ALLOWED_ORIGINS`, `AE_FILES_SOCKET`, `AE_ROOM_SOCKET`, `AE_LISTEN_PORT`, `AE_HEALTH_PORT` | none |
+| `ae-studio-tools` | `AE_ORG_ID`, `AE_ORG_HANDLE`, `AE_IDP_ISSUER`, `AE_IDP_JWKS_URL`, `AE_IDP_TOKEN_URL`, `AE_IDP_CLAIMS_*`, `AE_USER_AUDIENCES`, `AE_M2M_CLIENT_ID`, `AEP_API_BASE_URL`, `AE_FILES_SOCKET`, `AE_MCP_SOCKET`, `AE_TURN_SOCKET`, `AE_STUDIO_DATA_DIR`, `AE_STORAGE_BUDGET_BYTES`, `AE_EXPECTED_SECRET_REV`, `AE_LISTEN_PORT`, `AE_HEALTH_PORT`, `AE_GITHUB_OWNER`, `AE_WEBHOOK_URL` | `GITHUB_PAT`, `GITHUB_WEBHOOK_SECRET`, `AE_STUDIO_CLIENT_ID`, `AE_STUDIO_CLIENT_SECRET`, `AE_SECRET_REV` |
 
 `AE_ORG_ID` is the org's id on the platform IdP (a Thunder OU id, an
 Asgardeo organization id). `AE_ORG_HANDLE` is the org's handle as that IdP's
 tokens carry it: the gates compare it with a token's, and it names the Rooms
-(`spec-<handle>-<project>`, which the console builds from the same token). On
-Thunder it is the org's name; where the IdP names its one org by a handle of
-its own (aep-api's `PLATFORM_IDP_ORG_HANDLE`, an Asgardeo tenant's handle),
-it is that handle.
+(`spec-<handle>-<project>`, which the console builds from the same token). It
+is aep-api's `PLATFORM_IDP_ORG_HANDLE`: a ThunderID organization unit's
+handle, an Asgardeo organization's handle.
+`AE_IDP_CLAIMS_*` are the names and values of the IdP's own claims, by which
+all three containers read a token's org and whether it is a machine's or a
+user's: `AE_IDP_CLAIMS_ORG_HANDLE`, `_ORG_ID`, `_ORG_NAME` (optional),
+`_CALLER_TYPE_CLAIM`, `_CALLER_TYPE_MACHINE` and `_CALLER_TYPE_USER`
+(optional). They are the values aep-api reads its own tokens by. No container
+knows an IdP, so the four mandatory ones have no default and a pod missing
+one does not start.
+
+`AE_IDP_KIND` (from `environmentConfigs.idp.kind`) is still set on the three
+containers. No container reads it.
 `AE_USER_AUDIENCES` and `AE_ALLOWED_ORIGINS` are comma lists. `ae-collab`
 checks `Origin` itself, because a WebSocket upgrade carries no CORS.
 `AE_WEBHOOK_URL` is the relay channel when `webhookRelayUrl` is set, else the
@@ -228,10 +237,10 @@ its own deployment.
 | `gatewayHost` | `AE_STUDIO_GATEWAY_HOST` | aectl `gateway.hostname` |
 | `publicScheme`, `listenerName`, `publicPortSuffix` | `AE_STUDIO_PUBLIC_SCHEME`, `AE_STUDIO_LISTENER_NAME`, `AE_STUDIO_PUBLIC_PORT_SUFFIX` | from aectl `tls.enabled` alone: `http`/`http`/`:19080`, or `https`/`https`/`:19443` |
 | `consoleOrigins` | `AE_STUDIO_CONSOLE_ORIGINS` | the console's public URL and `http://localhost:8090` (Vite `pnpm dev`) |
-| `idp.issuer` | `AE_STUDIO_IDP_ISSUER` | the platform IdP's issuer: aectl `thunder.public_url`, or `idp.issuer` where `idp.kind` is `asgardeo` |
-| `idp.jwksUrl`, `idp.tokenUrl` | `AE_STUDIO_IDP_JWKS_URL`, `AE_STUDIO_IDP_TOKEN_URL` | the IdP's OIDC discovery document (`jwks_uri`, `token_endpoint`). ThunderID: its paths on aectl `thunder.url` (in-cluster: the issuer's host is loopback inside a pod). Asgardeo: the public endpoints as the document names them; `thunder.url` is not read |
-| `idp.kind` | `AE_STUDIO_IDP_KIND` | the chart's `idp.kind`, from aectl `idp.kind` (`thunder` when unset): the token dialect the three containers read the IdP's claims by, their `AE_IDP_KIND` (`thunder` or `asgardeo`) |
-| `idp.claims.{orgHandle,orgId,orgName,callerTypeClaim,callerTypeMachine,callerTypeUser}` | `PLATFORM_IDP_CLAIMS_ORG_{HANDLE,ID,NAME}`, `PLATFORM_IDP_CLAIMS_CALLER_TYPE_{CLAIM,MACHINE,USER}` | the chart's `idp.claims`, from aectl's `idp.claims` block: the names and values of the IdP's own claims, the same that aep-api is given. Each may be empty. They reach the three containers as `AE_IDP_CLAIMS_*` |
+| `idp.issuer` | `AE_STUDIO_IDP_ISSUER` | the platform IdP's issuer: aectl `idp.issuer`, or `thunder.public_url` where that is unset |
+| `idp.jwksUrl`, `idp.tokenUrl` | `AE_STUDIO_IDP_JWKS_URL`, `AE_STUDIO_IDP_TOKEN_URL` | the IdP's OIDC discovery document (`jwks_uri`, `token_endpoint`). A ThunderID aectl administers (`idp.clients` `thunder`): its paths on aectl `thunder.url` (in-cluster: the issuer's host is loopback inside a pod). Otherwise: the public endpoints as the document names them |
+| `idp.kind` | `AE_STUDIO_IDP_KIND` | the chart's `idp.kind`, from aectl `idp.kind` (`thunder` when unset). It becomes the containers' `AE_IDP_KIND`, which none of them reads |
+| `idp.claims.*` | `PLATFORM_IDP_CLAIMS_*` (aep-api's own settings; the pod gets the same values) | the chart's `idp.claims`, from aectl's `idp.claims` block (a preset, then its keys): the token dialect the three containers read the IdP's claims by, their `AE_IDP_CLAIMS_*` |
 | `idp.userAudiences` | `AE_STUDIO_IDP_USER_AUDIENCES` | the console's client id (chart default) |
 | `aepApiBaseUrl` | `AE_STUDIO_AEP_API_BASE_URL` | the chart: `aep-api`'s in-cluster Service URL |
 | `aeOnlyClientId` | `AE_STUDIO_INTERNAL_CLIENT_ID` | `ae-studio-internal-client` |

@@ -24,6 +24,14 @@ install is therefore not unchanged, and one from before this amendment is
 reinstalled. The settings that carry the IdP's endpoints are `idp.jwksURL`,
 `idp.tokenURL` and `idp.issuer`.
 
+**Amended 2026-11-19.** The token dialect of decision 2 is no longer chosen
+by the kind. It is six settings, `idp.claims`: the names of the claims that
+carry the org's handle, id and display name, the name of the claim that says
+who a token was issued to, and its values for a machine and for a user. All
+four readers (aep-api, the pod's Go tools, its two TypeScript services and
+the console) read by those values and know no IdP. `idp.kind` is still
+accepted, and no reader reads it.
+
 ## Context
 
 AE's platform IdP was ThunderID, installed in the cluster and administered
