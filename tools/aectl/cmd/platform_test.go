@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -141,6 +143,82 @@ var testPlatformIDP = platformIDP{
 	},
 }
 
+// textLikeClaims is an idp.claims block whose values look like another type
+// to Helm: a boolean, a number, and an empty optional value.
+func textLikeClaims(t *testing.T) idpclaims.Resolved {
+	t.Helper()
+	set := map[string]string{"org.handle": "123", "caller_type.machine": "true"}
+	r, err := idpclaims.Resolve("thunder", func(key string) (string, idpclaims.Source) {
+		if v, ok := set[key]; ok {
+			return v, idpclaims.SourceConfig
+		}
+		return "", ""
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// A claim's name or value is text that the IdP's admin chose. Helm's --set
+// turns "true" into a boolean and "123" into a number, so every claim value
+// goes by --set-string, and none by --set.
+func TestPlatformIDPOverrides_ClaimValuesStayText(t *testing.T) {
+	idp := testPlatformIDP
+	idp.Claims = textLikeClaims(t)
+	args := platformIDPOverrides(idp)
+	claims := 0
+	for i := 0; i+1 < len(args); i += 2 {
+		if !strings.HasPrefix(args[i+1], "idp.claims.") {
+			continue
+		}
+		claims++
+		if args[i] != "--set-string" {
+			t.Errorf("%s is passed with %s, want --set-string", args[i+1], args[i])
+		}
+	}
+	if claims != len(idpclaims.Fields) {
+		t.Fatalf("%d claim values passed, want %d: %v", claims, len(idpclaims.Fields), args)
+	}
+	got := strings.Join(args, " ")
+	for _, want := range []string{
+		"--set-string idp.claims.org.handle=123",
+		"--set-string idp.claims.callerType.machine=true",
+		"--set-string idp.claims.callerType.user=",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %s in %s", want, got)
+		}
+	}
+}
+
+// The same values through the chart: Helm renders each as quoted text. With
+// --set the render stopped, because the chart trims a boolean or a number.
+func TestPlatformIDPOverrides_ClaimValuesRenderAsText(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skip("helm not in PATH: the render of the chart is not checked")
+	}
+	idp := testPlatformIDP
+	idp.Claims = textLikeClaims(t)
+	args := append([]string{"template", "t", filepath.Join("..", "..", "..", "deployments", "helm-charts", "platform")}, platformIDPOverrides(idp)...)
+	out, err := exec.Command("helm", args...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template: %v\n%s", err, out)
+	}
+	rendered := string(out)
+	for name, value := range map[string]string{
+		"PLATFORM_IDP_CLAIMS_ORG_HANDLE":          `"123"`,
+		"PLATFORM_IDP_CLAIMS_CALLER_TYPE_MACHINE": `"true"`,
+		"PLATFORM_IDP_CLAIMS_CALLER_TYPE_USER":    `""`,
+		"VITE_IDP_CLAIMS_ORG_HANDLE":              `"123"`,
+	} {
+		re := regexp.MustCompile(`name: ` + name + `\s+value: ` + regexp.QuoteMeta(value) + `\s`)
+		if !re.MatchString(rendered) {
+			t.Errorf("%s is not rendered as the text %s", name, value)
+		}
+	}
+}
+
 // The IdP values the chart gets are the discovered endpoints: the issuer as
 // named, the JWKS and token endpoints at the in-cluster address, and the
 // kind every reader is told. The strings equal what the install wrote before
@@ -150,11 +228,11 @@ func TestPlatformIDPOverrides(t *testing.T) {
 	for _, want := range []string{
 		"--set idp.clients=thunder",
 		"--set idp.kind=thunder",
-		"--set idp.claims.org.handle=ouHandle",
-		"--set idp.claims.org.id=ouId",
-		"--set idp.claims.org.name=ouName",
-		"--set idp.claims.callerType.claim=grant_type",
-		"--set idp.claims.callerType.machine=client_credentials",
+		"--set-string idp.claims.org.handle=ouHandle",
+		"--set-string idp.claims.org.id=ouId",
+		"--set-string idp.claims.org.name=ouName",
+		"--set-string idp.claims.callerType.claim=grant_type",
+		"--set-string idp.claims.callerType.machine=client_credentials",
 		"--set idp.jwksURL=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks",
 		"--set idp.tokenURL=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/token",
 		"--set aeStudio.idp.issuer=http://thunder.openchoreo.localhost:8080",
@@ -639,12 +717,12 @@ func TestPlatformIDPOverrides_SetsEveryClaimValue(t *testing.T) {
 	}
 	for _, want := range []string{
 		"--set idp.kind=thunder",
-		"--set idp.claims.org.handle=ouHandle",
-		"--set idp.claims.org.id=ouId",
-		"--set idp.claims.org.name=ouName",
-		"--set idp.claims.callerType.claim=grant_type",
-		"--set idp.claims.callerType.machine=client_credentials",
-		"--set idp.claims.callerType.user=",
+		"--set-string idp.claims.org.handle=ouHandle",
+		"--set-string idp.claims.org.id=ouId",
+		"--set-string idp.claims.org.name=ouName",
+		"--set-string idp.claims.callerType.claim=grant_type",
+		"--set-string idp.claims.callerType.machine=client_credentials",
+		"--set-string idp.claims.callerType.user=",
 	} {
 		if !pairs[want] {
 			t.Errorf("missing %q in %v", want, args)

@@ -192,14 +192,17 @@ func platformIDPOverrides(idp platformIDP) []string {
 	}
 	// Every claim value is set, the empty optional ones too: the chart's own
 	// defaults are one IdP's, and an unset pair would leave that default in.
+	// --set-string, because a claim's name or value is text that the IdP's
+	// admin chose: --set would turn "true" into a boolean and "123" into a
+	// number, and the chart reads each value as text.
 	c := idp.Claims.Claims()
 	args = append(args,
-		"--set", "idp.claims.org.handle="+c.OrgHandle,
-		"--set", "idp.claims.org.id="+c.OrgID,
-		"--set", "idp.claims.org.name="+c.OrgName,
-		"--set", "idp.claims.callerType.claim="+c.CallerType,
-		"--set", "idp.claims.callerType.machine="+c.Machine,
-		"--set", "idp.claims.callerType.user="+c.User)
+		"--set-string", "idp.claims.org.handle="+c.OrgHandle,
+		"--set-string", "idp.claims.org.id="+c.OrgID,
+		"--set-string", "idp.claims.org.name="+c.OrgName,
+		"--set-string", "idp.claims.callerType.claim="+c.CallerType,
+		"--set-string", "idp.claims.callerType.machine="+c.Machine,
+		"--set-string", "idp.claims.callerType.user="+c.User)
 	// The one org the IdP serves: the handle its tokens name the org by,
 	// and the org's namespace.
 	return append(args,
