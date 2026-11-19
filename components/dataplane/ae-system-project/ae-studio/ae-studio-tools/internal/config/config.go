@@ -33,9 +33,11 @@ import (
 type Config struct {
 	OrgID, OrgHandle      string
 	IDPIssuer, IDPJWKSURL string
-	// IDPKind names the platform IdP's token dialect (AE_IDP_KIND; optional,
-	// thunder when unset), which the verifier reads the token's org and type by.
-	IDPKind       dialect.Kind
+	// IDPClaims are the names and values of the platform IdP's own claims
+	// (AE_IDP_CLAIMS_*), which the verifier reads the token's org and caller
+	// type by. They are the ones aep-api reads its tokens by; the org's display
+	// name claim and the user value are optional.
+	IDPClaims     dialect.Claims
 	UserAudiences []string
 	M2MClientID   string
 	GitHubPAT     string
@@ -166,13 +168,16 @@ func Load(getenv func(string) string) (Config, error) {
 	if len(c.UserAudiences) == 0 {
 		problems = append(problems, "missing AE_USER_AUDIENCES")
 	}
-	// Optional: empty is thunder. A kind this build does not know is a boot
-	// error, never a fall-through to another kind's rules.
-	kind, err := dialect.ParseKind(getenv("AE_IDP_KIND"))
-	if err != nil {
-		problems = append(problems, "invalid AE_IDP_KIND")
+	// The pod knows no IdP: the four mandatory claim names and values have no
+	// default, and a pod missing one does not start.
+	c.IDPClaims = dialect.Claims{
+		OrgHandle:  req("AE_IDP_CLAIMS_ORG_HANDLE"),
+		OrgID:      req("AE_IDP_CLAIMS_ORG_ID"),
+		OrgName:    strings.TrimSpace(getenv("AE_IDP_CLAIMS_ORG_NAME")),
+		CallerType: req("AE_IDP_CLAIMS_CALLER_TYPE_CLAIM"),
+		Machine:    req("AE_IDP_CLAIMS_CALLER_TYPE_MACHINE"),
+		User:       strings.TrimSpace(getenv("AE_IDP_CLAIMS_CALLER_TYPE_USER")),
 	}
-	c.IDPKind = kind
 	if len(problems) > 0 {
 		return Config{}, fmt.Errorf("ae-studio-tools env: %s", strings.Join(problems, ", "))
 	}
