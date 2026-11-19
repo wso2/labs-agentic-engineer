@@ -38,8 +38,10 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 )
 
-// thunderDialect reads the Thunder claims every test token here carries.
-var thunderDialect = dialect.ForKind(dialect.KindThunder)
+// thunderDialect reads the Thunder claims every test token here carries, for
+// any org: these tests send a second org's token to prove the fences below
+// the token check.
+var thunderDialect = dialect.MustAnyOrgForTest(dialect.ThunderClaimsForTest())
 
 // openCycle is an open cycle owned by org.
 func openCycle(org string) RunnerCycle { return RunnerCycle{OrgHandle: org, Open: true} }
@@ -146,7 +148,7 @@ func newPublisherVerifier(t *testing.T) (*PublisherTokenVerifier, func(org, ouHa
 				Audience:  jwt.ClaimStrings{pubAudPrefix + org},
 				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 			},
-			Raw: dialect.Raw{OuHandle: ouHandle, GrantType: "client_credentials"},
+			Raw: dialect.Raw{"ouHandle": ouHandle, "grant_type": "client_credentials"},
 		}
 		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 		tok.Header["kid"] = kid

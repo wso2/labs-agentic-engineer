@@ -135,8 +135,9 @@ type Config struct {
 
 	// The platform IdP: its issuer and JWKS (seeded into
 	// organization_idp_profiles rows on first access), its token endpoint,
-	// and its token dialect kind. Loaded from PLATFORM_IDP_ISSUER,
-	// PLATFORM_IDP_JWKS_URL, PLATFORM_IDP_TOKEN_URL and PLATFORM_IDP_KIND.
+	// its token dialect and the one org it serves. Loaded from
+	// PLATFORM_IDP_ISSUER, PLATFORM_IDP_JWKS_URL, PLATFORM_IDP_TOKEN_URL,
+	// PLATFORM_IDP_CLAIMS_* and PLATFORM_IDP_ORG_*.
 	PlatformIDP PlatformIDPDefaults
 
 	// AEStudio configures the per-org AE Studio data-plane Resource. Every
@@ -267,21 +268,7 @@ func (c Config) Validate() error {
 		// there is no unsigned-claim fallback.
 		errs = append(errs, "JWKS_URL is required — the inbound JWT verifier cannot start without it")
 	}
-	if _, err := dialect.ParseKind(c.PlatformIDP.Kind); err != nil {
-		// An install naming a kind this build does not know must not boot on
-		// another kind's rules.
-		errs = append(errs, "PLATFORM_IDP_KIND: "+err.Error())
-	}
-	platformKind, platformErr := dialect.ParseKind(c.PlatformIDP.Kind)
-	if podKind, err := dialect.ParseKind(c.AEStudio.IDP.Kind); err != nil {
-		// The same rule for the kind every org's pod is told: a bad value
-		// fails here, not in each pod at its next start.
-		errs = append(errs, "AE_STUDIO_IDP_KIND: "+err.Error())
-	} else if platformErr == nil && podKind != platformKind {
-		// The pod verifies tokens of the same IdP as aep-api. Told another
-		// kind, it would read them by the wrong rules and refuse every one.
-		errs = append(errs, fmt.Sprintf("AE_STUDIO_IDP_KIND (%s) must be the same kind as PLATFORM_IDP_KIND (%s): the org's pod reads the same IdP's tokens; leave AE_STUDIO_IDP_KIND unset to follow it", podKind, platformKind))
-	}
+	errs = append(errs, c.PlatformIDP.claimsErrors()...)
 	errs = append(errs, c.PlatformIDP.singleOrgErrors()...)
 	if len(errs) > 0 {
 		return fmt.Errorf("configuration errors:\n%s", strings.Join(errs, "\n"))
@@ -319,20 +306,17 @@ type PlatformIDPDefaults struct {
 	// its discovery document at install; the coding-agent dispatch mints
 	// the org's publisher token against it. Empty refuses every dispatch.
 	TokenURL string
-	// Kind names the token dialect the verifiers read the IdP's claims by
-	// (PLATFORM_IDP_KIND; dialect.ParseKind). Empty is thunder.
-	Kind string
-	// Claims are the names and values of the IdP's own claims
-	// (PLATFORM_IDP_CLAIMS_*), which aep-api passes to every org's AE Studio
-	// pod. They have no default, and aep-api reads no token by them: its
-	// verifiers follow Kind.
+	// Claims are the names and values of the IdP's own claims: the token
+	// dialect every verifier reads the caller's org and caller type by
+	// (PLATFORM_IDP_CLAIMS_*). The four mandatory ones have no default:
+	// aep-api knows no IdP, so an install that leaves one out does not boot.
 	Claims dialect.Claims
 	// OrgHandle and OrgNamespace name the one org the IdP serves.
 	// OrgHandle (PLATFORM_IDP_ORG_HANDLE) is the handle its tokens carry;
 	// OrgNamespace (PLATFORM_IDP_ORG_NAMESPACE) is the org's OpenChoreo
 	// namespace, the name aep-api knows the org by. A token declaring
 	// OrgHandle is that org's and any other token is no org's
-	// (dialect.WithSingleOrg). Both are required.
+	// (dialect.OrgMapping). Both are required.
 	OrgHandle    string
 	OrgNamespace string
 	// OrgPublisherSecret and OrgStudioSecret are the client secrets of that
@@ -343,6 +327,23 @@ type PlatformIDPDefaults struct {
 	// (organization.OrgClients). Both are required.
 	OrgPublisherSecret string
 	OrgStudioSecret    string
+}
+
+// claimsErrors checks the IdP's claim settings: the four a dialect cannot
+// work without. Each message names the setting.
+func (p PlatformIDPDefaults) claimsErrors() []string {
+	var errs []string
+	for _, s := range []struct{ name, value, why string }{
+		{"PLATFORM_IDP_CLAIMS_ORG_HANDLE", p.Claims.OrgHandle, "the name of the claim that carries the caller's org handle"},
+		{"PLATFORM_IDP_CLAIMS_ORG_ID", p.Claims.OrgID, "the name of the claim that carries the IdP's id of the caller's org"},
+		{"PLATFORM_IDP_CLAIMS_CALLER_TYPE_CLAIM", p.Claims.CallerType, "the name of the claim that says whether a token was issued to a machine or to a user"},
+		{"PLATFORM_IDP_CLAIMS_CALLER_TYPE_MACHINE", p.Claims.Machine, "the value of that claim that means a machine"},
+	} {
+		if strings.TrimSpace(s.value) == "" {
+			errs = append(errs, s.name+" is required: "+s.why)
+		}
+	}
+	return errs
 }
 
 // singleOrgErrors checks the settings of the one org the IdP serves. All
@@ -379,13 +380,13 @@ type AEStudioConfig struct {
 
 	IDP struct {
 		Issuer, JWKSURL, TokenURL string
-		// Kind is the token dialect the pod reads the IdP's claims by, shipped
-		// to it as AE_IDP_KIND (AE_STUDIO_IDP_KIND; PLATFORM_IDP_KIND when
-		// unset). It must be the platform's kind.
+		// Kind is the kind of the platform IdP (AE_STUDIO_IDP_KIND;
+		// PLATFORM_IDP_KIND when unset), still shipped to the pod as
+		// AE_IDP_KIND. Nothing reads it there: the pod reads tokens by Claims.
 		Kind string
 		// Claims is PlatformIDP.Claims (the same PLATFORM_IDP_CLAIMS_*): the
-		// names and values of the IdP's own claims, shipped to the pod as
-		// AE_IDP_CLAIMS_*.
+		// token dialect the pod reads the IdP's claims by, shipped to it as
+		// AE_IDP_CLAIMS_*. The pod reads the same IdP's tokens as aep-api.
 		Claims dialect.Claims
 		// OrgHandle is PlatformIDP.OrgHandle (the same PLATFORM_IDP_ORG_HANDLE):
 		// when set, the handle the IdP's tokens name the org by, which the

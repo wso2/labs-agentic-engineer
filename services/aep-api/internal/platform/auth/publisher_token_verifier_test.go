@@ -84,12 +84,12 @@ func TestPublisherTokenVerifier_ReadsTheOrgThroughTheDialect(t *testing.T) {
 		raw     dialect.Raw
 		wantErr string
 	}{
-		"ouHandle matches":                {raw: dialect.Raw{OuHandle: "acme", OuName: "Globex", GrantType: "client_credentials"}},
-		"ouName alone is refused":         {raw: dialect.Raw{OuName: "acme"}, wantErr: "org handle claim missing"},
-		"ouId alone is refused":           {raw: dialect.Raw{OuID: "acme"}, wantErr: "org handle claim missing"},
-		"ouHandle names another org":      {raw: dialect.Raw{OuHandle: "globex"}, wantErr: `org "globex" does not match audience org "acme"`},
-		"ouHandle wins over a name match": {raw: dialect.Raw{OuHandle: "globex", OuName: "acme"}, wantErr: `does not match audience org`},
-		"no org claim at all":             {raw: dialect.Raw{GrantType: "client_credentials"}, wantErr: "org handle claim missing"},
+		"ouHandle matches":                {raw: dialect.Raw{"ouHandle": "acme", "ouName": "Globex", "grant_type": "client_credentials"}},
+		"ouName alone is refused":         {raw: dialect.Raw{"ouName": "acme"}, wantErr: "org handle claim missing"},
+		"ouId alone is refused":           {raw: dialect.Raw{"ouId": "acme"}, wantErr: "org handle claim missing"},
+		"ouHandle names another org":      {raw: dialect.Raw{"ouHandle": "globex"}, wantErr: `org "globex" does not match audience org "acme"`},
+		"ouHandle wins over a name match": {raw: dialect.Raw{"ouHandle": "globex", "ouName": "acme"}, wantErr: `does not match audience org`},
+		"no org claim at all":             {raw: dialect.Raw{"grant_type": "client_credentials"}, wantErr: "org handle claim missing"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			claims, err := v.Verify(sign(pubAudPrefix+"acme", tc.raw))
@@ -114,12 +114,12 @@ func TestPublisherTokenVerifier_ReadsTheOrgThroughTheDialect(t *testing.T) {
 // when the audience and the org handle match.
 func TestPublisherTokenVerifier_RequiresAMachineToken(t *testing.T) {
 	v, sign := newRawPublisherVerifier(t)
-	if _, err := v.Verify(sign(pubAudPrefix+"acme", dialect.Raw{OuHandle: "acme", GrantType: "client_credentials"})); err != nil {
+	if _, err := v.Verify(sign(pubAudPrefix+"acme", dialect.Raw{"ouHandle": "acme", "grant_type": "client_credentials"})); err != nil {
 		t.Fatalf("client_credentials: %v", err)
 	}
 	for name, raw := range map[string]dialect.Raw{
-		"a user grant": {OuHandle: "acme", GrantType: "authorization_code"},
-		"no grant":     {OuHandle: "acme"},
+		"a user grant": {"ouHandle": "acme", "grant_type": "authorization_code"},
+		"no grant":     {"ouHandle": "acme"},
 	} {
 		if _, err := v.Verify(sign(pubAudPrefix+"acme", raw)); err == nil || !strings.Contains(err.Error(), "machine") {
 			t.Errorf("%s: err=%v, want refused as not a machine token", name, err)

@@ -68,9 +68,10 @@ type AppParams struct {
 	// (401) — there is no unsigned-claim fallback. Both planes set JWKS_URL.
 	ThunderJWKS *jwtassertion.JWKSCache
 
-	// Dialect is the platform IdP's token dialect (PLATFORM_IDP_KIND): how the
-	// inbound verifier reads the caller's org and tells a user's token from a
-	// machine's. The zero value reads Thunder's claims.
+	// Dialect is the platform IdP's token dialect (PLATFORM_IDP_CLAIMS_*): how
+	// the inbound verifier reads the caller's org and tells a user's token
+	// from a machine's. The zero value reads nothing, so every token is
+	// refused.
 	Dialect dialect.Dialect
 
 	// InboundAuth, when non-nil, REPLACES the JWKS-backed jwt.Middleware on the

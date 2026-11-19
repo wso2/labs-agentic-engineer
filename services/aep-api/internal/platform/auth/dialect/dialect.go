@@ -15,16 +15,21 @@
 // under the License.
 
 // Package dialect holds the token dialect of the platform IdP: the claim
-// names and rules one IdP kind uses to say who a caller is. A verifier
-// decodes a token's IdP-specific claims into Raw and asks the Dialect for the
-// caller's org and whether the token is a machine's; nothing outside this
-// package reads a claim by its IdP-specific name.
+// names and values one IdP uses to say who a caller is. A verifier keeps a
+// token's whole payload as Raw and asks the Dialect for the caller's org and
+// whether the token is a machine's; nothing outside this package reads one of
+// those claims by its IdP-specific name.
 //
-// Two kinds exist, thunder and asgardeo. The kind is a setting
-// (PLATFORM_IDP_KIND), read once at boot.
+// The names and values are settings (PLATFORM_IDP_CLAIMS_*), read once at
+// boot, with the one org the install serves (PLATFORM_IDP_ORG_HANDLE,
+// PLATFORM_IDP_ORG_NAMESPACE). This package knows no IdP: what a ThunderID or an Asgardeo token looks
+// like is configuration. Claims a standard names (sub, aud, iss, exp,
+// client_id, scope, name, email) are not the dialect's: every verifier reads
+// them by their standard names.
 package dialect
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -32,10 +37,7 @@ import (
 
 // Claims names what the platform IdP calls the two things no standard
 // defines: the caller's org, and whether a token was issued to a machine or
-// to a user. Each claim is a top-level text claim of the token. The values
-// are settings of the install (PLATFORM_IDP_CLAIMS_*), which aep-api passes
-// to every org's AE Studio pod. The Dialect below does not read by them: it
-// reads by its Kind.
+// to a user. Each claim is a top-level text claim of the token.
 type Claims struct {
 	// OrgHandle, OrgID and OrgName are the names of the claims that carry the
 	// caller's org: the handle the IdP knows it by, the IdP's own id for it,
@@ -45,74 +47,81 @@ type Claims struct {
 	OrgName   string
 	// CallerType is the name of the claim that says who a token was issued
 	// to. Machine is the value that means a machine. User is the value that
-	// means a user, and is optional.
+	// means a user: when set, only those two values are accepted; when
+	// empty, any value other than Machine is a user's.
 	CallerType string
 	Machine    string
 	User       string
 }
 
-// Kind names a platform IdP's token dialect.
-type Kind string
-
-const (
-	// KindThunder is ThunderID: the org is an organization unit carried as
-	// ouHandle/ouName/ouId, and every token says its grant in grant_type.
-	KindThunder Kind = "thunder"
-	// KindAsgardeo is Asgardeo: the org is the tenant's organization carried
-	// as org_handle/org_id/org_name, and every token says who it was issued
-	// to in aut.
-	KindAsgardeo Kind = "asgardeo"
-)
-
-// ParseKind reads the configured kind. Empty is thunder, the default a
-// Thunder install never has to set; an unknown value is an error, so an
-// install naming a kind this build does not know fails at boot rather than
-// running on another kind's rules.
-func ParseKind(s string) (Kind, error) {
-	switch k := Kind(strings.ToLower(strings.TrimSpace(s))); k {
-	case "", KindThunder:
-		return KindThunder, nil
-	case KindAsgardeo:
-		return KindAsgardeo, nil
-	default:
-		return "", fmt.Errorf("unknown platform IdP kind %q (supported: %s, %s)", s, KindThunder, KindAsgardeo)
+// missing lists the required settings c leaves empty, by the name each has
+// in the IdP's configuration.
+func (c Claims) missing() []string {
+	var out []string
+	for _, f := range []struct{ name, value string }{
+		{"org.handle", c.OrgHandle},
+		{"org.id", c.OrgID},
+		{"caller_type.claim", c.CallerType},
+		{"caller_type.machine", c.Machine},
+	} {
+		if strings.TrimSpace(f.value) == "" {
+			out = append(out, f.name)
+		}
 	}
+	return out
 }
 
-// Raw is the IdP-specific claims a token may carry, as decoded: every kind's
-// claims side by side, so one wire struct decodes a token of any kind and the
-// Dialect reads only its own. It is meant to be embedded in a verifier's wire
-// struct beside jwt.RegisteredClaims, so it must never tag a registered claim
-// name (sub, aud, iss, exp, ...): two fields with one tag at the same depth
-// make encoding/json drop both.
-type Raw struct {
-	// Thunder.
-	OuID      string `json:"ouId,omitempty"`
-	OuName    string `json:"ouName,omitempty"`
-	OuHandle  string `json:"ouHandle,omitempty"`
-	GrantType string `json:"grant_type,omitempty"`
-	// Asgardeo.
-	OrgID     string `json:"org_id,omitempty"`
-	OrgName   string `json:"org_name,omitempty"`
-	OrgHandle string `json:"org_handle,omitempty"`
-	Aut       string `json:"aut,omitempty"`
+// Raw is a token's whole payload, as decoded. A verifier's wire struct keeps
+// it beside its typed standard claims (Decode), and the Dialect reads the
+// IdP's own claims out of it by their configured names.
+type Raw map[string]any
+
+// text is the top-level claim name of r when it is text, else "". A claim of
+// any other JSON type is not read: the dialect's claims are text claims.
+func (r Raw) text(name string) string {
+	s, _ := r[name].(string)
+	return s
+}
+
+// Decode unmarshals a token payload twice: into typed, a wire struct's typed
+// claims, and into the Raw it returns. A wire struct calls it from its
+// UnmarshalJSON, on a method-less alias of itself.
+func Decode(payload []byte, typed any) (Raw, error) {
+	if err := json.Unmarshal(payload, typed); err != nil {
+		return nil, err
+	}
+	var raw Raw
+	if err := json.Unmarshal(payload, &raw); err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
+
+// Encode is Decode's inverse: typed's claims with raw's laid over them. A
+// wire struct calls it from its MarshalJSON, so a token signed from the
+// struct carries the IdP's own claims too.
+func Encode(typed any, raw Raw) ([]byte, error) {
+	b, err := json.Marshal(typed)
+	if err != nil || len(raw) == 0 {
+		return b, err
+	}
+	out := map[string]any{}
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, err
+	}
+	for k, v := range raw {
+		out[k] = v
+	}
+	return json.Marshal(out)
 }
 
 // Org is the caller's organization as the dialect reads it. Handle is the
 // name the platform knows the org by; ID is the IdP's own id for it; Name is
 // a display name. Any may be empty when the token carries no org.
-//
-// HandleDeclared is true when Handle came from the handle claim itself
-// (Thunder: ouHandle; Asgardeo: org_handle), false when it was filled from a
-// fallback (Thunder's ouName, ouId) or is empty. The fallback serves legacy
-// user tokens; a machine token, minted for a client the platform registered
-// itself, is expected to declare its handle outright, and its verifiers
-// check this flag.
 type Org struct {
-	Handle         string
-	ID             string
-	Name           string
-	HandleDeclared bool
+	Handle string
+	ID     string
+	Name   string
 }
 
 var (
@@ -124,123 +133,90 @@ var (
 	ErrUnknownMachineClaim = errors.New("token's machine-token claim has an unknown value")
 )
 
-const (
-	thunderGrantClientCredentials = "client_credentials"
-	asgardeoAutApplication        = "APPLICATION"
-	asgardeoAutApplicationUser    = "APPLICATION_USER"
-)
+// OrgMapping names the one org the platform IdP serves, by both of its names.
+// IDPHandle is what the IdP's tokens carry (a ThunderID organization unit's
+// handle, an Asgardeo organization's handle). PlatformHandle is the org's
+// OpenChoreo namespace, the name every consumer of Org.Handle knows it by.
+// The two may be the same word.
+type OrgMapping struct {
+	IDPHandle      string
+	PlatformHandle string
+}
 
-// Dialect answers the dialect questions for one kind. A Dialect of a kind
-// this build does not know, the zero value included, reads nothing: no org,
-// and no token placed as a user's or a machine's.
+// Dialect answers the dialect questions by the configured claims, for the
+// one org the IdP serves. The zero value reads nothing: no org, and no token
+// placed as a user's or a machine's.
 type Dialect struct {
-	kind Kind
-	// single is set by WithSingleOrg: the IdP serves one org, named
-	// idpHandle in its tokens and platformHandle by the platform.
-	single         bool
-	idpHandle      string
-	platformHandle string
+	claims Claims
+	org    OrgMapping
+	// anyOrgForTest makes Org read any org's token as that org, under the
+	// handle the token carries. Only test support sets it (claims_fortest.go):
+	// aep-api's data is keyed by org and fenced by org below the token check,
+	// and the tests of those fences need a second org's caller, which a
+	// dialect built by New cannot read. New never sets it.
+	anyOrgForTest bool
 }
 
-// ForKind returns the dialect of a parsed kind.
-func ForKind(k Kind) Dialect {
-	return Dialect{kind: k}
-}
-
-// WithSingleOrg returns d for an IdP that serves one org under a handle that
-// is not the platform's name for it: an Asgardeo tenant names its org by the
-// tenant's handle, while the platform knows the org by its OpenChoreo
-// namespace. Org then reads a token that declares exactly idpHandle as the
-// org platformHandle, and any other token as no org at all: another org of
-// the same IdP, a token without the handle claim, or one whose handle came
-// from a fallback claim.
-//
-// Only aep-api maps: it is the reader that names namespaces. The org's pod
-// is told the IdP's handle as its own (AE_ORG_HANDLE), so its dialect twins
-// compare the token's handle as it is.
-func (d Dialect) WithSingleOrg(idpHandle, platformHandle string) Dialect {
-	d.single = true
-	d.idpHandle = idpHandle
-	d.platformHandle = platformHandle
-	return d
-}
-
-// Kind is the kind this dialect reads.
-func (d Dialect) Kind() Kind {
-	return d.kind
-}
-
-// Org reads the caller's org.
-//
-// Thunder: ouHandle, else ouName, else ouId is the handle (the console
-// mirrors this precedence; a change lands on both sides at once), ouId is
-// the ID and ouName the name.
-//
-// Asgardeo: org_handle is the handle, with no fallback (every token carries
-// it), org_id the ID and org_name the name.
-//
-// Under WithSingleOrg the handle read this way is the IdP's; it is replaced
-// by the platform's, and a token of any other org reads as no org.
-func (d Dialect) Org(r Raw) Org {
-	org := d.claimedOrg(r)
-	if !d.single {
-		return org
+// New returns the dialect of c for the org m names. A required claim name or
+// value left empty, or a mapping missing either handle, is an error naming
+// it: a dialect that could not tell a machine from a user, or that had no org
+// to accept, must not run.
+func New(c Claims, m OrgMapping) (Dialect, error) {
+	missing := c.missing()
+	if strings.TrimSpace(m.IDPHandle) == "" {
+		missing = append(missing, "the org's handle at the IdP")
 	}
-	if !org.HandleDeclared || d.idpHandle == "" || org.Handle != d.idpHandle {
+	if strings.TrimSpace(m.PlatformHandle) == "" {
+		missing = append(missing, "the org's namespace")
+	}
+	if len(missing) != 0 {
+		return Dialect{}, fmt.Errorf("the platform IdP's token dialect is incomplete: %s not set", strings.Join(missing, ", "))
+	}
+	return Dialect{claims: c, org: m}, nil
+}
+
+// Org reads the caller's org from the token's own claims. A token declaring
+// exactly the IdP's handle of the install's org reads as that org, under the
+// platform's name for it, with the IdP's id and display name kept. Any other
+// token (another org of the IdP, no handle claim) reads as no org. Nothing
+// stands in for the handle claim.
+func (d Dialect) Org(r Raw) Org {
+	if d.claims.OrgHandle == "" {
 		return Org{}
 	}
-	org.Handle = d.platformHandle
+	handle := r.text(d.claims.OrgHandle)
+	switch {
+	case d.anyOrgForTest:
+	case handle == "" || handle != d.org.IDPHandle:
+		return Org{}
+	default:
+		handle = d.org.PlatformHandle
+	}
+	org := Org{Handle: handle, ID: r.text(d.claims.OrgID)}
+	if d.claims.OrgName != "" {
+		org.Name = r.text(d.claims.OrgName)
+	}
 	return org
 }
 
-// claimedOrg is the org as the token's own claims name it, by kind.
-func (d Dialect) claimedOrg(r Raw) Org {
-	switch d.kind {
-	case KindThunder:
-		handle := r.OuHandle
-		if handle == "" {
-			handle = r.OuName
-		}
-		if handle == "" {
-			handle = r.OuID
-		}
-		return Org{Handle: handle, ID: r.OuID, Name: r.OuName, HandleDeclared: r.OuHandle != ""}
-	case KindAsgardeo:
-		return Org{Handle: r.OrgHandle, ID: r.OrgID, Name: r.OrgName, HandleDeclared: r.OrgHandle != ""}
-	default:
-		return Org{}
-	}
-}
-
-// Machine reports whether the token was issued to a machine.
-//
-// Thunder stamps grant_type on every token; client_credentials is a
-// machine's, any other grant a user's. A token without the claim is
-// ErrNoMachineClaim.
-//
-// Asgardeo stamps aut on every token, with two values: APPLICATION is a
-// machine's, APPLICATION_USER a user's. A token without the claim is
-// ErrNoMachineClaim and any other value ErrUnknownMachineClaim: with only two
-// values to know, a third is refused rather than taken for a user's.
+// Machine reports whether the token was issued to a machine, by its caller
+// type claim. A token without the claim is ErrNoMachineClaim. The machine
+// value is a machine's. Where a user value is configured, only it is a
+// user's and any third value is ErrUnknownMachineClaim: with the two values
+// known, another is refused rather than taken for a user's. Where none is
+// configured, any other value is a user's.
 func (d Dialect) Machine(r Raw) (bool, error) {
-	switch d.kind {
-	case KindThunder:
-		if r.GrantType == "" {
-			return false, ErrNoMachineClaim
-		}
-		return r.GrantType == thunderGrantClientCredentials, nil
-	case KindAsgardeo:
-		switch r.Aut {
-		case "":
-			return false, ErrNoMachineClaim
-		case asgardeoAutApplication:
-			return true, nil
-		case asgardeoAutApplicationUser:
-			return false, nil
-		default:
-			return false, ErrUnknownMachineClaim
-		}
-	default:
+	if d.claims.CallerType == "" {
 		return false, ErrNoMachineClaim
+	}
+	switch v := r.text(d.claims.CallerType); {
+	case v == "":
+		return false, ErrNoMachineClaim
+	case v == d.claims.Machine:
+		return true, nil
+	case d.claims.User == "" || v == d.claims.User:
+		return false, nil
+	default:
+		return false, ErrUnknownMachineClaim
 	}
 }

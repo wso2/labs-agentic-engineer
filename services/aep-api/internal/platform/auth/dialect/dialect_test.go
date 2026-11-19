@@ -17,252 +17,262 @@
 package dialect
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
-func TestParseKind(t *testing.T) {
-	for _, tc := range []struct {
-		in   string
-		want Kind
-		ok   bool
-	}{
-		{"", KindThunder, true},
-		{"thunder", KindThunder, true},
-		{" Thunder ", KindThunder, true},
-		{"asgardeo", KindAsgardeo, true},
-		{" Asgardeo ", KindAsgardeo, true},
-		// A kind this build does not know must not boot on another kind's
-		// rules by accident.
-		{"okta", "", false},
-	} {
-		got, err := ParseKind(tc.in)
-		if tc.ok != (err == nil) {
-			t.Fatalf("ParseKind(%q): err=%v, want ok=%v", tc.in, err, tc.ok)
+// fixtureDir holds the sample tokens every reader of the platform IdP's
+// tokens is tested against: this package, the AE Studio pod's Go twin, the
+// TypeScript package that owns the files, and the console.
+const fixtureDir = "../../../../../../packages/platform-idp-auth/test/fixtures/idp-claims"
+
+type fixture struct {
+	IDP string `json:"idp"`
+	// OrgHandle is the handle of the one org the sample install serves.
+	OrgHandle string `json:"orgHandle"`
+	Claims    struct {
+		Org struct {
+			Handle string `json:"handle"`
+			ID     string `json:"id"`
+			Name   string `json:"name"`
+		} `json:"org"`
+		CallerType struct {
+			Claim   string `json:"claim"`
+			Machine string `json:"machine"`
+			User    string `json:"user"`
+		} `json:"callerType"`
+	} `json:"claims"`
+	Tokens []struct {
+		Name    string `json:"name"`
+		Payload Raw    `json:"payload"`
+		Org     struct {
+			Handle string `json:"handle"`
+			ID     string `json:"id"`
+			Name   string `json:"name"`
+		} `json:"org"`
+		Caller string `json:"caller"`
+	} `json:"tokens"`
+}
+
+func (f fixture) claims() Claims {
+	return Claims{
+		OrgHandle: f.Claims.Org.Handle, OrgID: f.Claims.Org.ID, OrgName: f.Claims.Org.Name,
+		CallerType: f.Claims.CallerType.Claim, Machine: f.Claims.CallerType.Machine, User: f.Claims.CallerType.User,
+	}
+}
+
+func loadFixture(t *testing.T, idp string) fixture {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(fixtureDir, idp+".json"))
+	if err != nil {
+		t.Fatalf("read the shared fixture: %v", err)
+	}
+	var f fixture
+	if err := json.Unmarshal(b, &f); err != nil {
+		t.Fatalf("parse %s.json: %v", idp, err)
+	}
+	if len(f.Tokens) == 0 {
+		t.Fatalf("%s.json holds no tokens", idp)
+	}
+	return f
+}
+
+// callerOf is how the fixtures word Machine's answer.
+func callerOf(d Dialect, r Raw) string {
+	machine, err := d.Machine(r)
+	switch {
+	case err != nil:
+		return "refused"
+	case machine:
+		return "machine"
+	default:
+		return "user"
+	}
+}
+
+// Every sample token of both IdPs reads as the shared fixtures say. The same
+// files pin the pod's Go twin, the TypeScript package and the console, so the
+// four cannot drift apart.
+//
+// aep-api reads one thing its twins do not: it serves one org, so a token
+// whose handle is not that org's reads as no org at all, id and name
+// included. The fixtures give the org as the token states it, which is what
+// the other readers return; here that holds for the install's org only.
+func TestDialect_ReadsTheSharedFixtures(t *testing.T) {
+	for _, idp := range []string{"thunder", "asgardeo"} {
+		f := loadFixture(t, idp)
+		if f.OrgHandle == "" {
+			t.Fatalf("%s.json names no orgHandle", idp)
 		}
-		if got != tc.want {
-			t.Fatalf("ParseKind(%q) = %q, want %q", tc.in, got, tc.want)
+		d, err := New(f.claims(), SameHandleForTest(f.OrgHandle))
+		if err != nil {
+			t.Fatalf("%s: %v", idp, err)
+		}
+		for _, tok := range f.Tokens {
+			t.Run(idp+": "+tok.Name, func(t *testing.T) {
+				want := Org{}
+				if tok.Org.Handle == f.OrgHandle {
+					want = Org{Handle: tok.Org.Handle, ID: tok.Org.ID, Name: tok.Org.Name}
+				}
+				if got := d.Org(tok.Payload); got != want {
+					t.Errorf("org = %+v, want %+v", got, want)
+				}
+				if got := callerOf(d, tok.Payload); got != tok.Caller {
+					t.Errorf("caller = %s, want %s", got, tok.Caller)
+				}
+			})
 		}
 	}
 }
 
-// The Thunder org precedence is the one the console mirrors: ouHandle, then
-// ouName, then ouId.
-func TestThunder_Org(t *testing.T) {
-	d := ForKind(KindThunder)
-	for name, tc := range map[string]struct {
-		raw  Raw
-		want Org
-	}{
-		"handle wins": {
-			raw:  Raw{OuHandle: "acme", OuName: "Acme Inc", OuID: "11111111-1111-1111-1111-111111111111"},
-			want: Org{Handle: "acme", Name: "Acme Inc", ID: "11111111-1111-1111-1111-111111111111", HandleDeclared: true},
-		},
-		"name when no handle": {
-			raw:  Raw{OuName: "Acme Inc", OuID: "11111111-1111-1111-1111-111111111111"},
-			want: Org{Handle: "Acme Inc", Name: "Acme Inc", ID: "11111111-1111-1111-1111-111111111111"},
-		},
-		"id when nothing else": {
-			raw:  Raw{OuID: "11111111-1111-1111-1111-111111111111"},
-			want: Org{Handle: "11111111-1111-1111-1111-111111111111", ID: "11111111-1111-1111-1111-111111111111"},
-		},
-		"no org claims": {raw: Raw{GrantType: "authorization_code"}, want: Org{}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if got := d.Org(tc.raw); got != tc.want {
-				t.Fatalf("Org(%+v) = %+v, want %+v", tc.raw, got, tc.want)
+// The any-org reader that test support builds reads every sample token's org
+// as the token states it, which is what the pod's twins return. It is how
+// the tests of the fences below the token check get a second org's caller.
+func TestMustAnyOrgForTest_ReadsTheOrgAsTheTokenStatesIt(t *testing.T) {
+	for _, idp := range []string{"thunder", "asgardeo"} {
+		f := loadFixture(t, idp)
+		d := MustAnyOrgForTest(f.claims())
+		for _, tok := range f.Tokens {
+			want := Org{Handle: tok.Org.Handle, ID: tok.Org.ID, Name: tok.Org.Name}
+			if got := d.Org(tok.Payload); got != want {
+				t.Errorf("%s: %s: org = %+v, want %+v", idp, tok.Name, got, want)
 			}
-		})
-	}
-}
-
-// Thunder says what grant a token was issued under; client_credentials is a
-// machine's. A token without the claim answers neither, so a user-only route
-// can refuse it rather than take it for a user's.
-func TestThunder_Machine(t *testing.T) {
-	d := ForKind(KindThunder)
-	for name, tc := range map[string]struct {
-		raw     Raw
-		machine bool
-		err     error
-	}{
-		"client_credentials is a machine": {raw: Raw{GrantType: "client_credentials"}, machine: true},
-		"authorization_code is a user":    {raw: Raw{GrantType: "authorization_code"}, machine: false},
-		"refresh_token is a user":         {raw: Raw{GrantType: "refresh_token"}, machine: false},
-		"no claim is an error":            {raw: Raw{OuHandle: "acme"}, err: ErrNoMachineClaim},
-	} {
-		t.Run(name, func(t *testing.T) {
-			got, err := d.Machine(tc.raw)
-			if !errors.Is(err, tc.err) {
-				t.Fatalf("Machine(%+v): err=%v, want %v", tc.raw, err, tc.err)
+			if got := callerOf(d, tok.Payload); got != tok.Caller {
+				t.Errorf("%s: %s: caller = %s, want %s", idp, tok.Name, got, tok.Caller)
 			}
-			if got != tc.machine {
-				t.Fatalf("Machine(%+v) = %v, want %v", tc.raw, got, tc.machine)
-			}
-		})
-	}
-}
-
-// Asgardeo names the org in org_handle / org_id / org_name on every token.
-// There is no fallback: a token without org_handle names no handle.
-func TestAsgardeo_Org(t *testing.T) {
-	d := ForKind(KindAsgardeo)
-	for name, tc := range map[string]struct {
-		raw  Raw
-		want Org
-	}{
-		"the three org claims": {
-			raw:  Raw{OrgHandle: "acme", OrgName: "Acme Inc", OrgID: "22222222-2222-2222-2222-222222222222"},
-			want: Org{Handle: "acme", Name: "Acme Inc", ID: "22222222-2222-2222-2222-222222222222", HandleDeclared: true},
-		},
-		"no handle, no fallback to the name or the id": {
-			raw:  Raw{OrgName: "Acme Inc", OrgID: "22222222-2222-2222-2222-222222222222"},
-			want: Org{Name: "Acme Inc", ID: "22222222-2222-2222-2222-222222222222"},
-		},
-		"Thunder's claims name no org here": {
-			raw:  Raw{OuHandle: "acme", OuName: "Acme Inc", OuID: "11111111-1111-1111-1111-111111111111", Aut: "APPLICATION_USER"},
-			want: Org{},
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if got := d.Org(tc.raw); got != tc.want {
-				t.Fatalf("Org(%+v) = %+v, want %+v", tc.raw, got, tc.want)
-			}
-		})
-	}
-}
-
-// Asgardeo says who a token was issued to in aut, which has two values. A
-// token without the claim, or with a value that is neither, answers neither.
-func TestAsgardeo_Machine(t *testing.T) {
-	d := ForKind(KindAsgardeo)
-	for name, tc := range map[string]struct {
-		raw     Raw
-		machine bool
-		err     error
-	}{
-		"APPLICATION is a machine":              {raw: Raw{Aut: "APPLICATION"}, machine: true},
-		"APPLICATION_USER is a user":            {raw: Raw{Aut: "APPLICATION_USER"}, machine: false},
-		"no claim is an error":                  {raw: Raw{OrgHandle: "acme"}, err: ErrNoMachineClaim},
-		"an unknown value is an error":          {raw: Raw{Aut: "DEVICE"}, err: ErrUnknownMachineClaim},
-		"Thunder's grant_type is not read":      {raw: Raw{GrantType: "authorization_code"}, err: ErrNoMachineClaim},
-		"the value is matched case-sensitively": {raw: Raw{Aut: "application"}, err: ErrUnknownMachineClaim},
-	} {
-		t.Run(name, func(t *testing.T) {
-			got, err := d.Machine(tc.raw)
-			if !errors.Is(err, tc.err) {
-				t.Fatalf("Machine(%+v): err=%v, want %v", tc.raw, err, tc.err)
-			}
-			if got != tc.machine {
-				t.Fatalf("Machine(%+v) = %v, want %v", tc.raw, got, tc.machine)
-			}
-		})
-	}
-}
-
-// Thunder does not read Asgardeo's claims either: a token of the other kind
-// names no org and cannot be placed.
-func TestThunder_DoesNotReadAsgardeoClaims(t *testing.T) {
-	d := ForKind(KindThunder)
-	raw := Raw{OrgHandle: "acme", OrgID: "22222222-2222-2222-2222-222222222222", OrgName: "Acme Inc", Aut: "APPLICATION_USER"}
-	if got := d.Org(raw); got != (Org{}) {
-		t.Fatalf("Org = %+v, want none", got)
-	}
-	if _, err := d.Machine(raw); !errors.Is(err, ErrNoMachineClaim) {
-		t.Fatalf("Machine: err=%v, want %v", err, ErrNoMachineClaim)
-	}
-}
-
-// A Dialect nobody gave a kind (the zero value, a wiring mistake) and a kind
-// this build does not know read nothing: no org, and no token placed as a
-// user's or a machine's, so every gate that asks refuses.
-func TestUnknownKind_ReadsNothing(t *testing.T) {
-	raw := Raw{
-		OuHandle: "acme", OuID: "11111111-1111-1111-1111-111111111111", GrantType: "authorization_code",
-		OrgHandle: "acme", OrgID: "22222222-2222-2222-2222-222222222222", Aut: "APPLICATION_USER",
-	}
-	for name, d := range map[string]Dialect{"zero value": {}, "unknown kind": ForKind(Kind("okta"))} {
-		t.Run(name, func(t *testing.T) {
-			if got := d.Org(raw); got != (Org{}) {
-				t.Fatalf("Org = %+v, want none", got)
-			}
-			if machine, err := d.Machine(raw); machine || !errors.Is(err, ErrNoMachineClaim) {
-				t.Fatalf("Machine = %v, %v; want false, %v", machine, err, ErrNoMachineClaim)
-			}
-		})
-	}
-}
-
-// An IdP that serves one org names it by its own handle (Asgardeo: the
-// tenant's), not by the platform's name for it (the OpenChoreo namespace).
-// WithSingleOrg maps the one to the other: a token declaring the IdP handle
-// reads as the platform's org, and any other token reads as no org at all.
-func TestWithSingleOrg(t *testing.T) {
-	const orgID = "22222222-2222-2222-2222-222222222222"
-	d := ForKind(KindAsgardeo).WithSingleOrg("acmecorp", "default")
-	for name, tc := range map[string]struct {
-		raw  Raw
-		want Org
-	}{
-		"the IdP's handle maps to the platform's": {
-			raw:  Raw{OrgHandle: "acmecorp", OrgName: "Acme Corp", OrgID: orgID},
-			want: Org{Handle: "default", Name: "Acme Corp", ID: orgID, HandleDeclared: true},
-		},
-		"another org of the IdP is no org": {
-			raw:  Raw{OrgHandle: "globex", OrgName: "Globex", OrgID: "33333333-3333-3333-3333-333333333333"},
-			want: Org{},
-		},
-		"the platform's own name in the token is no org": {
-			raw:  Raw{OrgHandle: "default", OrgID: orgID},
-			want: Org{},
-		},
-		"no handle is no org, whatever the id": {
-			raw:  Raw{OrgName: "Acme Corp", OrgID: orgID},
-			want: Org{},
-		},
-		"the match is exact": {
-			raw:  Raw{OrgHandle: "AcmeCorp", OrgID: orgID},
-			want: Org{},
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if got := d.Org(tc.raw); got != tc.want {
-				t.Fatalf("Org(%+v) = %+v, want %+v", tc.raw, got, tc.want)
-			}
-		})
-	}
-
-	// The machine-token rule is not the mapping's business.
-	if machine, err := d.Machine(Raw{Aut: "APPLICATION"}); err != nil || !machine {
-		t.Fatalf("Machine = %v, %v; want true", machine, err)
-	}
-	// The kind is kept, and a dialect without the mapping reads the handle as it is.
-	if d.Kind() != KindAsgardeo {
-		t.Fatalf("Kind() = %q", d.Kind())
-	}
-	plain := ForKind(KindAsgardeo).Org(Raw{OrgHandle: "acmecorp", OrgID: orgID})
-	if plain.Handle != "acmecorp" {
-		t.Fatalf("unmapped handle = %q, want acmecorp", plain.Handle)
-	}
-}
-
-// A handle filled from a fallback claim is not the IdP's handle: only a
-// declared one maps.
-func TestWithSingleOrg_RequiresTheDeclaredHandle(t *testing.T) {
-	d := ForKind(KindThunder).WithSingleOrg("acmecorp", "default")
-	if got := d.Org(Raw{OuName: "acmecorp", OuID: "ou-1"}); got != (Org{}) {
-		t.Fatalf("Org = %+v, want none", got)
-	}
-	want := Org{Handle: "default", ID: "ou-1", HandleDeclared: true}
-	if got := d.Org(Raw{OuHandle: "acmecorp", OuID: "ou-1"}); got != want {
-		t.Fatalf("Org = %+v, want %+v", got, want)
-	}
-}
-
-func TestDialect_Kind(t *testing.T) {
-	for _, k := range []Kind{KindThunder, KindAsgardeo} {
-		if got := ForKind(k).Kind(); got != k {
-			t.Fatalf("Kind() = %q, want %q", got, k)
 		}
+	}
+}
+
+// New never builds the any-org reader: a dialect from New reads another
+// org's token as no org, whatever mapping it is given.
+func TestNew_NeverReadsAnotherOrg(t *testing.T) {
+	d, err := New(ThunderClaimsForTest(), SameHandleForTest("acme"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := d.Org(Raw{"ouHandle": "globex", "ouId": "ou-2"}); got != (Org{}) {
+		t.Fatalf("another org's token read as %+v, want no org", got)
+	}
+}
+
+// The claims the test-support helpers hand out are the fixtures', so a test
+// built on them runs on the same names every reader is pinned to.
+func TestForTestClaimsMatchTheSharedFixtures(t *testing.T) {
+	for idp, got := range map[string]Claims{"thunder": ThunderClaimsForTest(), "asgardeo": AsgardeoClaimsForTest()} {
+		if want := loadFixture(t, idp).claims(); got != want {
+			t.Errorf("%s: test-support claims %+v, fixture %+v", idp, got, want)
+		}
+	}
+}
+
+// A dialect that could not find the org, tell a machine from a user, or name
+// the org it serves does not get built: each missing piece is named.
+func TestNew_RefusesAnIncompleteDialect(t *testing.T) {
+	full, org := AsgardeoClaimsForTest(), OrgMapping{IDPHandle: "acmecorp", PlatformHandle: "default"}
+	for name, unset := range map[string]func(*Claims, *OrgMapping){
+		"org.handle":                  func(c *Claims, _ *OrgMapping) { c.OrgHandle = "" },
+		"org.id":                      func(c *Claims, _ *OrgMapping) { c.OrgID = " " },
+		"caller_type.claim":           func(c *Claims, _ *OrgMapping) { c.CallerType = "" },
+		"caller_type.machine":         func(c *Claims, _ *OrgMapping) { c.Machine = "" },
+		"the org's handle at the IdP": func(_ *Claims, m *OrgMapping) { m.IDPHandle = "" },
+		"the org's namespace":         func(_ *Claims, m *OrgMapping) { m.PlatformHandle = " " },
+	} {
+		c, m := full, org
+		unset(&c, &m)
+		if _, err := New(c, m); err == nil || !strings.Contains(err.Error(), name) {
+			t.Errorf("without %s: err = %v, want one naming it", name, err)
+		}
+	}
+	// The org's display name and the user value are optional.
+	c := full
+	c.OrgName, c.User = "", ""
+	if _, err := New(c, org); err != nil {
+		t.Errorf("without the optional name and user value: %v", err)
+	}
+}
+
+// The zero value reads nothing: no org, and no token placed as a user's or a
+// machine's. A verifier handed no dialect refuses, it does not guess.
+func TestZeroDialect_ReadsNothing(t *testing.T) {
+	var d Dialect
+	r := Raw{"ouHandle": "default", "ouId": "ou-1", "grant_type": "client_credentials", "org_handle": "acme", "aut": "APPLICATION"}
+	if got := d.Org(r); got != (Org{}) {
+		t.Errorf("org = %+v, want none", got)
+	}
+	if _, err := d.Machine(r); !errors.Is(err, ErrNoMachineClaim) {
+		t.Errorf("machine err = %v, want ErrNoMachineClaim", err)
+	}
+}
+
+// With a user value configured a third value is refused; with none, any
+// value but the machine's is a user's.
+func TestMachine_UserValueDecidesHowAThirdValueReads(t *testing.T) {
+	strict := MustForTest(AsgardeoClaimsForTest(), SameHandleForTest("acmecorp"))
+	if _, err := strict.Machine(Raw{"aut": "DEVICE"}); !errors.Is(err, ErrUnknownMachineClaim) {
+		t.Errorf("strict: err = %v, want ErrUnknownMachineClaim", err)
+	}
+	loose := AsgardeoClaimsForTest()
+	loose.User = ""
+	if machine, err := MustForTest(loose, SameHandleForTest("acmecorp")).Machine(Raw{"aut": "DEVICE"}); err != nil || machine {
+		t.Errorf("no user value: machine=%v err=%v, want a user's", machine, err)
+	}
+	// A caller type claim that is not text is no claim.
+	if _, err := strict.Machine(Raw{"aut": true}); !errors.Is(err, ErrNoMachineClaim) {
+		t.Errorf("non-text claim: err = %v, want ErrNoMachineClaim", err)
+	}
+}
+
+// The one org the IdP serves: a token declaring exactly its handle at the IdP
+// reads as the platform's name for the org, with the IdP's id and name kept;
+// any other token reads as no org, id and name included.
+func TestOrg_OnlyTheInstallsOrg(t *testing.T) {
+	d := MustForTest(AsgardeoClaimsForTest(), OrgMapping{IDPHandle: "acmecorp", PlatformHandle: "default"})
+	own := Raw{"org_handle": "acmecorp", "org_id": "org-1", "org_name": "Acme Corp"}
+	if got, want := d.Org(own), (Org{Handle: "default", ID: "org-1", Name: "Acme Corp"}); got != want {
+		t.Errorf("the install's org = %+v, want %+v", got, want)
+	}
+	for name, r := range map[string]Raw{
+		"another org of the IdP":     {"org_handle": "globex", "org_id": "org-2"},
+		"the platform's own name":    {"org_handle": "default", "org_id": "org-1"},
+		"no handle claim":            {"org_id": "org-1", "org_name": "acmecorp"},
+		"a handle that is not text":  {"org_handle": []any{"acmecorp"}, "org_id": "org-1"},
+		"another IdP's handle claim": {"ouHandle": "acmecorp", "ouId": "org-1"},
+	} {
+		if got := d.Org(r); got != (Org{}) {
+			t.Errorf("%s: org = %+v, want none", name, got)
+		}
+	}
+}
+
+// A wire struct decodes its typed claims and keeps the whole payload, and
+// encodes the two back into one payload.
+func TestDecodeEncode_KeepTheWholePayload(t *testing.T) {
+	type typed struct {
+		Sub string `json:"sub"`
+	}
+	payload := []byte(`{"sub":"u1","ouHandle":"default","nested":{"a":1}}`)
+	var got typed
+	raw, err := Decode(payload, &got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Sub != "u1" || raw.text("ouHandle") != "default" || raw.text("nested") != "" {
+		t.Fatalf("typed %+v raw %v", got, raw)
+	}
+	out, err := Encode(typed{Sub: "u2"}, Raw{"org_handle": "acme"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back map[string]any
+	if err := json.Unmarshal(out, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back["sub"] != "u2" || back["org_handle"] != "acme" {
+		t.Fatalf("encoded %s", out)
 	}
 }

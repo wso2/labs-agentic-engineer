@@ -32,6 +32,7 @@ func setMinimalEnv(t *testing.T) {
 	t.Setenv("PLATFORM_API_SERVICE_BASE_URL", "http://platform-api.invalid")
 	t.Setenv("DATABASE_URL", "postgres://u:p@localhost:5432/db")
 	t.Setenv("JWKS_URL", "http://idp.invalid/jwks")
+	setIDPClaimsEnv(t)
 	t.Setenv("PLATFORM_IDP_ORG_HANDLE", "acmecorp")
 	t.Setenv("PLATFORM_IDP_ORG_NAMESPACE", "default")
 	t.Setenv("PLATFORM_IDP_ORG_PUBLISHER_SECRET", "p")
@@ -70,40 +71,6 @@ func TestLoad_WithoutAEStudio(t *testing.T) {
 	}
 	if string(cfg.AEStudio.ExtraEgress) != "[]" || cfg.AEStudio.ListenerName != "https" || cfg.AEStudio.Storage.SizeLimit != "3Gi" || cfg.AEStudio.Storage.EphemeralRequest != "1Gi" {
 		t.Errorf("defaults wrong: %+v", cfg.AEStudio)
-	}
-}
-
-// The six claim settings are read trimmed and given to the pod as they are
-// given to aep-api. None is required: unset, each is empty.
-func TestLoad_IDPClaimsReachThePod(t *testing.T) {
-	setMinimalEnv(t)
-	t.Setenv("PLATFORM_IDP_CLAIMS_ORG_HANDLE", " org_handle ")
-	t.Setenv("PLATFORM_IDP_CLAIMS_ORG_ID", "org_id")
-	t.Setenv("PLATFORM_IDP_CLAIMS_ORG_NAME", "org_name")
-	t.Setenv("PLATFORM_IDP_CLAIMS_CALLER_TYPE_CLAIM", "aut")
-	t.Setenv("PLATFORM_IDP_CLAIMS_CALLER_TYPE_MACHINE", "APPLICATION")
-	t.Setenv("PLATFORM_IDP_CLAIMS_CALLER_TYPE_USER", "APPLICATION_USER")
-	cfg, err := Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := dialect.Claims{OrgHandle: "org_handle", OrgID: "org_id", OrgName: "org_name", CallerType: "aut", Machine: "APPLICATION", User: "APPLICATION_USER"}
-	if cfg.PlatformIDP.Claims != want {
-		t.Errorf("PlatformIDP.Claims = %+v, want %+v", cfg.PlatformIDP.Claims, want)
-	}
-	if cfg.AEStudio.IDP.Claims != want {
-		t.Errorf("AEStudio.IDP.Claims = %+v, want the platform's %+v", cfg.AEStudio.IDP.Claims, want)
-	}
-
-	for _, k := range []string{"ORG_HANDLE", "ORG_ID", "ORG_NAME", "CALLER_TYPE_CLAIM", "CALLER_TYPE_MACHINE", "CALLER_TYPE_USER"} {
-		t.Setenv("PLATFORM_IDP_CLAIMS_"+k, "")
-	}
-	cfg, err = Load()
-	if err != nil {
-		t.Fatalf("Load without the claim settings = %v, want no error", err)
-	}
-	if cfg.PlatformIDP.Claims != (dialect.Claims{}) || cfg.AEStudio.IDP.Claims != (dialect.Claims{}) {
-		t.Errorf("unset claim settings: %+v / %+v, want both empty", cfg.PlatformIDP.Claims, cfg.AEStudio.IDP.Claims)
 	}
 }
 
@@ -312,53 +279,37 @@ func TestLoad_AEStudioCPURequestsMalformedFailBootNamingTheKey(t *testing.T) {
 	}
 }
 
-// The org's pod reads the same IdP's tokens as aep-api, so the kind it is
-// told (AE_STUDIO_IDP_KIND) follows PLATFORM_IDP_KIND when it is not set,
-// and a different explicit kind is a boot error: the pod would otherwise
-// read every token by the wrong rules and refuse it.
-func TestLoad_AEStudioIDPKindFollowsThePlatformKind(t *testing.T) {
-	asgardeo := func(t *testing.T) {
-		t.Helper()
+// The kind is still passed on to the pod (AE_IDP_KIND), where nothing reads
+// it any more: AE_STUDIO_IDP_KIND, or PLATFORM_IDP_KIND when that is unset,
+// or thunder. aep-api does not check the value.
+func TestLoad_AEStudioIDPKindIsPassedOn(t *testing.T) {
+	for _, tc := range []struct{ platform, studio, want string }{
+		{"", "", "thunder"},
+		{"asgardeo", "", "asgardeo"},
+		{"asgardeo", "thunder", "thunder"},
+	} {
 		setMinimalEnv(t)
-		t.Setenv("PLATFORM_IDP_KIND", "asgardeo")
-		t.Setenv("PLATFORM_IDP_ORG_HANDLE", "acmecorp")
-		t.Setenv("PLATFORM_IDP_ORG_NAMESPACE", "default")
-		t.Setenv("PLATFORM_IDP_ORG_PUBLISHER_SECRET", "p")
-		t.Setenv("PLATFORM_IDP_ORG_STUDIO_SECRET", "s")
-	}
-
-	t.Run("unset follows the platform kind", func(t *testing.T) {
-		asgardeo(t)
-		t.Setenv("AE_STUDIO_IDP_KIND", "")
+		t.Setenv("PLATFORM_IDP_KIND", tc.platform)
+		t.Setenv("AE_STUDIO_IDP_KIND", tc.studio)
 		cfg, err := Load()
 		if err != nil {
-			t.Fatalf("Load: %v", err)
+			t.Fatalf("platform %q studio %q: Load: %v", tc.platform, tc.studio, err)
 		}
-		if cfg.AEStudio.IDP.Kind != "asgardeo" {
-			t.Fatalf("AEStudio.IDP.Kind = %q, want asgardeo", cfg.AEStudio.IDP.Kind)
+		if cfg.AEStudio.IDP.Kind != tc.want {
+			t.Errorf("platform %q studio %q: AEStudio.IDP.Kind = %q, want %q", tc.platform, tc.studio, cfg.AEStudio.IDP.Kind, tc.want)
 		}
-	})
-	t.Run("the same kind set explicitly", func(t *testing.T) {
-		asgardeo(t)
-		t.Setenv("AE_STUDIO_IDP_KIND", "asgardeo")
-		if _, err := Load(); err != nil {
-			t.Fatalf("Load: %v", err)
-		}
-	})
-	t.Run("a different kind is refused", func(t *testing.T) {
-		asgardeo(t)
-		t.Setenv("AE_STUDIO_IDP_KIND", "thunder")
-		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "AE_STUDIO_IDP_KIND") || !strings.Contains(err.Error(), "PLATFORM_IDP_KIND") {
-			t.Fatalf("Load = %v, want an error naming both settings", err)
-		}
-	})
-	t.Run("a thunder install sets neither", func(t *testing.T) {
-		setMinimalEnv(t)
-		t.Setenv("PLATFORM_IDP_KIND", "")
-		t.Setenv("AE_STUDIO_IDP_KIND", "")
-		cfg, err := Load()
-		if err != nil || cfg.AEStudio.IDP.Kind != "thunder" {
-			t.Fatalf("Load = %q, %v; want thunder", cfg.AEStudio.IDP.Kind, err)
-		}
-	})
+	}
+}
+
+// The org's pod reads the same IdP's tokens as aep-api, so it is given the
+// same claim names and values: there is one set of settings, not two.
+func TestLoad_AEStudioIDPClaimsAreThePlatforms(t *testing.T) {
+	setMinimalEnv(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AEStudio.IDP.Claims != cfg.PlatformIDP.Claims || cfg.AEStudio.IDP.Claims != dialect.AsgardeoClaimsForTest() {
+		t.Fatalf("pod claims %+v, platform claims %+v; want both the configured ones", cfg.AEStudio.IDP.Claims, cfg.PlatformIDP.Claims)
+	}
 }
