@@ -158,9 +158,11 @@ spec:
                 configMapKeyRef:
                   name: platform-configs
                   key: IDP_TOKEN_URL
-            # The names and values of the IdP's own claims (values.yaml
-            # idp.claims), which aep-api passes to every org's AE Studio pod.
-            # The chart requires the four that every IdP has.
+            # The IdP's token dialect: the names and values of its own claims
+            # (values.yaml idp.claims), by which aep-api reads the org and the
+            # caller type of every token it verifies, and which it passes to
+            # every org's AE Studio pod. The chart requires the four that
+            # every IdP has.
             - name: PLATFORM_IDP_CLAIMS_ORG_HANDLE
               value: {{ required "idp.claims.org.handle is required: the name of the claim that carries the org's handle in the platform IdP's tokens" (trim .Values.idp.claims.org.handle) | quote }}
             - name: PLATFORM_IDP_CLAIMS_ORG_ID

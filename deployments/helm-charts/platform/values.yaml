@@ -285,9 +285,10 @@ idp:
       claim: "grant_type"
       # Its value that means a machine. Required.
       machine: "client_credentials"
-      # Its value that means a user. Optional: empty means that any value
-      # other than the machine's is a user's (ThunderID has several user
-      # grants).
+      # Its value that means a user. Optional: when set, only this value and
+      # the machine's are accepted and any other is refused; when empty, any
+      # value other than the machine's is read as a user's (ThunderID has
+      # several user grants).
       user: ""
   # The one org the IdP serves. orgHandle is the handle the IdP's tokens name
   # the org by (a ThunderID organization unit's handle, an Asgardeo
