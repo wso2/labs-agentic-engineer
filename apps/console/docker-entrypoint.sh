@@ -28,15 +28,10 @@ THUNDER_URL="${VITE_THUNDER_URL:-}"
 THUNDER_CLIENT_ID="${VITE_THUNDER_CLIENT_ID:-aep-console-client}"
 THUNDER_SCOPES="${VITE_THUNDER_SCOPES:-openid profile email}"
 # The name of the claim the platform IdP's tokens carry the org's handle in
-# (src/auth/claims.ts). Required: the console knows no IdP, so the deployment
-# says which claim it is (the chart's idp.claims.org.handle).
-# Spaces alone are not a claim name: the console would fall back to its dev
-# default and read no org from this IdP's tokens.
+# (src/auth/claims.ts), from the chart's idp.claims.org.handle. Trimmed. The
+# console knows no IdP, so the served env-config.js has to name the claim:
+# the check is below, after the file is written.
 IDP_ORG_HANDLE_CLAIM="$(printf '%s' "${VITE_IDP_CLAIMS_ORG_HANDLE:-}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-if [ -z "$IDP_ORG_HANDLE_CLAIM" ]; then
-  echo "VITE_IDP_CLAIMS_ORG_HANDLE is required: the name of the claim that carries the org handle in the platform IdP's tokens" >&2
-  exit 1
-fi
 TRY_IT_URL="${VITE_TRY_IT_URL:-http://tryit.aep.localhost:8095}"
 # WSO2 Cloud only — set by the ReleaseBinding. Empty locally so the SPA skips
 # the first-login billing activation call.
@@ -45,7 +40,8 @@ BILLING_API_BASE_URL_VAL="${BILLING_API_BASE_URL:-}"
 # env-config.js is generated at start so the SPA can read runtime config.
 # The heredoc is unquoted so the values above expand.
 NOW="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-cat > /usr/share/nginx/html/env-config.js <<EOF_INNER || echo "env-config.js is read-only, skipping write"
+ENV_CONFIG="/usr/share/nginx/html/env-config.js"
+cat > "$ENV_CONFIG" <<EOF_INNER || echo "env-config.js is read-only, skipping write"
 // Runtime environment configuration
 // Generated at: ${NOW}
 
@@ -59,6 +55,14 @@ window._env_ = {
   BILLING_API_BASE_URL: "${BILLING_API_BASE_URL_VAL}",
 };
 EOF_INNER
+
+# The file that is served has to name the org handle's claim, whether this
+# script wrote it or the deployment mounted its own read-only copy. Without
+# it the console would read its dev default, a claim nobody configured.
+if ! grep -Eq "VITE_IDP_CLAIMS_ORG_HANDLE[\"']?[[:space:]]*:[[:space:]]*[\"'][[:space:]]*[^\"'[:space:]]" "$ENV_CONFIG"; then
+  echo "VITE_IDP_CLAIMS_ORG_HANDLE is required: the name of the claim that carries the org handle in the platform IdP's tokens. Set the variable, or name it in the env-config.js that is served." >&2
+  exit 1
+fi
 
 echo "Runtime configuration generated"
 
