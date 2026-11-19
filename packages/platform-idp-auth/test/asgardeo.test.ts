@@ -27,6 +27,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { SignJWT, generateKeyPair, exportJWK, createLocalJWKSet } from "jose";
 import { createVerifier, orgRule, UnauthenticatedError, userRule } from "../src/index.js";
+import { ASGARDEO } from "./helpers/idp-claims.js";
 
 const ISS = "https://api.asgardeo.io/t/acme/oauth2/token";
 const CONSOLE = "aep-console-client";
@@ -64,7 +65,7 @@ async function setup() {
       .setIssuer(ISS)
       .setExpirationTime("1h")
       .sign(rs.privateKey);
-  return { verify: createVerifier({ issuer: ISS, jwksUrl: "http://unused", kind: "asgardeo", jwks }), sign };
+  return { verify: createVerifier({ issuer: ISS, jwksUrl: "http://unused", claims: ASGARDEO, jwks }), sign };
 }
 
 /** `claims` without the named claim. */
@@ -79,7 +80,7 @@ test("asgardeo: a user's token is kind user, its org and display claims read, an
   const v = await verify(await sign(userClaims), [AGENT, USER]);
   assert.equal(v.kind, "user");
   assert.equal(v.claims.sub, "u1");
-  assert.deepEqual(v.claims.org, { handle: "acme", id: "org-1", name: "Acme Inc", handleDeclared: true });
+  assert.deepEqual(v.claims.org, { handle: "acme", id: "org-1", name: "Acme Inc" });
   // Asgardeo sends no name claim; the given and family names carry the display name.
   assert.equal(v.claims.name, undefined);
   assert.equal(v.claims.given_name, "Ada");

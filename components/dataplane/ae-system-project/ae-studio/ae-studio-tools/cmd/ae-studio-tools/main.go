@@ -129,6 +129,13 @@ func run() error {
 		slog.Error("config_invalid", "error", err)
 		return err
 	}
+	// The platform IdP's token dialect. Load required its mandatory claims,
+	// so a failure here is the same fault and logs under the same name.
+	idpDialect, err := dialect.New(cfg.IDPClaims)
+	if err != nil {
+		slog.Error("config_invalid", "error", err)
+		return err
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
@@ -204,7 +211,7 @@ func run() error {
 		Addr: fmt.Sprintf(":%d", cfg.ListenPort),
 		Handler: edge.Routes(edge.Deps{
 			Cfg:      cfg,
-			Verifier: auth.NewVerifier(cfg.IDPIssuer, auth.NewJWKSCache(cfg.IDPJWKSURL), dialect.ForKind(cfg.IDPKind)),
+			Verifier: auth.NewVerifier(cfg.IDPIssuer, auth.NewJWKSCache(cfg.IDPJWKSURL), idpDialect),
 			GitHub:   gh,
 			// Verified GitHub deliveries go to aep-api's ingest-webhook-event
 			// as the org's ae-studio client.

@@ -57,7 +57,7 @@ export function devAuth(): DevAuth {
     claims: {
       sub: PLAYGROUND_USER.sub,
       name: PLAYGROUND_USER.name,
-      org: { handle: "", id: "", name: "", handleDeclared: false },
+      org: { handle: "", id: "", name: "" },
       exp: Number.MAX_SAFE_INTEGER,
     },
   };

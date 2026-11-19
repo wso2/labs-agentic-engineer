@@ -220,7 +220,7 @@ func TestGetAeStudio_CCTokenWithOrgForBFFAudienceIsRefused(t *testing.T) {
 // verified user of another org of the same IdP carries no org, so the tenant
 // gate refuses it and it reads nothing.
 func TestGetAeStudio_AsgardeoSingleOrg(t *testing.T) {
-	h, sign := newVerifiedStudioStackWith(t, dialect.ForKind(dialect.KindAsgardeo).WithSingleOrg("acmecorp", "acme"))
+	h, sign := newVerifiedStudioStackWith(t, dialect.MustForTest(dialect.AsgardeoClaimsForTest(), dialect.OrgMapping{IDPHandle: "acmecorp", PlatformHandle: "acme"}))
 	user := func(sub, orgHandle string) string {
 		return sign(studioTokenClaims{
 			Sub: sub, ClientID: consoleClient, Aut: "APPLICATION_USER",

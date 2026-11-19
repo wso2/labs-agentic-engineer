@@ -38,16 +38,17 @@ reads them from `<thunder.public_url>/.well-known/openid-configuration` at
 install and update, and puts their paths on `thunder.url` for the pods.
 `idp.clients` says who creates AE's clients on the IdP: `thunder` (the
 default) means `aectl` registers them on the ThunderID of the `thunder:`
-block, `imported` means the IdP's admin created them. The optional `idp.kind`
-(`thunder` when unset) names the IdP's token dialect, the claim names and
-rules every reader of its tokens uses. The optional `idp.claims` block gives
-the names and values of the IdP's own claims (`org.handle`, `org.id`,
+block, `imported` means the IdP's admin created them. The optional `idp.claims`
+block gives the names and values of the IdP's own claims, by which every
+reader of its tokens says who the caller is (`org.handle`, `org.id`,
 `org.name`, `caller_type.claim`, `caller_type.machine`, `caller_type.user`):
 each comes from a preset (`idp.claims.preset`: `thunder`, `asgardeo` or
 `none`; the preset with the name of `idp.kind` when it is not set), then from
 the block's own keys, then from an `AEP_IDP_CLAIMS_*` environment variable
-for one run. `aectl` passes them to the chart beside the kind, and
-`aectl platform config test` prints each value and where it came from.
+for one run. `aectl` passes them to the chart, and
+`aectl platform config test` prints each value and where it came from. The
+optional `idp.kind` (`thunder` when unset) has that one effect on the preset.
+No reader of tokens reads it.
 `idp.org_handle` names the one org the install serves, by the handle the
 IdP's tokens carry.
 

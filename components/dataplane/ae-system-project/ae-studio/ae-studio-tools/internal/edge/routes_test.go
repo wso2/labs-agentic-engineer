@@ -195,7 +195,7 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 	h.logBuf = captureLogs(t)
 	h.handler = Routes(Deps{
 		Cfg:        cfg,
-		Verifier:   auth.NewVerifier(cfg.IDPIssuer, auth.NewJWKSCache(cfg.IDPJWKSURL), dialect.ForKind(dialect.KindThunder)),
+		Verifier:   auth.NewVerifier(cfg.IDPIssuer, auth.NewJWKSCache(cfg.IDPJWKSURL), dialect.MustForTest(dialect.ThunderClaimsForTest())),
 		GitHub:     deps.gh,
 		Webhook:    WebhookHandler(testWebhookSecret, &fakeForwarder{err: webhook.ErrUpstreamUnavailable}),
 		Files:      files.Reader{Engine: engine, Projects: h.projects},

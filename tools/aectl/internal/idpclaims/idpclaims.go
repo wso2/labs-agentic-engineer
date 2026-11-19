@@ -17,10 +17,9 @@
 // Package idpclaims resolves the platform IdP's claim names and values: the
 // idp.claims block of aectl's config, which says how a token names the
 // caller's org and whether it was issued to a machine or to a user. No
-// standard defines those, so each IdP has its own. aectl passes the resolved
-// values to the chart beside idp.kind. The chart gives them to aep-api, which
-// passes them to every org's AE Studio pod, and the org handle's claim name
-// to the console. All of those read the IdP's tokens by idp.kind.
+// standard defines those, so each IdP has its own; aectl passes the resolved
+// values to the chart, and every reader of the IdP's tokens (aep-api, the AE
+// Studio pod, the console) reads by them and knows no IdP.
 //
 // A value comes from three layers, lowest first: a preset shipped with aectl
 // (a data file per IdP AE has been run against), the config's idp.claims.*
@@ -55,7 +54,7 @@ type Field struct {
 	// Key is the field's config key, under idp.claims (for example
 	// "org.handle"); "idp.claims."+Key is the whole key.
 	Key string
-	// Required marks a value that an install has to set.
+	// Required marks a value a token reader cannot work without.
 	Required bool
 }
 
@@ -150,8 +149,9 @@ func presetValues(name string) (map[string]string, error) {
 
 // Resolve layers the idp.claims block: the preset (DefaultPreset when preset
 // is empty), then override. A required value no layer sets is an error
-// naming every such key, so an install with an incomplete block stops here.
-// A shipped preset is complete, so that only happens under NoPreset.
+// naming every such key: readers of the IdP's tokens refuse an incomplete
+// set, so the install stops here instead. A shipped preset is complete, so
+// that only happens under NoPreset.
 func Resolve(preset string, override Override) (Resolved, error) {
 	preset = strings.ToLower(strings.TrimSpace(preset))
 	if preset == "" {

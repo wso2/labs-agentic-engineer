@@ -81,7 +81,6 @@ func Load() (Config, error) {
 			// name; this default must agree with it.
 			JWKSURL:  r.readOptionalString("PLATFORM_IDP_JWKS_URL", "http://platform-idp-service.platform-idp.svc.cluster.local:8090/oauth2/jwks"),
 			TokenURL: r.readOptionalString("PLATFORM_IDP_TOKEN_URL", ""),
-			Kind:     r.readOptionalString("PLATFORM_IDP_KIND", string(dialect.KindThunder)),
 			Claims:   r.idpClaims(),
 			// Trimmed: a stray space would make the handle match no token.
 			OrgHandle:    strings.TrimSpace(r.readOptionalString("PLATFORM_IDP_ORG_HANDLE", "")),
@@ -301,11 +300,9 @@ func (r *configReader) aeStudio() AEStudioConfig {
 	c.IDP.Issuer = r.readOptionalString("AE_STUDIO_IDP_ISSUER", "")
 	c.IDP.JWKSURL = r.readOptionalString("AE_STUDIO_IDP_JWKS_URL", "")
 	c.IDP.TokenURL = r.readOptionalString("AE_STUDIO_IDP_TOKEN_URL", "")
-	// The pod reads the platform IdP's tokens, so its kind follows
-	// PLATFORM_IDP_KIND unless set; Validate refuses a different one.
-	c.IDP.Kind = r.readOptionalString("AE_STUDIO_IDP_KIND",
-		r.readOptionalString("PLATFORM_IDP_KIND", string(dialect.KindThunder)))
-	// The pod is given the same claim names and values as aep-api.
+	// Passed on to the pod as AE_IDP_KIND. Nothing reads it there.
+	c.IDP.Kind = r.readOptionalString("AE_STUDIO_IDP_KIND", "thunder")
+	// The pod reads the platform IdP's tokens, by the same claims as aep-api.
 	c.IDP.Claims = r.idpClaims()
 	c.IDP.OrgHandle = strings.TrimSpace(r.readOptionalString("PLATFORM_IDP_ORG_HANDLE", ""))
 	c.IDP.UserAudiences = splitCSV(os.Getenv("AE_STUDIO_IDP_USER_AUDIENCES"))
@@ -514,7 +511,7 @@ func loadEnvFile(path string) error {
 
 // idpClaims reads the platform IdP's claim names and values
 // (PLATFORM_IDP_CLAIMS_*). Trimmed: a stray space would make a name match no
-// claim. There are no defaults: an unset one is passed on empty.
+// claim. There are no defaults: Validate requires the four mandatory ones.
 func (r *configReader) idpClaims() dialect.Claims {
 	get := func(key string) string { return strings.TrimSpace(r.readOptionalString(key, "")) }
 	return dialect.Claims{

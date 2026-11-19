@@ -193,10 +193,10 @@ func TestWireClaims_SubShadowsEmbeddedSubject(t *testing.T) {
 	if w.Subject != "" {
 		t.Fatalf("w.Subject = %q — the shadowing assumption changed; re-audit every Sub consumer", w.Subject)
 	}
-	// The embedded dialect.Raw decodes beside the registered claims: a
-	// duplicate tag at that depth would drop both fields silently.
-	if w.OuHandle != "acme" || w.GrantType != "authorization_code" {
-		t.Fatalf("dialect claims not decoded: %+v", w.Raw)
+	// The whole payload is kept beside the typed claims, for the dialect to
+	// read the IdP's own claims out of.
+	if w.Raw["ouHandle"] != "acme" || w.Raw["grant_type"] != "authorization_code" {
+		t.Fatalf("the payload was not kept: %+v", w.Raw)
 	}
 }
 

@@ -41,26 +41,31 @@ function str(value: unknown): string | undefined {
   return typeof value === "string" && value !== "" ? value : undefined;
 }
 
-// The claims that name a token's org, per platform IdP kind (the kind is
-// env.idpKind), in the order the server reads them: the token dialects of
-// aep-api (internal/platform/auth/dialect/dialect.go). Thunder: ouHandle,
-// else ouName, else ouId. Asgardeo: org_handle alone. The console must agree
-// with the server on which org a token addresses, so a change here lands on
-// both sides at once.
-const ORG_HANDLE_CLAIMS: Readonly<Record<string, readonly string[]>> = {
-  thunder: ["ouHandle", "ouName", "ouId"],
-  asgardeo: ["org_handle"],
-};
+// The org a token addresses: the text of the claim the platform IdP carries
+// the org's handle in (env.orgHandleClaim), null when the token has none.
+// Nothing stands in for the handle, as on the server (aep-api's token
+// dialect, internal/platform/auth/dialect): the console must agree with it on
+// which org a token addresses, and both are tested against the same sample
+// tokens. This is display and routing only; the BFF decides.
+export function resolveOrgHandle(claims: TokenClaims, orgHandleClaim: string): string | null {
+  return str(claims[orgHandleClaim]) ?? null;
+}
 
-// The org a token addresses under the given IdP kind; null when it names
-// none. A kind this build does not know names no org either: this is display
-// and routing only, and the BFF decides, so nothing here guesses.
-export function resolveOrgHandle(claims: TokenClaims, kind: string): string | null {
-  for (const name of ORG_HANDLE_CLAIMS[kind] ?? []) {
-    const value = str(claims[name]);
-    if (value) return value;
-  }
-  return null;
+// The claim the dev ThunderID's tokens carry the org's handle in.
+const DEV_ORG_HANDLE_CLAIM = "ouHandle";
+
+// The name of the claim the console reads the org's handle from
+// (VITE_IDP_CLAIMS_ORG_HANDLE, in the env-config.js that is served). A built
+// console has to be told it: with no value it would read a claim nobody
+// configured, so it fails at load and names the setting. Only the local dev
+// server falls back, to the dev ThunderID's claim.
+export function resolveOrgHandleClaim(dev: boolean, configured: string | undefined): string {
+  const claim = configured?.trim();
+  if (claim) return claim;
+  if (dev) return DEV_ORG_HANDLE_CLAIM;
+  throw new Error(
+    "VITE_IDP_CLAIMS_ORG_HANDLE is not set: the console does not know which claim of the platform IdP's tokens carries the org's handle. Name it in the env-config.js that is served.",
+  );
 }
 
 export interface SessionIdentity {
@@ -71,9 +76,9 @@ export interface SessionIdentity {
 
 // Builds the display identity from token claim sets in precedence order
 // (ID token first, access token as fallback: the org claims are on the
-// access token). `kind` is the platform IdP's token dialect
-// (env.idpKind), which says which claims name the org.
-export function identityFromClaims(kind: string, ...sources: TokenClaims[]): SessionIdentity {
+// access token). `orgHandleClaim` is the name of the claim the platform IdP
+// carries the org's handle in (env.orgHandleClaim).
+export function identityFromClaims(orgHandleClaim: string, ...sources: TokenClaims[]): SessionIdentity {
   const first = (pick: (c: TokenClaims) => string | undefined) => {
     for (const claims of sources) {
       const value = pick(claims);
@@ -98,7 +103,7 @@ export function identityFromClaims(kind: string, ...sources: TokenClaims[]): Ses
 
   let orgHandle: string | null = null;
   for (const claims of sources) {
-    orgHandle = resolveOrgHandle(claims, kind);
+    orgHandle = resolveOrgHandle(claims, orgHandleClaim);
     if (orgHandle) break;
   }
 

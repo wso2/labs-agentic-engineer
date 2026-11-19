@@ -70,12 +70,24 @@ type Claims struct {
 	Audience      []string
 }
 
-// tokenClaims is the wire shape of a platform IdP access token: the
-// dialect's claims by their wire names beside the ones every IdP shares.
+// tokenClaims is the wire shape of a platform IdP access token: the claims
+// every IdP shares, typed, and the whole payload, which the dialect reads the
+// IdP's own claims out of.
 type tokenClaims struct {
-	dialect.Raw
-	ClientID string `json:"client_id"`
+	Raw      dialect.Raw `json:"-"`
+	ClientID string      `json:"client_id"`
 	jwt.RegisteredClaims
+}
+
+// UnmarshalJSON decodes the typed claims and keeps the whole payload.
+func (c *tokenClaims) UnmarshalJSON(b []byte) error {
+	type typed tokenClaims
+	raw, err := dialect.Decode(b, (*typed)(c))
+	if err != nil {
+		return err
+	}
+	c.Raw = raw
+	return nil
 }
 
 // Verifier checks a token's signature against the IdP's JWKS, its exact
@@ -163,7 +175,7 @@ func UserGate(v *Verifier, audiences []string, orgID, orgHandle string) func(htt
 				writeUnauthenticated(w)
 				return
 			}
-			if c.Org.ID != orgID || !c.Org.HandleDeclared || c.Org.Handle != orgHandle {
+			if c.Org.ID != orgID || c.Org.Handle != orgHandle {
 				writeOrgMismatch(w)
 				return
 			}

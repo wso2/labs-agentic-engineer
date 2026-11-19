@@ -27,8 +27,11 @@ VITE_API_BASE_URL_VAL="${VITE_API_BASE_URL:-/aep-api-service}"
 THUNDER_URL="${VITE_THUNDER_URL:-}"
 THUNDER_CLIENT_ID="${VITE_THUNDER_CLIENT_ID:-aep-console-client}"
 THUNDER_SCOPES="${VITE_THUNDER_SCOPES:-openid profile email}"
-# The platform IdP's token dialect (src/auth/claims.ts); thunder when unset.
-IDP_KIND="${VITE_IDP_KIND:-thunder}"
+# The name of the claim the platform IdP's tokens carry the org's handle in
+# (src/auth/claims.ts), from the chart's idp.claims.org.handle. Trimmed. The
+# console knows no IdP, so the served env-config.js has to name the claim:
+# the check is below, after the file is written.
+IDP_ORG_HANDLE_CLAIM="$(printf '%s' "${VITE_IDP_CLAIMS_ORG_HANDLE:-}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
 TRY_IT_URL="${VITE_TRY_IT_URL:-http://tryit.aep.localhost:8095}"
 # WSO2 Cloud only — set by the ReleaseBinding. Empty locally so the SPA skips
 # the first-login billing activation call.
@@ -37,7 +40,8 @@ BILLING_API_BASE_URL_VAL="${BILLING_API_BASE_URL:-}"
 # env-config.js is generated at start so the SPA can read runtime config.
 # The heredoc is unquoted so the values above expand.
 NOW="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-cat > /usr/share/nginx/html/env-config.js <<EOF_INNER || echo "env-config.js is read-only, skipping write"
+ENV_CONFIG="/usr/share/nginx/html/env-config.js"
+cat > "$ENV_CONFIG" <<EOF_INNER || echo "env-config.js is read-only, skipping write"
 // Runtime environment configuration
 // Generated at: ${NOW}
 
@@ -46,11 +50,45 @@ window._env_ = {
   VITE_THUNDER_URL: "${THUNDER_URL}",
   VITE_THUNDER_CLIENT_ID: "${THUNDER_CLIENT_ID}",
   VITE_THUNDER_SCOPES: "${THUNDER_SCOPES}",
-  VITE_IDP_KIND: "${IDP_KIND}",
+  VITE_IDP_CLAIMS_ORG_HANDLE: "${IDP_ORG_HANDLE_CLAIM}",
   VITE_TRY_IT_URL: "${TRY_IT_URL}",
   BILLING_API_BASE_URL: "${BILLING_API_BASE_URL_VAL}",
 };
 EOF_INNER
+
+# The file that is served has to name the org handle's claim, whether this
+# script wrote it or the deployment mounted its own read-only copy. This is
+# an early stop that shows in the pod's log. It reads the file as text with
+# its comments removed (// to the end of a line, and /* */ also over several
+# lines), so it cannot judge every file: the console itself checks the value
+# that is in effect and fails at load without one (src/auth/claims.ts
+# resolveOrgHandleClaim). A // counts as a comment at the start of a line or
+# after white space, so the // of a URL is kept.
+without_js_comments() {
+  awk '
+    {
+      line = $0; out = ""
+      while (length(line) > 0) {
+        if (inblock) {
+          i = index(line, "*/")
+          if (i == 0) { line = ""; break }
+          line = substr(line, i + 2); inblock = 0
+          continue
+        }
+        b = index(line, "/*")
+        c = match(line, /(^|[ \t])\/\//)
+        if (c > 0 && (b == 0 || c < b)) { out = out substr(line, 1, c - 1); line = ""; break }
+        if (b == 0) { out = out line; line = ""; break }
+        out = out substr(line, 1, b - 1); line = substr(line, b + 2); inblock = 1
+      }
+      print out
+    }' "$1"
+}
+if ! without_js_comments "$ENV_CONFIG" |
+  grep -Eq "(^|[{,[:space:]])[\"']?VITE_IDP_CLAIMS_ORG_HANDLE[\"']?[[:space:]]*:[[:space:]]*[\"'][[:space:]]*[^\"'[:space:]]"; then
+  echo "VITE_IDP_CLAIMS_ORG_HANDLE is required: the name of the claim that carries the org handle in the platform IdP's tokens. Set the variable, or name it in the env-config.js that is served." >&2
+  exit 1
+fi
 
 echo "Runtime configuration generated"
 

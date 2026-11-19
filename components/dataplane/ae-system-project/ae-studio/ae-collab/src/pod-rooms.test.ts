@@ -262,7 +262,7 @@ async function startTestCollab(
     orgHandle: "acme",
     issuer: ISSUER,
     jwksUrl: idp.jwksUrl,
-    idpKind: "thunder",
+    idpClaims: { orgHandle: "ouHandle", orgId: "ouId", orgName: "ouName", callerTypeClaim: "grant_type", callerTypeMachine: "client_credentials", callerTypeUser: "" },
     userAudiences: [USER_AUDIENCE],
     allowedOrigins: o.allowedOrigins ?? [CONSOLE_ORIGIN],
     filesSocket: files.path,

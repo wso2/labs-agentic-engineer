@@ -97,7 +97,7 @@ function OidcGuard({ children }: PropsWithChildren) {
     const accessClaims = auth.user
       ? (decodeJwtClaims(auth.user.access_token) ?? {})
       : {};
-    const identity = identityFromClaims(env.idpKind, idClaims, accessClaims);
+    const identity = identityFromClaims(env.orgHandleClaim, idClaims, accessClaims);
     return {
       user: { id: sessionUserId(accessClaims, idClaims), name: identity.name, email: identity.email },
       orgHandle: identity.orgHandle,
