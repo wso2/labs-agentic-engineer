@@ -71,16 +71,9 @@ func Load() (Config, error) {
 		TryItCallbackURL:         r.readOptionalString("TRY_IT_CALLBACK_URL", ""),
 		BuildAuthRetryBudget:     r.readOptionalInt("BUILD_AUTH_RETRY_BUDGET", 3),
 		SkillsDir:                r.readOptionalString("SKILLS_DIR", "/app/skills"),
-		ThunderAdmin: ThunderAdminConfig{
-			BaseURL:      r.readOptionalString("THUNDER_ADMIN_URL", ""),
-			ClientID:     r.readOptionalString("THUNDER_SYSTEM_CLIENT_ID", "aep-system-client"),
-			ClientSecret: r.readOptionalString("THUNDER_SYSTEM_CLIENT_SECRET", "aep-system-client-secret"),
-			// Empty here; derived from PlatformIDP.Issuer at the composition root.
-			SystemResourceIdentifier: r.readOptionalString("THUNDER_SYSTEM_RESOURCE_IDENTIFIER", ""),
-		},
-		ThunderEnvAdminRoute: r.thunderEnvAdminRoute(),
-		KubeAPI:              r.kubeAPI(),
-		APIGatewayHost:       r.readOptionalString("API_GATEWAY_HOST", ""),
+		ThunderEnvAdminRoute:     r.thunderEnvAdminRoute(),
+		KubeAPI:                  r.kubeAPI(),
+		APIGatewayHost:           r.readOptionalString("API_GATEWAY_HOST", ""),
 		PlatformIDP: PlatformIDPDefaults{
 			Issuer: r.readOptionalString("PLATFORM_IDP_ISSUER", "http://thunder.openchoreo.localhost:8080"),
 			// The platform IdP's in-cluster JWKS. deployments/scripts/env.sh

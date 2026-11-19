@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -62,14 +63,14 @@ type generatedSecret struct {
 
 // importedPlatformSecrets are keys an operator imports that the platform reads
 // through ESO, restored like the generated ones after an OpenBao restart: the
-// Jev key and, on Asgardeo, the client secrets.
+// Jev key and, with imported clients, the client secrets.
 func importedPlatformSecrets() []generatedSecret {
 	return append([]generatedSecret{{path: "aep/jev-api-key"}}, importedClientSecrets()...)
 }
 
-// importedClientNames are the clients of an Asgardeo install whose secrets
-// the organization's admin creates (deployments/scripts/ae-asgardeo-apps.sh)
-// and imports under aep/thunder-clients/<name>: aep-api's own client, the
+// importedClientNames are the clients whose secrets the IdP's admin creates
+// where aectl registers none (on Asgardeo: deployments/scripts/ae-asgardeo-apps.sh)
+// and imports under aep/idp-clients/<name>: aep-api's own client, the
 // AE-only client aep-api calls every org's pod with, and the one org's
 // publisher and AE Studio clients.
 var importedClientNames = []string{
@@ -80,20 +81,20 @@ var importedClientNames = []string{
 }
 
 // importedClientSecrets are the client secrets an install imports and never
-// generates: those of importedClientNames on Asgardeo, none on Thunder
+// generates: those of importedClientNames with imported clients, none where aectl registers them
 // (where aectl generates every client secret).
 func importedClientSecrets() []generatedSecret {
-	if !onAsgardeo() {
+	if registersClients() {
 		return nil
 	}
 	out := make([]generatedSecret, 0, len(importedClientNames))
 	for _, name := range importedClientNames {
-		out = append(out, generatedSecret{path: "aep/thunder-clients/" + name})
+		out = append(out, generatedSecret{path: "aep/idp-clients/" + name})
 	}
 	return out
 }
 
-// requireImportedClientSecrets is the Asgardeo install's check that each
+// requireImportedClientSecrets is the imported-clients install's check that each
 // imported client secret is in the vault. One the vault lost and the cluster
 // still holds (the local OpenBao is in memory) is restored first, and
 // returned. One that nothing holds is an error naming the command that
@@ -118,7 +119,7 @@ func requireImportedClientSecrets(st seedStore) ([]seededSecret, error) {
 		return restored, nil
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%d client secret(s) of the Asgardeo organization are not in OpenBao. aectl creates no client there: the organization's admin creates them with deployments/scripts/ae-asgardeo-apps.sh, which writes one file per secret. Import each:", len(missing))
+	fmt.Fprintf(&b, "%d client secret(s) of the platform IdP are not in OpenBao. With idp.clients imported aectl creates no client: the IdP's admin creates them (on Asgardeo with deployments/scripts/ae-asgardeo-apps.sh, which writes one file per secret). Import each:", len(missing))
 	for _, path := range missing {
 		fmt.Fprintf(&b, "\n  aectl platform secret import --path %s --value-file <file>", path)
 	}
@@ -130,7 +131,7 @@ func generatedThunderClientSecrets() []generatedSecret {
 	out := make([]generatedSecret, 0, len(generatedThunderClientNames))
 	for _, name := range generatedThunderClientNames {
 		out = append(out, generatedSecret{
-			path:     "aep/thunder-clients/" + name,
+			path:     "aep/idp-clients/" + name,
 			generate: func() (string, error) { return thunderClientSecretValue(name) },
 		})
 	}
@@ -141,9 +142,9 @@ func generatedThunderClientSecrets() []generatedSecret {
 var webhookRelaySeedSecret = generatedSecret{path: webhookRelaySeedPath, generate: webhookRelaySeed}
 
 // generatedClientSecrets are the client secrets this install generates: the
-// Thunder clients' on Thunder, none on Asgardeo (they are imported).
+// Thunder clients' where aectl registers them, none where they are imported.
 func generatedClientSecrets() []generatedSecret {
-	if onAsgardeo() {
+	if !registersClients() {
 		return nil
 	}
 	return generatedThunderClientSecrets()
@@ -349,7 +350,7 @@ func newClusterSecretRecovery(ctx context.Context, platformNamespace string) (re
 
 // platformSecretPaths is every OpenBao path the platform's pods read through
 // ESO that an install writes or requires: its inputs, the generated secrets,
-// and on Asgardeo the imported client secrets. Their Secrets are synced
+// and the imported client secrets. Their Secrets are synced
 // before anything reads them.
 func platformSecretPaths() []string {
 	paths := append([]string(nil), platformInputPaths()...)
@@ -363,20 +364,18 @@ func platformSecretPaths() []string {
 }
 
 // platformInputPaths are the paths an install writes from its inputs. The
-// Thunder admin credentials and the system client's id are inputs only where
-// the IdP is Thunder.
+// Thunder admin credentials are inputs only where the IdP is Thunder.
 func platformInputPaths() []string {
 	paths := []string{
 		"aep/anthropic-api-key",
 		"aep/opensearch-username",
 	}
-	if onAsgardeo() {
+	if !registersClients() {
 		return paths
 	}
 	return append(paths,
 		"aep/thunder-admin/client-id",
 		"aep/thunder-admin/client-secret",
-		"aep/thunder-clients/system-client-id",
 	)
 }
 
@@ -474,12 +473,44 @@ func syncPlatformExternalSecrets(ctx context.Context, namespace string) (map[str
 // stale value.
 func clientsReadingUnsynced(unsynced map[string]string) map[string]string {
 	skip := map[string]string{}
-	for _, d := range aepThunderClients {
+	for _, d := range thunderClients() {
 		if reason, ok := unsynced[d.secretNameOrDefault()]; ok && d.clientType == "confidential" {
 			skip[d.clientID] = reason
 		}
 	}
 	return skip
+}
+
+// orgClientVaultPaths are the vault paths of the org's two client secrets
+// (orgThunderClients).
+var orgClientVaultPaths = []string{"aep/idp-clients/org-publisher", "aep/idp-clients/org-studio"}
+
+// regeneratedOrgClientSecrets lists the org's client secrets that a seed run
+// generated, and did not restore from a cluster Secret. aep-api stores these
+// two in the org's references when the org connects GitHub, so a new value
+// leaves an org that is already connected with the previous one.
+func regeneratedOrgClientSecrets(seeded []seededSecret) []string {
+	var paths []string
+	for _, s := range seeded {
+		if s.from == "" && slices.Contains(orgClientVaultPaths, s.path) {
+			paths = append(paths, s.path)
+		}
+	}
+	return paths
+}
+
+// orgClientRepairWarning is the warning for the org client secrets that a
+// seed run generated, or "" when it generated none. The steps are in the
+// order that works: a restart of aep-api or a GitHub reconnect before aectl
+// has registered the new secret stores, in the org, a secret that the IdP
+// does not accept. aectl cannot do the repair: only aep-api writes an org's
+// references, on GitHub connect.
+func orgClientRepairWarning(seeded []seededSecret) string {
+	paths := regeneratedOrgClientSecrets(seeded)
+	if len(paths) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("Generated a new secret for the org's client (%s). An org that already connected GitHub still holds the previous secret, so its builds and its AE Studio cannot get a token. To repair, in this order: 1. make sure that aectl registered the org's clients (if this command stopped or skipped them, run 'aectl platform sync-clients' until it registers them); 2. restart aep-api; 3. reconnect GitHub in the console.", strings.Join(paths, ", "))
 }
 
 // describeSeeded is the one-line, value-free account of a seed run.

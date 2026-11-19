@@ -30,7 +30,7 @@ spec:
             - name: AEP_API_PROXY_URL
               value: "http://aep-api.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.aepApi.port }}"
             - name: VITE_THUNDER_URL
-              value: {{ .Values.console.thunderPublicURL | quote }}
+              value: {{ .Values.idp.issuer | quote }}
             {{- if (default dict .Values.tryIt).enabled }}
             # The origin of the test app an agent's "Try agent" button opens.
             # Must match aep-api's TRY_IT_CALLBACK_URL origin — see values.yaml.
@@ -38,9 +38,9 @@ spec:
               value: {{ .Values.tryIt.publicURL | quote }}
             {{- end }}
             - name: VITE_THUNDER_CLIENT_ID
-              value: {{ .Values.console.thunder.clientId | quote }}
+              value: {{ .Values.console.idp.clientId | quote }}
             - name: VITE_THUNDER_SCOPES
-              value: {{ .Values.console.thunder.scopes | quote }}
+              value: {{ .Values.console.idp.scopes | quote }}
             # The IdP's token dialect: which claims name a token's org.
             - name: VITE_IDP_KIND
               value: {{ .Values.idp.kind | quote }}

@@ -16,7 +16,7 @@
 # under the License.
 
 # LOCAL DEV CLUSTER ONLY. Points OpenChoreo's build at an Asgardeo
-# organization, on a k3d cluster built with `make dev-env AE_IDP_KIND=asgardeo`.
+# organization, on a k3d cluster built with `make dev-env AE_DEV_IDP=asgardeo`.
 #
 # The last step of an OpenChoreo build (ClusterWorkflowTemplate
 # `generate-workload`, upstream's generate-workload-k3d.yaml) signs in as

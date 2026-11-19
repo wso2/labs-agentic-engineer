@@ -113,7 +113,10 @@ func TestAEStudioOverrides(t *testing.T) {
 // in-cluster endpoints on thunder.url: the values every install so far wrote
 // by appending the paths by hand.
 var testPlatformIDP = platformIDP{
-	Kind: "thunder",
+	Clients:      "thunder",
+	Kind:         "thunder",
+	OrgHandle:    "default",
+	OrgNamespace: "default",
 	Public: oidc.Endpoints{
 		Issuer:   "http://thunder.openchoreo.localhost:8080",
 		JWKSURL:  "http://thunder.openchoreo.localhost:8080/oauth2/jwks",
@@ -133,9 +136,10 @@ var testPlatformIDP = platformIDP{
 func TestPlatformIDPOverrides(t *testing.T) {
 	got := strings.Join(platformIDPOverrides(testPlatformIDP), " ")
 	for _, want := range []string{
+		"--set idp.clients=thunder",
 		"--set idp.kind=thunder",
-		"--set thunder.jwksURL=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks",
-		"--set thunder.tokenURL=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/token",
+		"--set idp.jwksURL=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks",
+		"--set idp.tokenURL=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/token",
 		"--set aeStudio.idp.issuer=http://thunder.openchoreo.localhost:8080",
 		"--set aeStudio.idp.jwksUrl=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks",
 		"--set aeStudio.idp.tokenUrl=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/token",
@@ -205,7 +209,7 @@ func TestSeedGeneratedThunderClientSecrets_OnlyMissing(t *testing.T) {
 	have := map[string]bool{}
 	for _, n := range generatedThunderClientNames {
 		if n != "ae-studio-internal" {
-			have["aep/thunder-clients/"+n] = true
+			have["aep/idp-clients/"+n] = true
 		}
 	}
 	var wrote []string
@@ -222,7 +226,7 @@ func TestSeedGeneratedThunderClientSecrets_OnlyMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(wrote) != 1 || wrote[0] != "aep/thunder-clients/ae-studio-internal" || len(seeded) != 1 || seeded[0].value == "" {
+	if len(wrote) != 1 || wrote[0] != "aep/idp-clients/ae-studio-internal" || len(seeded) != 1 || seeded[0].value == "" {
 		t.Fatalf("wrote %v, seeded %v", wrote, seeded)
 	}
 }
@@ -253,13 +257,13 @@ func TestPortOfURL(t *testing.T) {
 }
 
 // The AE-only client is the one optional client: its Secret may be missing
-// without blocking the others, and aep-thunder-secrets never is.
+// without blocking the others, and aep-idp-client-secrets never is.
 func TestSecretOptional(t *testing.T) {
 	if !secretOptional(aeStudioInternalSecretsName) {
 		t.Error("the AE-only Secret must be optional")
 	}
 	if secretOptional(thunderSecretsName) {
-		t.Error("aep-thunder-secrets must be required")
+		t.Error("aep-idp-client-secrets must be required")
 	}
 }
 
@@ -280,6 +284,7 @@ func setValidUpdateConfig(t *testing.T) {
 	viper.Set("thunder.admin_client_id", "admin")
 	viper.Set("oc.api_url", "http://api.openchoreo.localhost:8080")
 	viper.Set("oc.system_namespace", "openchoreo-control-plane")
+	viper.Set("idp.org_handle", "default")
 }
 
 // `platform update` (and so `make dev-update`) must carry every pair install
@@ -300,7 +305,7 @@ func TestHelmUpgradeArgs_CarriesAEStudioValues(t *testing.T) {
 			t.Errorf("update args lack %s %s", want[i], want[i+1])
 		}
 	}
-	for _, key := range []string{"aeStudio.gatewayHost=", "aeStudio.idp.issuer=", "aeStudio.idp.jwksUrl=", "aeStudio.idp.tokenUrl=", "idp.kind=", "thunder.tokenURL=", "aeStudio.consoleOrigins=", "aeStudio.extraEgress="} {
+	for _, key := range []string{"aeStudio.gatewayHost=", "aeStudio.idp.issuer=", "aeStudio.idp.jwksUrl=", "aeStudio.idp.tokenUrl=", "idp.clients=", "idp.kind=", "idp.tokenURL=", "aeStudio.consoleOrigins=", "aeStudio.extraEgress="} {
 		if !strings.Contains(joined, key) {
 			t.Errorf("update args lack %s", key)
 		}

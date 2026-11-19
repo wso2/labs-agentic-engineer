@@ -36,7 +36,7 @@ func TestSetProfile_BYOKindWithoutIssuerIsRefused(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			repo := newMemIDPRepo()
-			svc := NewIDPService(repo, stubOrgRepo{}, &fakeThunder{}, PlatformIDPConfig{Issuer: "https://platform.example"})
+			svc := NewIDPService(repo, stubOrgRepo{}, nil, PlatformIDPConfig{Issuer: "https://platform.example"})
 
 			_, err := svc.SetProfile(context.Background(), "acme", "ada", tc.kind, tc.issuer, "")
 			var ve *ValidationError
@@ -54,7 +54,7 @@ func TestSetProfile_BYOKindWithoutIssuerIsRefused(t *testing.T) {
 // needs none in the request.
 func TestSetProfile_PlatformKindNeedsNoIssuer(t *testing.T) {
 	t.Parallel()
-	svc := NewIDPService(newMemIDPRepo(), stubOrgRepo{}, &fakeThunder{}, PlatformIDPConfig{Issuer: "https://platform.example"})
+	svc := NewIDPService(newMemIDPRepo(), stubOrgRepo{}, nil, PlatformIDPConfig{Issuer: "https://platform.example"})
 
 	got, err := svc.SetProfile(context.Background(), "acme", "ada", "platform", "", "")
 	if err != nil {

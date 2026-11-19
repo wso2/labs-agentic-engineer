@@ -49,7 +49,6 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/wso2/aep/aep-api/internal/clients/thundersvc"
 	"github.com/wso2/aep/aep-api/internal/edge"
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/organization/httpapi"
@@ -177,29 +176,22 @@ type configHarness struct {
 
 // newConfigHarness assembles the real orgconfig.Service over one shared dbtest
 // Postgres with real Anthropic/GitHub/IDP services and faked external probes.
-// Thunder is nil (the state-changing action routes that need it are covered
-// separately via newConfigHarnessWithThunder).
+// The org's clients record is nil: no route here ensures a client.
 func newConfigHarness(t *testing.T) *configHarness {
-	return newConfigHarnessWithThunder(t, nil)
-}
-
-// newConfigHarnessWithThunder is newConfigHarness with the knob the action-route
-// tests need: a fake Thunder admin client (the action routes never reach it).
-func newConfigHarnessWithThunder(t *testing.T, thunder thundersvc.Client) *configHarness {
 	t.Helper()
-	return newConfigHarnessOn(t, thunder, orgconfig.AgentRuntimes)
+	return newConfigHarnessOn(t, orgconfig.AgentRuntimes)
 }
 
 // newConfigHarnessRuntimes is newConfigHarness on an installation that runs
 // only runtimes — one deployed without a runtime's runner image.
 func newConfigHarnessRuntimes(t *testing.T, runtimes []orgconfig.AgentRuntime) *configHarness {
 	t.Helper()
-	return newConfigHarnessOn(t, nil, runtimes)
+	return newConfigHarnessOn(t, runtimes)
 }
 
-func newConfigHarnessOn(t *testing.T, thunder thundersvc.Client, runtimes []orgconfig.AgentRuntime) *configHarness {
+func newConfigHarnessOn(t *testing.T, runtimes []orgconfig.AgentRuntime) *configHarness {
 	t.Helper()
-	return newConfigHarnessProbing(t, thunder, runtimes, false)
+	return newConfigHarnessProbing(t, runtimes, false)
 }
 
 // newConfigHarnessGuarded is newConfigHarness with the production probe
@@ -207,7 +199,7 @@ func newConfigHarnessOn(t *testing.T, thunder thundersvc.Client, runtimes []orgc
 // endpoint to reach.
 func newConfigHarnessGuarded(t *testing.T) *configHarness {
 	t.Helper()
-	return newConfigHarnessProbing(t, nil, orgconfig.AgentRuntimes, true)
+	return newConfigHarnessProbing(t, orgconfig.AgentRuntimes, true)
 }
 
 // newConfigHarnessNoSecrets is newConfigHarness on an installation with no
@@ -217,9 +209,9 @@ func newConfigHarnessNoSecrets(t *testing.T) *configHarness {
 	return newConfigHarnessWith(t, configHarnessOpts{runtimes: orgconfig.AgentRuntimes})
 }
 
-func newConfigHarnessProbing(t *testing.T, thunder thundersvc.Client, runtimes []orgconfig.AgentRuntime, guarded bool) *configHarness {
+func newConfigHarnessProbing(t *testing.T, runtimes []orgconfig.AgentRuntime, guarded bool) *configHarness {
 	t.Helper()
-	return newConfigHarnessWith(t, configHarnessOpts{thunder: thunder, runtimes: runtimes, guarded: guarded, secretsDelivery: true})
+	return newConfigHarnessWith(t, configHarnessOpts{runtimes: runtimes, guarded: guarded, secretsDelivery: true})
 }
 
 // newConfigHarnessWithModelProvider is newConfigHarness with Agent Manager's
@@ -236,7 +228,6 @@ func newConfigHarnessWithModelProvider(t *testing.T, provider organization.Model
 // provider. With modelProvider (which needs secretsDelivery), the key save
 // publishes to it and writes the key's default-key reference.
 type configHarnessOpts struct {
-	thunder                  thundersvc.Client
 	runtimes                 []orgconfig.AgentRuntime
 	guarded, secretsDelivery bool
 	modelProvider            organization.ModelProviderPublisher
@@ -271,7 +262,7 @@ func newConfigHarnessWith(t *testing.T, o configHarnessOpts) *configHarness {
 		}
 	}
 	disconnectSvc := organization.NewOrgDisconnectService(credSvc, nil)
-	idpSvc := organization.NewIDPService(organization.NewIDPRepository(db), organization.NewOrganizationRepository(db), o.thunder, organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS})
+	idpSvc := organization.NewIDPService(organization.NewIDPRepository(db), organization.NewOrganizationRepository(db), nil, organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS})
 
 	svc := organization.NewService(
 		credSvc, disconnectSvc, idpSvc,

@@ -95,10 +95,10 @@ func (kv *fakeKV) get(path string) (string, bool) {
 // clients and the GitHub hooks on the relay channel all hold the old values.
 func TestWritePlatformSecrets_KeepsExistingGeneratedSecrets(t *testing.T) {
 	existing := map[string]string{
-		"aep/postgres-password":              "pg-old",
-		"aep/opensearch-password":            "os-old",
-		webhookRelaySeedPath:                 "relay-old",
-		"aep/thunder-clients/aep-api-client": "api-old",
+		"aep/postgres-password":          "pg-old",
+		"aep/opensearch-password":        "os-old",
+		webhookRelaySeedPath:             "relay-old",
+		"aep/idp-clients/aep-api-client": "api-old",
 	}
 	kv, s := newFakeKV(t, existing)
 	inputs := []platformInput{{"aep/thunder-admin/client-secret", "admin-secret"}}
@@ -115,7 +115,7 @@ func TestWritePlatformSecrets_KeepsExistingGeneratedSecrets(t *testing.T) {
 		t.Errorf("thunder admin secret not written")
 	}
 	// Absent generated secrets are seeded.
-	if got, ok := kv.get("aep/thunder-clients/bff-git-service"); !ok || got == "" {
+	if got, ok := kv.get("aep/idp-clients/bff-git-service"); !ok || got == "" {
 		t.Errorf("missing generated secret not seeded")
 	}
 }
@@ -266,14 +266,14 @@ func secret(ns, name, key, value string) *corev1.Secret {
 // a path no ExternalSecret maps recovers nothing.
 func TestClusterSecretRecovery(t *testing.T) {
 	es := &fakeES{items: []unstructured.Unstructured{
-		esObject("obs", "observer-secret", "", [3]string{"K", "aep/thunder-clients/oc-observer-reader", "value"}),
-		esObject("wso2-aep", "aep-thunder-secrets", "", [3]string{"OC_OBSERVER_READER_SECRET", "aep/thunder-clients/oc-observer-reader", "value"}),
+		esObject("obs", "observer-secret", "", [3]string{"K", "aep/idp-clients/oc-observer-reader", "value"}),
+		esObject("wso2-aep", "aep-idp-client-secrets", "", [3]string{"OC_OBSERVER_READER_SECRET", "aep/idp-clients/oc-observer-reader", "value"}),
 		esObject("wso2-aep", "postgres-secrets", "", [3]string{"POSTGRES_PASSWORD", "aep/postgres-password", "value"}),
 		esObject("wso2-aep", "other", "", [3]string{"X", "aep/multi", "field"}),
 	}}
 	c := fake.NewSimpleClientset(
 		secret("obs", "observer-secret", "K", "obs-copy"),
-		secret("wso2-aep", "aep-thunder-secrets", "OC_OBSERVER_READER_SECRET", "platform-copy"),
+		secret("wso2-aep", "aep-idp-client-secrets", "OC_OBSERVER_READER_SECRET", "platform-copy"),
 		secret("wso2-aep", "postgres-secrets", "POSTGRES_PASSWORD", ""),
 		secret("wso2-aep", "other", "X", "never"),
 	)
@@ -281,7 +281,7 @@ func TestClusterSecretRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v, from, _ := recover("aep/thunder-clients/oc-observer-reader"); v != "platform-copy" || from != "wso2-aep/aep-thunder-secrets" {
+	if v, from, _ := recover("aep/idp-clients/oc-observer-reader"); v != "platform-copy" || from != "wso2-aep/aep-idp-client-secrets" {
 		t.Errorf("want the platform namespace's copy, got from %q", from)
 	}
 	if v, _, _ := recover("aep/postgres-password"); v != "" {
@@ -306,7 +306,7 @@ func TestSyncExternalSecretsNow(t *testing.T) {
 	stale := time.Now().Add(-time.Hour)
 	es := &fakeES{items: []unstructured.Unstructured{
 		esObject("wso2-aep", "postgres-secrets", "", [3]string{"POSTGRES_PASSWORD", "aep/postgres-password", "value"}),
-		esObject("wso2-aep", "aep-thunder-secrets", "", [3]string{"AEP_API_CLIENT_SECRET", "aep/thunder-clients/aep-api-client", "value"}),
+		esObject("wso2-aep", "aep-idp-client-secrets", "", [3]string{"AEP_API_CLIENT_SECRET", "aep/idp-clients/aep-api-client", "value"}),
 		esObject("wso2-aep", "aep-jev", "", [3]string{"K", "aep/jev-api-key", "value"}),
 	}}
 	for i := range es.items {
@@ -318,7 +318,7 @@ func TestSyncExternalSecretsNow(t *testing.T) {
 		}
 	}
 	unsynced, err := syncExternalSecretsNow(context.Background(), es, "wso2-aep",
-		[]string{"aep/postgres-password", "aep/thunder-clients/aep-api-client"}, 50*time.Millisecond)
+		[]string{"aep/postgres-password", "aep/idp-clients/aep-api-client"}, 50*time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}

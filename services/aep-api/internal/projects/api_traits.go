@@ -35,7 +35,7 @@ import (
 // OrgIDPProfiles is the narrow read of the org's IDP profile the deployment
 // projection consumes from the idp feature: the issuer a protected API's JWT
 // validation is pinned to. Read-only by design: a deploy never
-// creates or heals the publisher app. Declared consumer-side so the component
+// writes the publisher client's record. Declared consumer-side so the component
 // feature does not import idp's concrete service — the idp service satisfies
 // it structurally and is injected via SetIDPService at the composition root.
 type OrgIDPProfiles interface {

@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"slices"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -52,18 +53,23 @@ type thunderClientDef struct {
 	secretKey        string   // key in the client's K8s Secret (confidential only)
 	redirectURIs     []string // public only
 	noUserAttributes bool     // token carries no attributes at all (AE-only client)
-	secretName       string   // K8s Secret holding secretKey; default aep-thunder-secrets
+	secretName       string   // K8s Secret holding secretKey; default aep-idp-client-secrets
 	// optional: a missing Secret skips this client with a warning instead of
 	// failing the run, so its absence degrades nothing else.
 	optional bool
-	// vaultName is the generated vault key aep/thunder-clients/<vaultName>
+	// vaultName is the generated vault key aep/idp-clients/<vaultName>
 	// the ExternalSecret syncs into secretKey (empty: not a generated key).
 	vaultName string
+	// orgOUHandle marks one of the org's own clients: it is registered under
+	// the organization unit with this handle (thunder.DesiredApp.OrgOUHandle).
+	orgOUHandle string
 }
 
-// aepThunderClients is the canonical list of AEP OAuth clients to register in Thunder.
+// aepThunderClients is the canonical list of AEP's platform OAuth clients to
+// register in Thunder. The org's own two clients are orgThunderClients; the
+// registration takes both lists (thunderClients).
 // Confidential clients read their pre-generated secret from a K8s Secret: the
-// shared aep-thunder-secrets unless the client names its own (secretName).
+// shared aep-idp-client-secrets unless the client names its own (secretName).
 // Public (PKCE) clients use the redirect URIs supplied at registration time.
 var aepThunderClients = []thunderClientDef{
 	{clientID: "openchoreo-workload-publisher-client", clientType: "confidential", vaultName: "oc-workload-publisher", secretKey: "OC_WORKLOAD_PUBLISHER_SECRET"},
@@ -72,12 +78,31 @@ var aepThunderClients = []thunderClientDef{
 	{clientID: "bff-git-service", clientType: "confidential", vaultName: "bff-git-service", secretKey: "BFF_TO_GIT_SERVICE_SECRET"},
 	{clientID: "bff-remote-worker", clientType: "confidential", vaultName: "bff-remote-worker", secretKey: "BFF_TO_REMOTE_WORKER_SECRET"},
 	{clientID: "local-dev-seeder", clientType: "confidential", vaultName: "local-dev-seeder", secretKey: "LOCAL_DEV_SEEDER_SECRET"},
-	{clientID: "aep-system-client", clientType: "confidential", vaultName: "system-client", secretKey: "THUNDER_SYSTEM_CLIENT_SECRET"},
 	{clientID: "openchoreo-rca-agent", clientType: "confidential", vaultName: "openchoreo-rca-agent", secretKey: "OC_RCA_AGENT_SECRET"},
 	{clientID: "ae-studio-internal-client", clientType: "confidential", secretKey: "AE_STUDIO_INTERNAL_CLIENT_SECRET", secretName: aeStudioInternalSecretsName, noUserAttributes: true, optional: true, vaultName: "ae-studio-internal"},
 	// Public PKCE clients — redirect URIs are filled in by doThunderSetup.
 	{clientID: "aep-console-client", clientType: "public"},
 	{clientID: "aep-cli-client", clientType: "public", redirectURIs: []string{"http://localhost", "http://127.0.0.1"}},
+}
+
+// orgThunderClients are the two clients of the one org the install serves:
+// its publisher client (the coding and validation runners' identity) and its
+// AE Studio client (its pod's identity). aep-api holds no rights to create
+// them, so aectl registers both here, under the org's organization unit
+// (idp.org_handle), and aep-api reads their secrets from their own Secret.
+// The client ids are the ones aep-api derives from the org's namespace.
+func orgThunderClients() []thunderClientDef {
+	org, handle := ocOrgNamespace(), viper.GetString("idp.org_handle")
+	return []thunderClientDef{
+		{clientID: "aep-publisher-" + org, clientType: "confidential", vaultName: "org-publisher", secretKey: "PLATFORM_IDP_ORG_PUBLISHER_SECRET", secretName: orgClientSecretsName, orgOUHandle: handle},
+		{clientID: "ae-studio-" + org, clientType: "confidential", vaultName: "org-studio", secretKey: "PLATFORM_IDP_ORG_STUDIO_SECRET", secretName: orgClientSecretsName, orgOUHandle: handle},
+	}
+}
+
+// thunderClients is every client aectl registers on the platform ThunderID:
+// the platform's, then the org's.
+func thunderClients() []thunderClientDef {
+	return append(slices.Clone(aepThunderClients), orgThunderClients()...)
 }
 
 func (d thunderClientDef) secretNameOrDefault() string {
@@ -90,7 +115,7 @@ func (d thunderClientDef) secretNameOrDefault() string {
 // secretOptional reports whether every client reading the K8s Secret name is
 // optional, i.e. the run may continue without it.
 func secretOptional(name string) bool {
-	for _, d := range aepThunderClients {
+	for _, d := range thunderClients() {
 		if d.clientType == "confidential" && d.secretNameOrDefault() == name && !d.optional {
 			return false
 		}
@@ -116,11 +141,16 @@ func clientsToRegister(defs []thunderClientDef, secretsByName map[string]map[str
 }
 
 // thunderSecretNames lists the distinct K8s Secrets the confidential clients
-// read their secrets from.
-func thunderSecretNames() []string {
+// read their secrets from. A client in skip (clientID -> reason) is not
+// registered, so a Secret that only skipped clients read is left out: a wait
+// for it would stop the clients that can register.
+func thunderSecretNames(skip map[string]string) []string {
 	var names []string
 	seen := map[string]bool{}
-	for _, d := range aepThunderClients {
+	for _, d := range thunderClients() {
+		if _, skipped := skip[d.clientID]; skipped {
+			continue
+		}
 		if d.clientType != "confidential" || seen[d.secretNameOrDefault()] {
 			continue
 		}
@@ -131,11 +161,13 @@ func thunderSecretNames() []string {
 }
 
 const (
-	thunderSecretsName = "aep-thunder-secrets"
+	thunderSecretsName = "aep-idp-client-secrets"
 	// aeStudioInternalSecretsName holds only the AE-only client secret, so a
 	// missing vault key degrades nothing else.
 	aeStudioInternalSecretsName = "aep-ae-studio-internal-secrets"
-	thunderSystemClient         = "aep-system-client"
+	// orgClientSecretsName holds the secrets of the org's two clients, which
+	// aep-api reads (the chart's ExternalSecret of the same name).
+	orgClientSecretsName = "aep-org-client-secrets"
 )
 
 // doThunderSetup registers all AEP OAuth clients in Thunder. It port-forwards
@@ -150,7 +182,7 @@ func doThunderSetup(
 	platformNamespace, thunderNamespace, consoleURL string,
 	skipClients map[string]string,
 ) error {
-	// 1. Read client secrets from the ESO-synced K8s Secrets (aep-thunder-secrets,
+	// 1. Read client secrets from the ESO-synced K8s Secrets (aep-idp-client-secrets,
 	//    plus the AE-only client's own). ESO may take a few seconds after pod
 	//    readiness to complete its first sync, so retry for up to 60s before
 	//    failing. A Secret only optional clients read is warned about and its
@@ -160,7 +192,7 @@ func doThunderSetup(
 	secretsByName := map[string]map[string]string{}
 	var err error
 	var skippedSecrets []string
-	for _, name := range thunderSecretNames() {
+	for _, name := range thunderSecretNames(skipClients) {
 		secretsByName[name], err = waitForSecretData(ctx, k8sClient, platformNamespace, name, 60*time.Second)
 		if err != nil && secretOptional(name) {
 			skippedSecrets = append(skippedSecrets, name)
@@ -212,7 +244,7 @@ func doThunderSetup(
 	for id, reason := range skipClients {
 		ui.Warn(fmt.Sprintf("Skipped %s: %s", id, reason))
 	}
-	toRegister := clientsToRegister(aepThunderClients, secretsByName, skipClients)
+	toRegister := clientsToRegister(thunderClients(), secretsByName, skipClients)
 	for i, def := range toRegister {
 		clientSp := ui.NewSpinner(fmt.Sprintf("Registering OAuth clients (%d/%d) — %s", i+1, len(toRegister), def.clientID))
 		clientSp.Start()
@@ -221,6 +253,7 @@ func doThunderSetup(
 			ClientID:         def.clientID,
 			ClientType:       def.clientType,
 			NoUserAttributes: def.noUserAttributes,
+			OrgOUHandle:      def.orgOUHandle,
 		}
 		if def.clientType == "confidential" {
 			secretName := def.secretNameOrDefault()
@@ -255,20 +288,11 @@ func doThunderSetup(
 		}
 		clientSp.Success(def.clientID)
 		if def.clientID == observerReaderClientID {
-			// Thunder now holds aep/thunder-clients/oc-observer-reader for the
+			// Thunder now holds aep/idp-clients/oc-observer-reader for the
 			// observer's client, so the plane's observer must read that one.
 			syncObserverClientSecret(ctx, k8sClient)
 		}
 	}
-
-	// 5. Ensure the system client is assigned to the aep-system role so it can manage resources.
-	sp = ui.NewSpinner("Assigning system client to aep-system role")
-	sp.Start()
-	if err := client.AssignAdminRole(ctx, thunderSystemClient); err != nil {
-		sp.Fail("Role assignment failed")
-		return fmt.Errorf("assign admin role to %q: %w", thunderSystemClient, err)
-	}
-	sp.Success("System client role assigned")
 
 	ui.Detail("Thunder setup complete")
 	return nil

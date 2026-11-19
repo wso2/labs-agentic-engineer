@@ -23,38 +23,15 @@
 package organization_test
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/wso2/aep/aep-api/internal/clients/thundersvc"
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/contracttest"
 )
-
-// fakeThunder is the component tier's Thunder admin stub: no action route
-// reaches Thunder, so every call panics.
-type fakeThunder struct {
-	// The directory half of thundersvc.Client (groups + users) is the identity
-	// domain's, not this surface's. Embedding satisfies the interface without a
-	// wall of stubs; an accidental call panics on the nil rather than passing.
-	thundersvc.Client
-}
-
-var _ thundersvc.Client = (*fakeThunder)(nil)
-
-func (f *fakeThunder) EnsurePublisherApp(context.Context, string, string, string) (thundersvc.OrgApp, error) {
-	panic("fakeThunder: EnsurePublisherApp unexpected")
-}
-func (f *fakeThunder) DeletePublisherApp(context.Context, string, string) (bool, error) {
-	panic("fakeThunder: DeletePublisherApp unexpected")
-}
-func (f *fakeThunder) OUExists(context.Context, string) (bool, error) {
-	panic("fakeThunder: OUExists unexpected")
-}
 
 // --- disconnect -------------------------------------------------------------
 
@@ -100,7 +77,7 @@ func TestConfigComponent_Disconnect_NeverConnected(t *testing.T) {
 // gone, even for an org with a publisher app, and nothing reaches Thunder.
 func TestConfigComponent_RotateClientSecret_RouteRemoved(t *testing.T) {
 	t.Parallel()
-	c := newConfigHarnessWithThunder(t, &fakeThunder{})
+	c := newConfigHarness(t)
 	now := time.Now().UTC()
 	if err := c.db.Create(&organization.OrganizationIDPProfile{
 		OrgID: "acme", Kind: "platform", Issuer: platformIss, JWKSURL: platformJWKS,

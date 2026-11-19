@@ -285,13 +285,13 @@ AECTL_CONFIG ?= skaffold/defaults.yaml
 
 # The platform IdP of the dev cluster. `thunder` (the default) installs
 # ThunderID in the cluster. `asgardeo` uses an Asgardeo organization instead:
-#   make dev-env AE_IDP_KIND=asgardeo ASGARDEO_TENANT=<handle> AE_ASGARDEO_SECRETS_DIR=<dir>
+#   make dev-env AE_DEV_IDP=asgardeo ASGARDEO_TENANT=<handle> AE_ASGARDEO_SECRETS_DIR=<dir>
 # ASGARDEO_TENANT is the organization's handle; AE_ASGARDEO_SECRETS_DIR is the
 # directory deployments/scripts/ae-asgardeo-apps.sh wrote the four client
 # secret files to (run it first, with AE_CONSOLE_URL the dev console's URL).
 # OpenChoreo's control plane trusts the organization, no platform ThunderID is
-# installed, and aectl imports those secrets and installs with idp.kind
-# asgardeo. Left out there, because each signs in with a client that exists
+# installed, and aectl imports those secrets and installs with idp.clients
+# imported. Left out there, because each signs in with a client that exists
 # only in ThunderID: OpenChoreo's portal, the observability plane, Agent
 # Manager, the SRE agent and dev-seed (connect GitHub and the model key in
 # the console's welcome step). A build's last step signs in as OpenChoreo's
@@ -302,7 +302,7 @@ AECTL_CONFIG ?= skaffold/defaults.yaml
 # cluster comes up and a build stops at that step.
 # It is a mode of a NEW cluster, not a switch on a running one: an org's
 # secret paths are derived from the IdP's id for it.
-AE_IDP_KIND ?= thunder
+AE_DEV_IDP ?= thunder
 ASGARDEO_TENANT ?=
 AE_ASGARDEO_SECRETS_DIR ?=
 # Asgardeo's API address, for an organization in another region. One value
@@ -319,21 +319,21 @@ AE_ASGARDEO_CLIENT_SECRETS := aep-api-client ae-studio-internal org-publisher or
 AE_ASGARDEO_AECTL_CONFIG := tools/aectl/.aectl-asgardeo.yaml
 
 .PHONY: dev-env-thunder dev-env-asgardeo
-dev-env: dev-env-$(AE_IDP_KIND)
+dev-env: dev-env-$(AE_DEV_IDP)
 
 dev-env-asgardeo:
 	@if [ "$(AE_DOMAIN)" != "localhost" ]; then \
 		echo "❌ dev-env is the localhost flow (see AE_DOMAIN in this Makefile)." >&2; exit 1; \
 	fi
 	@if [ -z "$(ASGARDEO_TENANT)" ] || [ -z "$(AE_ASGARDEO_SECRETS_DIR)" ]; then \
-		echo "❌ AE_IDP_KIND=asgardeo needs ASGARDEO_TENANT (the organization's handle) and AE_ASGARDEO_SECRETS_DIR (the directory ae-asgardeo-apps.sh wrote the secret files to)." >&2; exit 1; \
+		echo "❌ AE_DEV_IDP=asgardeo needs ASGARDEO_TENANT (the organization's handle) and AE_ASGARDEO_SECRETS_DIR (the directory ae-asgardeo-apps.sh wrote the secret files to)." >&2; exit 1; \
 	fi
 	@for f in $(AE_ASGARDEO_CLIENT_SECRETS); do \
 		[ -s "$(AE_ASGARDEO_SECRETS_DIR)/$$f" ] || { echo "❌ $(AE_ASGARDEO_SECRETS_DIR)/$$f is missing or empty: run deployments/scripts/ae-asgardeo-apps.sh first." >&2; exit 1; }; \
 	done
 	cd tools/aectl && go build -o aectl-skaffold .
 	bash deployments/scripts/ae-asgardeo-aectl-config.sh $(AECTL_CONFIG) $(ASGARDEO_TENANT) $(ASGARDEO_BASE_URL) > $(AE_ASGARDEO_AECTL_CONFIG)
-	AE_DOMAIN=$(AE_DOMAIN) AE_IDP_KIND=asgardeo ASGARDEO_TENANT=$(ASGARDEO_TENANT) ASGARDEO_BASE_URL=$(ASGARDEO_BASE_URL) AE_ASGARDEO_SECRETS_DIR="$(AE_ASGARDEO_SECRETS_DIR)" bash deployments/scripts/setup-env-for-aectl.sh
+	AE_DOMAIN=$(AE_DOMAIN) AE_DEV_IDP=asgardeo ASGARDEO_TENANT=$(ASGARDEO_TENANT) ASGARDEO_BASE_URL=$(ASGARDEO_BASE_URL) AE_ASGARDEO_SECRETS_DIR="$(AE_ASGARDEO_SECRETS_DIR)" bash deployments/scripts/setup-env-for-aectl.sh
 	$(MAKE) dev-images
 	$(MAKE) ae-studio-refs-check
 	@# aectl connects to the cluster for every command, `config test` included,
@@ -341,14 +341,14 @@ dev-env-asgardeo:
 	./tools/aectl/aectl-skaffold platform config test --config $(AE_ASGARDEO_AECTL_CONFIG)
 	./tools/aectl/aectl-skaffold platform config import --config $(AE_ASGARDEO_AECTL_CONFIG)
 	@for f in $(AE_ASGARDEO_CLIENT_SECRETS); do \
-		./tools/aectl/aectl-skaffold platform secret import --path aep/thunder-clients/$$f --value-file "$(AE_ASGARDEO_SECRETS_DIR)/$$f" || exit 1; \
+		./tools/aectl/aectl-skaffold platform secret import --path aep/idp-clients/$$f --value-file "$(AE_ASGARDEO_SECRETS_DIR)/$$f" || exit 1; \
 	done
 	ANTHROPIC_API_KEY=none \
 		./tools/aectl/aectl-skaffold platform install --addons=all --platform-version=latest --platform-chart=deployments/helm-charts/platform --image-tag=dev-local \
 		--ae-studio-image-design-agent="$(call ae_studio_ref,ae-design-agent)" \
 		--ae-studio-image-collab="$(call ae_studio_ref,ae-collab)" \
 		--ae-studio-image-studio-tools="$(call ae_studio_ref,ae-studio-tools)"
-	@echo "⏭️  Skipping Agent Manager, the SRE agent and dev-seed (AE_IDP_KIND=asgardeo). Sign in at the console and connect GitHub and the model key in its welcome step."
+	@echo "⏭️  Skipping Agent Manager, the SRE agent and dev-seed (AE_DEV_IDP=asgardeo). Sign in at the console and connect GitHub and the model key in its welcome step."
 
 dev-env-thunder:
 	@if [ "$(AE_DOMAIN)" != "localhost" ]; then \

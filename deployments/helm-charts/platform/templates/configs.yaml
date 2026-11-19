@@ -1,11 +1,21 @@
+{{- /* Values that moved: an old name still set would be read by nothing and
+look as if it took effect, so the install stops and says where it went. */}}
+{{- if .Values.thunder }}
+{{- fail "the chart value block `thunder` moved: set idp.jwksURL and idp.tokenURL (thunder.adminURL and thunder.systemResourceIdentifier are gone: aep-api administers no IdP)" }}
+{{- end }}
+{{- if .Values.console.thunderPublicURL }}
+{{- fail "the chart value console.thunderPublicURL moved: set idp.issuer" }}
+{{- end }}
+{{- if .Values.console.thunder }}
+{{- fail "the chart value block console.thunder moved: set console.idp.clientId and console.idp.scopes" }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: platform-configs
   namespace: {{ .Release.Namespace }}
 data:
-  THUNDER_ADMIN_URL: {{ .Values.thunder.adminURL | quote }}
-  THUNDER_JWKS_URL: {{ .Values.thunder.jwksURL | quote }}
-  THUNDER_TOKEN_URL: {{ .Values.thunder.tokenURL | quote }}
-  THUNDER_ISSUER: {{ .Values.console.thunderPublicURL | quote }}
+  IDP_JWKS_URL: {{ .Values.idp.jwksURL | quote }}
+  IDP_TOKEN_URL: {{ .Values.idp.tokenURL | quote }}
+  IDP_ISSUER: {{ .Values.idp.issuer | quote }}
   PLATFORM_API_SERVICE_BASE_URL: {{ .Values.platformAPI.baseURL | quote }}

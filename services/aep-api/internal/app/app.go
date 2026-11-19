@@ -39,7 +39,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
 	"github.com/wso2/aep/aep-api/internal/clients/thunderapp"
-	"github.com/wso2/aep/aep-api/internal/clients/thundersvc"
 	"github.com/wso2/aep/aep-api/internal/config"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/delivery/agentgovernance"
@@ -517,54 +516,12 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	deploymentService := projects.NewDeploymentService(componentClient, artifactStore)
 	deploymentService.SetWriteTargets(writeTargets)
 
-	// The platform IdP's kind decides how it is administered and how its
-	// tokens are read. Validate accepted the kind at load; parsing again keeps
-	// this seam honest if a caller builds the config by hand.
+	// The platform IdP's kind decides how its tokens are read. Validate
+	// accepted the kind at load; parsing again keeps this seam honest if a
+	// caller builds the config by hand.
 	idpKind, err := dialect.ParseKind(cfg.PlatformIDP.Kind)
 	if err != nil {
 		return nil, fmt.Errorf("platform IdP: %w", err)
-	}
-
-	// Thunder admin client + IDP service. Reads
-	// aep-system-client credentials from env (THUNDER_*); the IDP service's
-	// EnsureClient (the gitpat submit) is the per-org publisher / studio
-	// client lifecycle. Optional — when the Thunder base URL is empty the IDP
-	// service still runs and serves GetProfile / GetOrCreateProfile, but the
-	// client ensure fails with ErrIDPThunderUnavailable.
-	var thunderAdminClient thundersvc.Client
-	thunderBase := cfg.ThunderAdmin.BaseURL
-	if thunderBase == "" {
-		// Fall back to the public Thunder URL the auth middleware
-		// already trusts. setup-prerequisites and docker compose set
-		// this to http://k3d-openchoreo-serverlb:8080 in-cluster /
-		// http://thunder.openchoreo.localhost:8080 from the host.
-		thunderBase = cfg.ServiceAuth.TokenURL
-		// TokenURL contains /oauth2/token — strip back to the host:
-		if idx := strings.Index(thunderBase, "/oauth2/"); idx > 0 {
-			thunderBase = thunderBase[:idx]
-		}
-	}
-	// The System resource server's identifier is a NAME derived from the
-	// public issuer, not from the admin URL — in-cluster the two differ, and
-	// the identifier has to match what the IdP registered.
-	systemRS := cfg.ThunderAdmin.SystemResourceIdentifier
-	if systemRS == "" {
-		systemRS = thundersvc.SystemResourceIdentifier(cfg.PlatformIDP.Issuer)
-	}
-	switch {
-	case !usesThunderAdmin(idpKind):
-		slog.Info("Thunder admin client not built: the platform IdP is not Thunder; the org's clients are pre-created", "kind", idpKind)
-	case cfg.ThunderAdmin.ClientID != "" && cfg.ThunderAdmin.ClientSecret != "" && thunderBase != "":
-		thunderAdminClient = thundersvc.New(thundersvc.Config{
-			BaseURL:                  thunderBase,
-			ClientID:                 cfg.ThunderAdmin.ClientID,
-			ClientSecret:             cfg.ThunderAdmin.ClientSecret,
-			SystemResourceIdentifier: systemRS,
-		})
-		slog.Info("Thunder admin client", "baseURL", thunderBase, "clientID", cfg.ThunderAdmin.ClientID,
-			"systemResource", systemRS)
-	default:
-		slog.Warn("Thunder admin client disabled — set THUNDER_ADMIN_URL + THUNDER_SYSTEM_CLIENT_ID + THUNDER_SYSTEM_CLIENT_SECRET")
 	}
 
 	// The identity domain: the platform's record of the roles and test users it
@@ -573,9 +530,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// NOT on the platform IdP. Roles and test users belong to the ENVIRONMENT the
 	// version is validated in, on that environment's own Thunder, resolved per
 	// (org, environment) from the binding record on the OpenChoreo Environment
-	// plus the admin credential in the secret store (identity_targets.go). The T1
-	// admin client above stays for the per-org publisher apps and the OU
-	// validator, which are platform-tier objects.
+	// plus the admin credential in the secret store (identity_targets.go).
 	//
 	// The resolver is optional — without OpenBao there is no credential to read,
 	// so `rolesEnsure` reports Enabled()==false and the build skips the roles
@@ -625,32 +580,21 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	identityTeardownSvc := identity.NewTeardownService(identityTargets, identityStore)
 	projectService.SetIdentityTeardown(identityTeardownSvc)
 
-	// Wire the Thunder OU validator into the org service so a stale/phantom JWT
-	// `ouId` can't poison the org→OU mapping (the root cause behind the runner
-	// publisher cc-token invalid_client: a phantom OU broke wc- namespace
-	// derivation + forced a publisher re-registration under a non-existent OU →
-	// Thunder 400 APP-1018). nil client → validation disabled (trust the JWT).
-	if thunderAdminClient != nil {
-		organizationService.SetOUValidator(thunderAdminClient)
-		slog.Info("org OU validation wired — JWT ouId is validated against Thunder before the org→OU mapping is (over)written")
-	}
 	// WithSecretRefWriter is where the gitpat submit's EnsureClient stores the
 	// org clients' credentials (only in vault, the org's ae-publisher-client
 	// and ae-studio-client references). WithOrgSecretRefs is what POST /build's
 	// RequirePublisherForBuild reads. Coding dispatch mounts
 	// PUBLISHER_CLIENT_ID and PUBLISHER_CLIENT_SECRET from the reference the
 	// ae-publisher-client row names.
-	// The org-clients port by IdP kind (orgClientsFor): Thunder's admin
-	// client, or the static registry of an Asgardeo install's pre-created
-	// clients. Unset Thunder admin credentials leave it a nil interface, and
-	// the service answers ErrIDPThunderUnavailable.
-	orgClients := orgClientsFor(idpKind, cfg.PlatformIDP, thunderAdminClient)
+	// The org's two clients are created on the platform IdP before aep-api
+	// runs; aep-api holds their secrets and no management rights there.
+	orgClients := organization.NewOrgClients(cfg.PlatformIDP.OrgNamespace, cfg.PlatformIDP.OrgPublisherSecret, cfg.PlatformIDP.OrgStudioSecret)
 	idpService := organization.NewIDPService(idpRepo, orgRepo, orgClients, organization.PlatformIDPConfig{
 		Issuer:  cfg.PlatformIDP.Issuer,
 		JWKSURL: cfg.PlatformIDP.JWKSURL,
 	}).WithSecretRefWriter(secretRefWriter).WithOrgSecretRefs(orgSecretRepo)
 	// The deployment projection reads the org's IDP profile (the issuer a
-	// protected API is pinned to); it never creates the publisher app.
+	// protected API is pinned to); it never writes the publisher client's record.
 	deploymentService.SetIDPService(idpService)
 
 	// asServiceIdentity marks OC API calls made from inside dispatch, webhook
@@ -848,12 +792,11 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// The platform IdP's token dialect: every verifier reads the caller's org
 	// through it, and the user edge tells a user's token from a machine's by
 	// it.
-	idpDialect := dialect.ForKind(idpKind)
-	if cfg.PlatformIDP.OrgHandle != "" {
-		// The IdP serves one org under a handle of its own; the dialect maps
-		// it to the org's namespace, the name everything here knows it by.
-		idpDialect = idpDialect.WithSingleOrg(cfg.PlatformIDP.OrgHandle, cfg.PlatformIDP.OrgNamespace)
-	}
+	//
+	// The IdP serves one org, under a handle of its own; the dialect maps it
+	// to the org's namespace, the name everything here knows it by. A token
+	// of any other org reads as no org.
+	idpDialect := dialect.ForKind(idpKind).WithSingleOrg(cfg.PlatformIDP.OrgHandle, cfg.PlatformIDP.OrgNamespace)
 	slog.Info("Platform IdP token dialect", "kind", idpKind,
 		"idpOrgHandle", cfg.PlatformIDP.OrgHandle, "orgNamespace", cfg.PlatformIDP.OrgNamespace)
 
@@ -1701,16 +1644,6 @@ func computeDegradations(cfg config.Config, secretsDelivery bool) []Degradation 
 	}
 	if !secretsDelivery {
 		off("secrets-delivery", "SecretsProvider not injected — secret writes + external-secret cleanup disabled")
-	}
-	thunderBase := cfg.ThunderAdmin.BaseURL
-	if thunderBase == "" {
-		thunderBase = cfg.ServiceAuth.TokenURL
-	}
-	// Only Thunder is administered through its admin client; an unparsable
-	// kind is Validate's to report.
-	idpKind, _ := dialect.ParseKind(cfg.PlatformIDP.Kind)
-	if usesThunderAdmin(idpKind) && (cfg.ThunderAdmin.ClientID == "" || cfg.ThunderAdmin.ClientSecret == "" || thunderBase == "") {
-		off("idp-mutations", "THUNDER_ADMIN_URL / THUNDER_SYSTEM_CLIENT_ID / THUNDER_SYSTEM_CLIENT_SECRET not set — per-org publisher IDP mutations 503")
 	}
 	// Working dispatch is the OpenChoreo component path: the BFF creates the run
 	// cycle's Component through platform-api-service and OC renders the Job. It

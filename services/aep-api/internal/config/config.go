@@ -95,14 +95,6 @@ type Config struct {
 	// exhaustion on the first auth failure.
 	BuildAuthRetryBudget int
 
-	// Thunder admin client config for per-org publisher OAuth app lifecycle.
-	// Loaded from env vars THUNDER_ADMIN_URL / THUNDER_SYSTEM_CLIENT_ID /
-	// THUNDER_SYSTEM_CLIENT_SECRET / THUNDER_SYSTEM_RESOURCE_IDENTIFIER.
-	// When ClientID is empty the BFF logs a warning and the IDP service
-	// returns ErrIDPThunderUnavailable (non-fatal — protected components
-	// still deploy, just without per-org publishers).
-	ThunderAdmin ThunderAdminConfig
-
 	// ThunderEnvAdminRoute picks which address admin calls to an ENVIRONMENT's
 	// Thunder go to — the second identity tier, one instance per (org,
 	// environment), whose binding the OpenChoreo Environment records.
@@ -297,24 +289,6 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// ThunderAdminConfig holds the aep-system-client OAuth2 credentials
-// + base URL the BFF uses to manage Thunder applications (per-org
-// publisher lifecycle). The same Thunder instance that fronts user
-// PKCE login — see deployments/single-cluster/thunder-resources/
-// 81-aep-system-client.yaml for the document that ships these credentials.
-type ThunderAdminConfig struct {
-	BaseURL      string
-	ClientID     string
-	ClientSecret string
-	// SystemResourceIdentifier is the `resource` indicator every system-token
-	// request carries: the identifier of the identity provider's System
-	// resource server, the one that owns the `system` scope. Empty means
-	// "derive it from the platform IdP's public issuer" (<issuer>/mcp, the
-	// ThunderID convention) — the composition root does that, so a deployment
-	// only sets this when its IdP uses a non-conventional identifier.
-	SystemResourceIdentifier string
-}
-
 // KubeAPIConfig is the Kubernetes API endpoint used to LIST ThunderApplication
 // CRs (plain net/http — not controller-runtime). Resolved at Load:
 //
@@ -348,53 +322,40 @@ type PlatformIDPDefaults struct {
 	// Kind names the token dialect the verifiers read the IdP's claims by
 	// (PLATFORM_IDP_KIND; dialect.ParseKind). Empty is thunder.
 	Kind string
-	// OrgHandle and OrgNamespace are set on an IdP that serves one org under
-	// a handle of its own (kind asgardeo: the tenant's handle).
+	// OrgHandle and OrgNamespace name the one org the IdP serves.
 	// OrgHandle (PLATFORM_IDP_ORG_HANDLE) is the handle its tokens carry;
 	// OrgNamespace (PLATFORM_IDP_ORG_NAMESPACE) is the org's OpenChoreo
 	// namespace, the name aep-api knows the org by. A token declaring
 	// OrgHandle is that org's and any other token is no org's
-	// (dialect.WithSingleOrg). Both are required under asgardeo and refused
-	// under thunder, whose handle is the namespace already.
+	// (dialect.WithSingleOrg). Both are required.
 	OrgHandle    string
 	OrgNamespace string
 	// OrgPublisherSecret and OrgStudioSecret are the client secrets of that
-	// one org's two pre-created clients, aep-publisher-<org> and
-	// ae-studio-<org> (PLATFORM_IDP_ORG_PUBLISHER_SECRET,
-	// PLATFORM_IDP_ORG_STUDIO_SECRET), imported into the vault by the IdP's
-	// admin. aep-api stores them in the org's references on GitHub connect
-	// (organization.StaticOrgClients). Required under asgardeo and refused
-	// under thunder, where aep-api creates the clients itself.
+	// org's two pre-created clients, aep-publisher-<org> and ae-studio-<org>
+	// (PLATFORM_IDP_ORG_PUBLISHER_SECRET, PLATFORM_IDP_ORG_STUDIO_SECRET),
+	// stored in the vault by whoever created the clients. aep-api stores
+	// them in the org's references on GitHub connect
+	// (organization.OrgClients). Both are required.
 	OrgPublisherSecret string
 	OrgStudioSecret    string
 }
 
-// singleOrgErrors checks the settings of an IdP that serves one org against
-// the kind. An Asgardeo install needs all four: without the handle and the
-// namespace every user would resolve to a namespace named after the tenant,
-// and without the two imported client secrets the org's coding runs and pod
-// have no identity. Under thunder the handle is the namespace and aep-api
-// creates the clients, so a value set there would be read by nothing while
-// looking as if it took effect. The messages name the setting and never its
-// value. An unknown kind is reported by its own check.
+// singleOrgErrors checks the settings of the one org the IdP serves. All
+// four are required: without the handle and the namespace no user's token
+// would resolve to the org, and without the two client secrets the org's
+// coding runs and pod have no identity. The messages name the setting and
+// never its value.
 func (p PlatformIDPDefaults) singleOrgErrors() []string {
-	kind, err := dialect.ParseKind(p.Kind)
-	if err != nil {
-		return nil
-	}
 	settings := []struct{ name, value, why string }{
-		{"PLATFORM_IDP_ORG_HANDLE", p.OrgHandle, "the tenant's handle in the tokens maps to the org's namespace"},
-		{"PLATFORM_IDP_ORG_NAMESPACE", p.OrgNamespace, "the tenant's handle in the tokens maps to the org's namespace"},
-		{"PLATFORM_IDP_ORG_PUBLISHER_SECRET", p.OrgPublisherSecret, "import the secret of the org's pre-created publisher client (vault path aep/thunder-clients/org-publisher)"},
-		{"PLATFORM_IDP_ORG_STUDIO_SECRET", p.OrgStudioSecret, "import the secret of the org's pre-created AE Studio client (vault path aep/thunder-clients/org-studio)"},
+		{"PLATFORM_IDP_ORG_HANDLE", p.OrgHandle, "the org's handle in the IdP's tokens maps to the org's namespace"},
+		{"PLATFORM_IDP_ORG_NAMESPACE", p.OrgNamespace, "the org's handle in the IdP's tokens maps to the org's namespace"},
+		{"PLATFORM_IDP_ORG_PUBLISHER_SECRET", p.OrgPublisherSecret, "the secret of the org's pre-created publisher client (vault path aep/idp-clients/org-publisher)"},
+		{"PLATFORM_IDP_ORG_STUDIO_SECRET", p.OrgStudioSecret, "the secret of the org's pre-created AE Studio client (vault path aep/idp-clients/org-studio)"},
 	}
 	var errs []string
 	for _, s := range settings {
-		switch {
-		case kind == dialect.KindAsgardeo && s.value == "":
-			errs = append(errs, s.name+" is required when PLATFORM_IDP_KIND is asgardeo: "+s.why)
-		case kind != dialect.KindAsgardeo && s.value != "":
-			errs = append(errs, s.name+" is read only when PLATFORM_IDP_KIND is asgardeo; unset it")
+		if s.value == "" {
+			errs = append(errs, s.name+" is required: "+s.why)
 		}
 	}
 	return errs

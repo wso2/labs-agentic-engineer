@@ -19,6 +19,8 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -40,7 +42,7 @@ OpenBao, without a full install and without rotating anything:
      secret (a restarted in-memory OpenBao: re-run 'make dev-env', whose
      install restores every generated key from the cluster Secrets ESO last
      synced it into).
-  1. Writes only the MISSING generated aep/thunder-clients/* keys to OpenBao
+  1. Writes only the MISSING generated aep/idp-clients/* keys to OpenBao
      (create-only), each restored from its cluster Secret when one holds it.
   2. Makes ESO re-read OpenBao for every platform ExternalSecret and waits
      (90s) until each has synced, so the steps below read what OpenBao holds,
@@ -73,7 +75,7 @@ type syncClientsSteps struct {
 	// refusing while that Secret is unsynced.
 	syncPostgres func(ctx context.Context, unsynced map[string]string) error
 	// setupThunder registers the Thunder clients except the skipped ones.
-	// nil on Asgardeo, where aectl registers nothing.
+	// nil with imported clients, where aectl registers nothing.
 	setupThunder func(ctx context.Context, skip map[string]string) error
 }
 
@@ -97,6 +99,9 @@ func syncClients(ctx context.Context, st syncClientsSteps) error {
 	ui.Step("Seeding missing client secrets")
 	seeded, err := st.seed(ctx)
 	if err != nil {
+		// What the seed wrote before it failed stays written, and the next
+		// run finds it there and says nothing: warn now.
+		warnRegeneratedOrgClientSecrets(seeded)
 		return fmt.Errorf("seed client secrets: %w", err)
 	}
 	if len(seeded) == 0 {
@@ -105,6 +110,7 @@ func syncClients(ctx context.Context, st syncClientsSteps) error {
 	for _, line := range describeSeeded(seeded) {
 		ui.Success(line)
 	}
+	warnRegeneratedOrgClientSecrets(seeded)
 
 	ui.Step("Syncing platform Secrets from OpenBao")
 	unsynced, err := st.syncSecrets(ctx)
@@ -123,15 +129,73 @@ func syncClients(ctx context.Context, st syncClientsSteps) error {
 	}
 
 	if st.setupThunder == nil {
-		ui.Success("Platform IdP is Asgardeo: its clients are pre-created, none registered")
+		ui.Success("The platform IdP's clients are imported: none registered")
 		return nil
 	}
 	ui.Step("Registering Thunder OAuth clients")
-	if err := st.setupThunder(ctx, clientsReadingUnsynced(unsynced)); err != nil {
+	skip := clientsReadingUnsynced(unsynced)
+	if err := st.setupThunder(ctx, skip); err != nil {
 		return err
 	}
-	ui.Success("Thunder configured")
+	reportThunderSetup(skip)
 	return nil
+}
+
+// thunderSetupOutcome is the closing line of a client registration, and
+// whether every client was registered. Skipped clients (clientID -> reason)
+// are not on the platform IdP after the run, so the line names them and the
+// command that registers them.
+func thunderSetupOutcome(skip map[string]string) (msg string, complete bool) {
+	if len(skip) == 0 {
+		return "Thunder configured", true
+	}
+	ids := slices.Sorted(maps.Keys(skip))
+	return fmt.Sprintf("Thunder configured, except %d client(s) that this run did not register: %s. Run 'aectl platform sync-clients' when their Secret has synced.", len(ids), strings.Join(ids, ", ")), false
+}
+
+// installNotReadyRows are the rows of the closing panel of an install that
+// skipped clients (clientID -> reason): the clients that are not on the
+// platform IdP and the command that registers them.
+func installNotReadyRows(consoleURL string, skip map[string]string) [][2]string {
+	var rows [][2]string
+	if consoleURL != "" {
+		rows = append(rows, [2]string{"Console", ui.Orange(consoleURL)})
+	}
+	return append(rows,
+		[2]string{"Status", ui.Yellow("NOT READY")},
+		[2]string{"Not registered", strings.Join(slices.Sorted(maps.Keys(skip)), ", ")},
+		[2]string{"Next step", "aectl platform sync-clients"},
+	)
+}
+
+// reportInstallOutcome prints the closing panel of `platform install`. An
+// install that skipped clients is not reported as ready: what needs those
+// clients does not work until they are registered.
+func reportInstallOutcome(consoleURL string, skip map[string]string) {
+	if len(skip) == 0 {
+		ui.Ready(consoleURL)
+		return
+	}
+	ui.Panel("AEP is installed, but clients are not registered", installNotReadyRows(consoleURL, skip))
+}
+
+// reportThunderSetup prints thunderSetupOutcome: a success line, or a
+// warning when clients were skipped.
+func reportThunderSetup(skip map[string]string) {
+	msg, complete := thunderSetupOutcome(skip)
+	if complete {
+		ui.Success(msg)
+		return
+	}
+	ui.Warn(msg)
+}
+
+// warnRegeneratedOrgClientSecrets prints orgClientRepairWarning for a seed
+// run, also for one that failed after it wrote.
+func warnRegeneratedOrgClientSecrets(seeded []seededSecret) {
+	if msg := orgClientRepairWarning(seeded); msg != "" {
+		ui.Warn(msg)
+	}
 }
 
 func runSyncClients(cmd *cobra.Command, args []string) error {
@@ -149,8 +213,8 @@ func runSyncClients(cmd *cobra.Command, args []string) error {
 
 	steps := syncClientsSteps{
 		missingRequired: session.missingRequiredPaths,
-		// Thunder's client secrets are generated where missing. Asgardeo's
-		// are imported: restored from the cluster where the store lost them,
+		// Thunder's client secrets are generated where missing. Imported ones
+		// are restored from the cluster where the store lost them,
 		// and required.
 		seed: func(ctx context.Context) ([]seededSecret, error) {
 			recover, err := newClusterSecretRecovery(ctx, syncClientsNamespace)
@@ -176,7 +240,7 @@ func runSyncClients(cmd *cobra.Command, args []string) error {
 				viper.GetString("thunder.namespace"), consolePublicURL(), skip)
 		},
 	}
-	if onAsgardeo() {
+	if !registersClients() {
 		steps.setupThunder = nil
 	}
 	return syncClients(ctx, steps)

@@ -13,8 +13,7 @@
 #
 # identifier: THIS deployment's. It must equal what the platform's own clients
 # compute and send as the OAuth `resource` indicator — `<thunder public URL>/mcp`
-# in both tools/aectl/internal/thunder.SystemResourceIdentifier and
-# services/aep-api/internal/clients/thundersvc.SystemResourceIdentifier. A
+# in tools/aectl/internal/thunder.SystemResourceIdentifier. A
 # mismatch fails the token exchange with invalid_target, and ThunderID's own
 # /console login with it. Keep in step with thunder.public_url
 # (skaffold/defaults.yaml).

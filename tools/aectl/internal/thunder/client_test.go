@@ -353,183 +353,6 @@ func TestFindAppByClientID_TerminatesOnShortPage(t *testing.T) {
 	}
 }
 
-// TestAssignAdminRole_AlreadyAssigned verifies that AssignAdminRole returns
-// nil without calling the assignments/add endpoint when the app is already
-// in the role's assignments (read from GET /roles/{id}/assignments — its own
-// sub-resource on ThunderID 1.0.0, not a field on the role object returned by
-// GET /roles/{id}; see ensureAppInRole's comment).
-func TestAssignAdminRole_AlreadyAssigned(t *testing.T) {
-	const (
-		appID    = "app-id-sys"
-		roleID   = "role-id-sys"
-		clientID = "aep-system-client"
-	)
-
-	appList, _ := json.Marshal([]appSummary{{ID: appID, Name: clientID, ClientID: clientID}})
-	roleList, _ := json.Marshal([]map[string]any{{"id": roleID, "name": "aep-system"}})
-	assignments, _ := json.Marshal(map[string]any{
-		"assignments": []any{
-			map[string]any{"id": appID, "type": "app"},
-		},
-	})
-
-	var addCalled bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/applications":
-			_, _ = w.Write(appList)
-		case r.Method == http.MethodGet && r.URL.Path == "/roles":
-			_, _ = w.Write(roleList)
-		case r.Method == http.MethodGet && r.URL.Path == "/roles/"+roleID+"/assignments":
-			_, _ = w.Write(assignments)
-		case r.Method == http.MethodPost && r.URL.Path == "/roles/"+roleID+"/assignments/add":
-			addCalled = true
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
-			w.WriteHeader(http.StatusInternalServerError)
-		}
-	}))
-	defer srv.Close()
-
-	c := newTestClient(t, srv)
-	if err := c.AssignAdminRole(context.Background(), clientID); err != nil {
-		t.Fatalf("AssignAdminRole: %v", err)
-	}
-	if addCalled {
-		t.Error("assignments/add should not be called when app is already assigned")
-	}
-}
-
-// TestAssignAdminRole_RoleExistsMissingApp verifies that AssignAdminRole calls
-// POST /roles/{id}/assignments/add to add the app when the role exists but
-// its assignments (from GET /roles/{id}/assignments) don't include it yet,
-// and that the request body carries the new assignment.
-func TestAssignAdminRole_RoleExistsMissingApp(t *testing.T) {
-	const (
-		appID    = "app-id-sys"
-		roleID   = "role-id-sys"
-		clientID = "aep-system-client"
-	)
-
-	appList, _ := json.Marshal([]appSummary{{ID: appID, Name: clientID, ClientID: clientID}})
-	roleList, _ := json.Marshal([]map[string]any{{"id": roleID, "name": "aep-system"}})
-	assignments, _ := json.Marshal(map[string]any{"assignments": []any{}})
-
-	var addCalled bool
-	var addedAssignments []any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/applications":
-			_, _ = w.Write(appList)
-		case r.Method == http.MethodGet && r.URL.Path == "/roles":
-			_, _ = w.Write(roleList)
-		case r.Method == http.MethodGet && r.URL.Path == "/roles/"+roleID+"/assignments":
-			_, _ = w.Write(assignments)
-		case r.Method == http.MethodPost && r.URL.Path == "/roles/"+roleID+"/assignments/add":
-			addCalled = true
-			var body map[string]any
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			addedAssignments = toSlice(body["assignments"])
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
-			w.WriteHeader(http.StatusInternalServerError)
-		}
-	}))
-	defer srv.Close()
-
-	c := newTestClient(t, srv)
-	if err := c.AssignAdminRole(context.Background(), clientID); err != nil {
-		t.Fatalf("AssignAdminRole: %v", err)
-	}
-	if !addCalled {
-		t.Fatal("expected POST /roles/{id}/assignments/add to add the missing app assignment")
-	}
-	found := false
-	for _, item := range addedAssignments {
-		m, _ := item.(map[string]any)
-		if m["id"] == appID && m["type"] == "app" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("assignments/add body should contain {id: %q, type: \"app\"}, got %v", appID, addedAssignments)
-	}
-}
-
-// TestAssignAdminRole_RoleMissing verifies that AssignAdminRole creates the
-// aep-system role via POST /roles with the app assignment inline when no such
-// role exists yet.
-//
-// The resource-servers fixture uses an absolute-URI identifier, matching
-// what ThunderID 1.0.0 actually returns — "system" is only the HANDLE of the
-// one resource nested inside the resource server, a different field.
-func TestAssignAdminRole_RoleMissing(t *testing.T) {
-	const (
-		appID                    = "app-id-sys"
-		rsID                     = "rs-system-id"
-		clientID                 = "aep-system-client"
-		systemResourceIdentifier = "http://thunder.example.com/mcp"
-	)
-
-	appList, _ := json.Marshal([]appSummary{{ID: appID, Name: clientID, ClientID: clientID}})
-	roleList, _ := json.Marshal([]map[string]any{})
-	rsList, _ := json.Marshal([]map[string]any{{"id": rsID, "name": "System", "identifier": systemResourceIdentifier}})
-
-	var postCalled bool
-	var postAssignments []any
-	var postName string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/applications":
-			_, _ = w.Write(appList)
-		case r.Method == http.MethodGet && r.URL.Path == "/roles":
-			_, _ = w.Write(roleList)
-		case r.Method == http.MethodGet && r.URL.Path == "/resource-servers":
-			_, _ = w.Write(rsList)
-		case r.Method == http.MethodPost && r.URL.Path == "/roles":
-			postCalled = true
-			var body map[string]any
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			postName, _ = body["name"].(string)
-			postAssignments = toSlice(body["assignments"])
-			w.WriteHeader(http.StatusCreated)
-		default:
-			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
-			w.WriteHeader(http.StatusInternalServerError)
-		}
-	}))
-	defer srv.Close()
-
-	c := newTestClient(t, srv)
-	c.systemResourceIdentifier = systemResourceIdentifier
-	if err := c.AssignAdminRole(context.Background(), clientID); err != nil {
-		t.Fatalf("AssignAdminRole: %v", err)
-	}
-	if !postCalled {
-		t.Fatal("expected POST /roles to create the missing aep-system role")
-	}
-	if postName != "aep-system" {
-		t.Errorf("expected role name %q, got %q", "aep-system", postName)
-	}
-	found := false
-	for _, item := range postAssignments {
-		m, _ := item.(map[string]any)
-		if m["id"] == appID {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("POST body assignments should contain app %q, got %v", appID, postAssignments)
-	}
-}
-
 func TestSystemResourceIdentifier(t *testing.T) {
 	for in, want := range map[string]string{
 		"http://thunder.openchoreo.localhost:8080": "http://thunder.openchoreo.localhost:8080/mcp",
@@ -652,67 +475,14 @@ func TestTokenClaimConfig(t *testing.T) {
 // TestBuildCreatePayload_SetsType verifies the create payload carries the
 // top-level `type` field ThunderID 1.0.0 requires.
 func TestBuildCreatePayload_SetsType(t *testing.T) {
-	c := &AdminClient{defaultOU: "ou-123"}
-
-	confidential := c.buildCreatePayload(DesiredApp{ClientID: "svc", ClientType: "confidential", ClientSecret: "s"})
+	confidential := buildCreatePayload(DesiredApp{ClientID: "svc", ClientType: "confidential", ClientSecret: "s"}, "ou-123")
 	if confidential["type"] != "m2m" {
 		t.Errorf("confidential payload type = %v, want %q", confidential["type"], "m2m")
 	}
 
-	public := c.buildCreatePayload(DesiredApp{ClientID: "app", ClientType: "public"})
+	public := buildCreatePayload(DesiredApp{ClientID: "app", ClientType: "public"}, "ou-123")
 	if public["type"] != "browser" {
 		t.Errorf("public payload type = %v, want %q", public["type"], "browser")
-	}
-}
-
-// TestFindSystemResourceServerID_MatchesByIdentifier verifies the primary
-// match path: the resource server whose identifier equals the value New()
-// captured (the same one sent as the OAuth `resource` indicator).
-func TestFindSystemResourceServerID_MatchesByIdentifier(t *testing.T) {
-	const identifier = "http://thunder.example.com/mcp"
-	rsList, _ := json.Marshal([]map[string]any{
-		{"id": "rs-other", "name": "Other", "identifier": "http://thunder.example.com/other"},
-		{"id": "rs-system", "name": "System", "identifier": identifier},
-	})
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(rsList)
-	}))
-	defer srv.Close()
-
-	c := newTestClient(t, srv)
-	c.systemResourceIdentifier = identifier
-	id, err := c.findSystemResourceServerID(context.Background())
-	if err != nil {
-		t.Fatalf("findSystemResourceServerID: %v", err)
-	}
-	if id != "rs-system" {
-		t.Errorf("got id %q, want %q", id, "rs-system")
-	}
-}
-
-// TestFindSystemResourceServerID_FallsBackToName verifies that with no
-// systemResourceIdentifier set (New() received no public URL), the lookup
-// falls back to matching name=="System" rather than failing outright.
-func TestFindSystemResourceServerID_FallsBackToName(t *testing.T) {
-	rsList, _ := json.Marshal([]map[string]any{
-		{"id": "rs-system", "name": "System", "identifier": "https://localhost:8090/mcp"},
-	})
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(rsList)
-	}))
-	defer srv.Close()
-
-	c := newTestClient(t, srv) // systemResourceIdentifier left empty
-	id, err := c.findSystemResourceServerID(context.Background())
-	if err != nil {
-		t.Fatalf("findSystemResourceServerID: %v", err)
-	}
-	if id != "rs-system" {
-		t.Errorf("got id %q, want %q", id, "rs-system")
 	}
 }
 
@@ -725,12 +495,174 @@ func TestTokenClaimConfig_NoUserAttributes(t *testing.T) {
 }
 
 func TestBuildCreatePayload_NoUserAttributes(t *testing.T) {
-	c := &AdminClient{defaultOU: "ou"}
-	p := c.buildCreatePayload(DesiredApp{ClientID: "x", ClientType: "confidential", ClientSecret: "s", NoUserAttributes: true})
+	p := buildCreatePayload(DesiredApp{ClientID: "x", ClientType: "confidential", ClientSecret: "s", NoUserAttributes: true}, "ou")
 	cfg := p["inboundAuthConfig"].([]map[string]any)[0]["config"].(map[string]any)
 	token := cfg["token"].(map[string]any)
 	attrs := token["accessToken"].(map[string]any)["clientConfig"].(map[string]any)["attributes"].([]string)
 	if len(attrs) != 0 {
 		t.Fatalf("create payload must carry no token attributes: %v", attrs)
+	}
+}
+
+// --- an org's clients ----------------------------------------------------------
+
+// orgClientServer answers the admin API for one org client: the org's
+// organization unit by its handle, an app list, and a create or an update,
+// whose body it captures.
+type orgClientServer struct {
+	ous      map[string]string // handle → id
+	existing map[string]any    // the app GET /applications/{id} answers; nil = none
+	sent     map[string]any    // the body of the POST or PUT
+	method   string
+}
+
+func (o *orgClientServer) start(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/organization-units/tree/"):
+			id, ok := o.ous[strings.TrimPrefix(r.URL.Path, "/organization-units/tree/")]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": id})
+		case r.Method == http.MethodGet && r.URL.Path == "/applications":
+			apps := []appSummary{}
+			if o.existing != nil {
+				apps = append(apps, appSummary{ID: "app-1", Name: "aep-publisher-acme", ClientID: "aep-publisher-acme"})
+			}
+			_ = json.NewEncoder(w).Encode(apps)
+		case r.Method == http.MethodGet && r.URL.Path == "/applications/app-1":
+			_ = json.NewEncoder(w).Encode(o.existing)
+		case (r.Method == http.MethodPost && r.URL.Path == "/applications") || (r.Method == http.MethodPut && r.URL.Path == "/applications/app-1"):
+			o.method = r.Method
+			_ = json.NewDecoder(r.Body).Decode(&o.sent)
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+}
+
+func orgPublisher() DesiredApp {
+	return DesiredApp{ClientID: "aep-publisher-acme", ClientType: "confidential", ClientSecret: "stored-secret", OrgOUHandle: "acme"}
+}
+
+// oauthConfigOf is the oauth2 config of a sent application body.
+func oauthConfigOf(t *testing.T, app map[string]any) map[string]any {
+	t.Helper()
+	cfg, err := extractOAuthConfig(app)
+	if err != nil {
+		t.Fatalf("sent body has no oauth2 config: %v", err)
+	}
+	return cfg
+}
+
+// An org's client is created under the org's organization unit, found by its
+// handle, with the secret aectl chose and the settings an org client needs:
+// HTTP Basic at the token endpoint and a token that names the org and nothing
+// else.
+func TestEnsureApplication_OrgClientIsCreatedUnderTheOrgsOU(t *testing.T) {
+	o := &orgClientServer{ous: map[string]string{"acme": "ou-acme"}}
+	srv := o.start(t)
+	defer srv.Close()
+
+	if err := newTestClient(t, srv).EnsureApplication(context.Background(), orgPublisher()); err != nil {
+		t.Fatalf("EnsureApplication: %v", err)
+	}
+	if o.method != http.MethodPost {
+		t.Fatalf("method = %q, want a create", o.method)
+	}
+	if o.sent["ouId"] != "ou-acme" || o.sent["type"] != "m2m" {
+		t.Fatalf("created under ouId %v as type %v, want the org's OU and m2m", o.sent["ouId"], o.sent["type"])
+	}
+	cfg := oauthConfigOf(t, o.sent)
+	if cfg["clientId"] != "aep-publisher-acme" || cfg["clientSecret"] != "stored-secret" {
+		t.Fatalf("client id %v: the client is not created with the chosen secret", cfg["clientId"])
+	}
+	if cfg["tokenEndpointAuthMethod"] != "client_secret_basic" {
+		t.Fatalf("auth method = %v, want client_secret_basic", cfg["tokenEndpointAuthMethod"])
+	}
+	token := cfg["token"].(map[string]any)["accessToken"].(map[string]any)["clientConfig"].(map[string]any)
+	if got := fmt.Sprint(token["attributes"]); got != "[ouId ouHandle]" {
+		t.Fatalf("token attributes = %s, want [ouId ouHandle]", got)
+	}
+	if token["validityPeriod"] != float64(3600) {
+		t.Fatalf("token validity = %v, want 3600", token["validityPeriod"])
+	}
+}
+
+// aectl creates clients, never organization units: a handle ThunderID does
+// not know stops the registration before any application call.
+func TestEnsureApplication_OrgClientNeedsAnExistingOU(t *testing.T) {
+	o := &orgClientServer{ous: map[string]string{}}
+	srv := o.start(t)
+	defer srv.Close()
+
+	err := newTestClient(t, srv).EnsureApplication(context.Background(), orgPublisher())
+	if err == nil || !strings.Contains(err.Error(), `"acme"`) {
+		t.Fatalf("err = %v, want one naming the unknown handle", err)
+	}
+	if o.method != "" {
+		t.Fatalf("a %s was sent for a client with no organization unit", o.method)
+	}
+}
+
+// An existing org client under the org's OU is updated in place: its secret
+// and its settings are set again, so a re-run converges it.
+func TestEnsureApplication_OrgClientIsUpdatedInPlace(t *testing.T) {
+	o := &orgClientServer{
+		ous: map[string]string{"acme": "ou-acme"},
+		existing: map[string]any{
+			"id": "app-1", "name": "aep-publisher-acme", "ouId": "ou-acme",
+			"inboundAuthConfig": []any{map[string]any{"type": "oauth2", "config": map[string]any{"clientId": "aep-publisher-acme", "clientSecret": "old"}}},
+		},
+	}
+	srv := o.start(t)
+	defer srv.Close()
+
+	if err := newTestClient(t, srv).EnsureApplication(context.Background(), orgPublisher()); err != nil {
+		t.Fatalf("EnsureApplication: %v", err)
+	}
+	if o.method != http.MethodPut {
+		t.Fatalf("method = %q, want an update", o.method)
+	}
+	cfg := oauthConfigOf(t, o.sent)
+	if cfg["clientSecret"] != "stored-secret" || cfg["tokenEndpointAuthMethod"] != "client_secret_basic" {
+		t.Fatalf("the update did not set the secret and the auth method (method %v)", cfg["tokenEndpointAuthMethod"])
+	}
+}
+
+// An org client found under another organization unit is never moved or
+// changed: its tokens would name that unit's org.
+func TestEnsureApplication_OrgClientUnderAnotherOUIsRefused(t *testing.T) {
+	o := &orgClientServer{
+		ous: map[string]string{"acme": "ou-acme"},
+		existing: map[string]any{
+			"id": "app-1", "name": "aep-publisher-acme", "ouId": "ou-other",
+			"inboundAuthConfig": []any{map[string]any{"type": "oauth2", "config": map[string]any{"clientId": "aep-publisher-acme"}}},
+		},
+	}
+	srv := o.start(t)
+	defer srv.Close()
+
+	err := newTestClient(t, srv).EnsureApplication(context.Background(), orgPublisher())
+	if err == nil || !strings.Contains(err.Error(), "another organization unit") {
+		t.Fatalf("err = %v, want a refusal naming the other organization unit", err)
+	}
+	if o.method != "" {
+		t.Fatalf("a %s was sent for a client under another organization unit", o.method)
+	}
+}
+
+// A platform client keeps the default OU and its own settings.
+func TestBuildCreatePayload_PlatformClientIsNotAnOrgClient(t *testing.T) {
+	p := buildCreatePayload(DesiredApp{ClientID: "svc", ClientType: "confidential", ClientSecret: "s"}, "ou-default")
+	cfg := oauthConfigOf(t, map[string]any{"inboundAuthConfig": []any{map[string]any(p["inboundAuthConfig"].([]map[string]any)[0])}})
+	if p["ouId"] != "ou-default" || cfg["tokenEndpointAuthMethod"] != "client_secret_post" {
+		t.Fatalf("ouId %v, auth method %v; want the default OU and client_secret_post", p["ouId"], cfg["tokenEndpointAuthMethod"])
 	}
 }

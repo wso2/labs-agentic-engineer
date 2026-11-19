@@ -66,7 +66,7 @@ sequenceDiagram
   participant API as aep-api /internal/v1
 
   User->>Submit: console JWT
-  Submit->>Thunder: ensure publisher app
+  Submit->>Submit: read the publisher client's secret from aep-api's settings
   Submit->>Store: write ae-publisher-client reference + row
   User->>Build: console JWT
   Build->>Build: read the ae-publisher-client row (409 if none)
@@ -125,7 +125,7 @@ flowchart TB
 ```
 
 A protected deploy only reads the org's IDP profile (its issuer); it never
-creates or heals the publisher app. There is no user rotation of the
+writes the publisher client's record. There is no user rotation of the
 publisher secret.
 
 ## The type is per-org, and it is the billing key

@@ -77,20 +77,20 @@ spec:
             # publisher, system, SRE — have their own /internal/v1 routes, and the
             # verifier refuses a client_credentials token here whatever its aud.
             - name: JWT_AUDIENCE
-              value: {{ .Values.console.thunder.clientId | quote }}
+              value: {{ .Values.console.idp.clientId | quote }}
             - name: SERVICE_AUTH_CLIENT_ID
               value: {{ .Values.aepApi.serviceAuth.clientId | quote }}
             # The IdP's token endpoint at the in-cluster address, from its
-            # discovery document (aectl writes thunder.tokenURL).
+            # discovery document (aectl writes idp.tokenURL).
             - name: SERVICE_AUTH_TOKEN_URL
               valueFrom:
                 configMapKeyRef:
                   name: platform-configs
-                  key: THUNDER_TOKEN_URL
+                  key: IDP_TOKEN_URL
             - name: SERVICE_AUTH_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: aep-thunder-secrets
+                  name: aep-idp-client-secrets
                   key: AEP_API_CLIENT_SECRET
             - name: SERVICE_AUTH_HOST_HEADER
               value: ""
@@ -128,12 +128,12 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   name: platform-configs
-                  key: THUNDER_JWKS_URL
+                  key: IDP_JWKS_URL
             - name: JWT_ISSUER
               valueFrom:
                 configMapKeyRef:
                   name: platform-configs
-                  key: THUNDER_ISSUER
+                  key: IDP_ISSUER
             # The platform IdP the coding-agent dispatch mints its own
             # (PUBLISHER_*) client_credentials token against — same instance
             # as JWKS_URL/JWT_ISSUER above, read again under the names
@@ -145,38 +145,34 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   name: platform-configs
-                  key: THUNDER_JWKS_URL
+                  key: IDP_JWKS_URL
             - name: PLATFORM_IDP_ISSUER
               valueFrom:
                 configMapKeyRef:
                   name: platform-configs
-                  key: THUNDER_ISSUER
+                  key: IDP_ISSUER
             # The token endpoint the coding-agent dispatch mints the org's
             # publisher token against.
             - name: PLATFORM_IDP_TOKEN_URL
               valueFrom:
                 configMapKeyRef:
                   name: platform-configs
-                  key: THUNDER_TOKEN_URL
+                  key: IDP_TOKEN_URL
             # The IdP's token dialect: how aep-api reads the claims of every
             # token it verifies (values.yaml idp.kind).
             - name: PLATFORM_IDP_KIND
               value: {{ .Values.idp.kind | quote }}
-            # The one org of an IdP that names it by a handle of its own
-            # (values.yaml idp.orgHandle, idp.orgNamespace).
-            {{- with .Values.idp.orgHandle }}
+            # The one org the IdP serves: the handle its tokens name the org
+            # by, and the org's namespace (values.yaml idp.orgHandle,
+            # idp.orgNamespace).
             - name: PLATFORM_IDP_ORG_HANDLE
-              value: {{ . | quote }}
-            {{- end }}
-            {{- with .Values.idp.orgNamespace }}
+              value: {{ .Values.idp.orgHandle | quote }}
             - name: PLATFORM_IDP_ORG_NAMESPACE
-              value: {{ . | quote }}
-            {{- end }}
-            {{- if eq (default "thunder" .Values.idp.kind) "asgardeo" }}
-            # The secrets of that org's two pre-created clients, imported by
-            # the tenant's admin (ExternalSecret aep-org-client-secrets).
-            # Optional here so a missing import is aep-api's boot error naming
-            # it, not a container that cannot be created.
+              value: {{ .Values.idp.orgNamespace | quote }}
+            # The secrets of that org's two pre-created clients (ExternalSecret
+            # aep-org-client-secrets). Optional here so a missing secret is
+            # aep-api's boot error naming it, not a container that cannot be
+            # created.
             - name: PLATFORM_IDP_ORG_PUBLISHER_SECRET
               valueFrom:
                 secretKeyRef:
@@ -189,21 +185,6 @@ spec:
                   name: aep-org-client-secrets
                   key: PLATFORM_IDP_ORG_STUDIO_SECRET
                   optional: true
-            {{- end }}
-            {{- /* Thunder's admin client: creating an org's clients and
-            checking an org unit. aep-api builds it only for kind thunder. */}}
-            {{- if ne (default "thunder" .Values.idp.kind) "asgardeo" }}
-
-            - name: THUNDER_ADMIN_URL
-              valueFrom:
-                configMapKeyRef:
-                  name: platform-configs
-                  key: THUNDER_ADMIN_URL
-            - name: THUNDER_SYSTEM_CLIENT_ID
-              value: "aep-system-client"
-            - name: THUNDER_SYSTEM_RESOURCE_IDENTIFIER
-              value: {{ .Values.thunder.systemResourceIdentifier | default (printf "%s/mcp" .Values.console.thunderPublicURL) | quote }}
-            {{- end }}
             - name: AGENT_PLATFORM_URL
               value: "http://aep-api.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.aepApi.port }}"
             # The Claude Code runner image, used by both task kinds.
@@ -291,7 +272,7 @@ spec:
             - name: AE_STUDIO_CONSOLE_ORIGINS
               value: {{ join "," ($ae.consoleOrigins | default list) | quote }}
             - name: AE_STUDIO_IDP_USER_AUDIENCES
-              value: {{ join "," ((default dict $ae.idp).userAudiences | default (list .Values.console.thunder.clientId)) | quote }}
+              value: {{ join "," ((default dict $ae.idp).userAudiences | default (list .Values.console.idp.clientId)) | quote }}
             - name: AE_STUDIO_CILIUM
               value: {{ $ae.cilium | default false | quote }}
             - name: AE_STUDIO_EXTRA_EGRESS
@@ -357,13 +338,6 @@ spec:
               value: aep-api
             {{- end }}
             # secrets — all values sourced from ESO-synced K8s Secrets (written by aep init)
-            {{- if ne (default "thunder" .Values.idp.kind) "asgardeo" }}
-            - name: THUNDER_SYSTEM_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: aep-thunder-secrets
-                  key: THUNDER_SYSTEM_CLIENT_SECRET
-            {{- end }}
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
