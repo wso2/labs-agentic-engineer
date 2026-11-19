@@ -79,13 +79,25 @@ spec:
         consoleOrigins: { type: array, items: { type: string } }
         idp:
           type: object
-          required: [issuer, jwksUrl, tokenUrl]
+          required: [issuer, jwksUrl, tokenUrl, claims]
           properties:
             issuer: { type: string }
             jwksUrl: { type: string }
             tokenUrl: { type: string }
             # The IdP's token dialect, which the containers read its claims by.
             kind: { type: string, default: thunder }
+            # The names and values of the IdP's own claims, which say a
+            # caller's org and caller type. The same values aep-api is given.
+            # The containers read tokens by kind, so each may be empty.
+            claims:
+              type: object
+              properties:
+                orgHandle: { type: string, default: "" }
+                orgId: { type: string, default: "" }
+                orgName: { type: string, default: "" }
+                callerTypeClaim: { type: string, default: "" }
+                callerTypeMachine: { type: string, default: "" }
+                callerTypeUser: { type: string, default: "" }
             userAudiences: { type: array, items: { type: string }, default: [APP_FACTORY_CONSOLE] }
         aepApiBaseUrl: { type: string }
         aeOnlyClientId: { type: string }
@@ -253,6 +265,12 @@ spec:
                     - { name: AE_IDP_ISSUER, value: "${environmentConfigs.idp.issuer}" }
                     - { name: AE_IDP_JWKS_URL, value: "${environmentConfigs.idp.jwksUrl}" }
                     - { name: AE_IDP_KIND, value: "${environmentConfigs.idp.kind}" }
+                    - { name: AE_IDP_CLAIMS_ORG_HANDLE, value: "${environmentConfigs.idp.claims.orgHandle}" }
+                    - { name: AE_IDP_CLAIMS_ORG_ID, value: "${environmentConfigs.idp.claims.orgId}" }
+                    - { name: AE_IDP_CLAIMS_ORG_NAME, value: "${environmentConfigs.idp.claims.orgName}" }
+                    - { name: AE_IDP_CLAIMS_CALLER_TYPE_CLAIM, value: "${environmentConfigs.idp.claims.callerTypeClaim}" }
+                    - { name: AE_IDP_CLAIMS_CALLER_TYPE_MACHINE, value: "${environmentConfigs.idp.claims.callerTypeMachine}" }
+                    - { name: AE_IDP_CLAIMS_CALLER_TYPE_USER, value: "${environmentConfigs.idp.claims.callerTypeUser}" }
                     - { name: AE_USER_AUDIENCES, value: '${environmentConfigs.idp.userAudiences.join(",")}' }
                     - { name: AE_MCP_SOCKET, value: /run/ae/mcp/mcp.sock }
                     - { name: AE_TURN_SOCKET, value: /run/ae/mcp/turn.sock }
@@ -283,6 +301,12 @@ spec:
                     - { name: AE_IDP_ISSUER, value: "${environmentConfigs.idp.issuer}" }
                     - { name: AE_IDP_JWKS_URL, value: "${environmentConfigs.idp.jwksUrl}" }
                     - { name: AE_IDP_KIND, value: "${environmentConfigs.idp.kind}" }
+                    - { name: AE_IDP_CLAIMS_ORG_HANDLE, value: "${environmentConfigs.idp.claims.orgHandle}" }
+                    - { name: AE_IDP_CLAIMS_ORG_ID, value: "${environmentConfigs.idp.claims.orgId}" }
+                    - { name: AE_IDP_CLAIMS_ORG_NAME, value: "${environmentConfigs.idp.claims.orgName}" }
+                    - { name: AE_IDP_CLAIMS_CALLER_TYPE_CLAIM, value: "${environmentConfigs.idp.claims.callerTypeClaim}" }
+                    - { name: AE_IDP_CLAIMS_CALLER_TYPE_MACHINE, value: "${environmentConfigs.idp.claims.callerTypeMachine}" }
+                    - { name: AE_IDP_CLAIMS_CALLER_TYPE_USER, value: "${environmentConfigs.idp.claims.callerTypeUser}" }
                     - { name: AE_USER_AUDIENCES, value: '${environmentConfigs.idp.userAudiences.join(",")}' }
                     - { name: AE_ALLOWED_ORIGINS, value: '${environmentConfigs.consoleOrigins.join(",")}' }   # 10
                     - { name: AE_FILES_SOCKET, value: /run/ae/files/files.sock }
@@ -307,6 +331,12 @@ spec:
                     - { name: AE_IDP_ISSUER, value: "${environmentConfigs.idp.issuer}" }
                     - { name: AE_IDP_JWKS_URL, value: "${environmentConfigs.idp.jwksUrl}" }
                     - { name: AE_IDP_KIND, value: "${environmentConfigs.idp.kind}" }
+                    - { name: AE_IDP_CLAIMS_ORG_HANDLE, value: "${environmentConfigs.idp.claims.orgHandle}" }
+                    - { name: AE_IDP_CLAIMS_ORG_ID, value: "${environmentConfigs.idp.claims.orgId}" }
+                    - { name: AE_IDP_CLAIMS_ORG_NAME, value: "${environmentConfigs.idp.claims.orgName}" }
+                    - { name: AE_IDP_CLAIMS_CALLER_TYPE_CLAIM, value: "${environmentConfigs.idp.claims.callerTypeClaim}" }
+                    - { name: AE_IDP_CLAIMS_CALLER_TYPE_MACHINE, value: "${environmentConfigs.idp.claims.callerTypeMachine}" }
+                    - { name: AE_IDP_CLAIMS_CALLER_TYPE_USER, value: "${environmentConfigs.idp.claims.callerTypeUser}" }
                     - { name: AE_IDP_TOKEN_URL, value: "${environmentConfigs.idp.tokenUrl}" }
                     - { name: AE_USER_AUDIENCES, value: '${environmentConfigs.idp.userAudiences.join(",")}' }
                     - { name: AE_M2M_CLIENT_ID, value: "${environmentConfigs.aeOnlyClientId}" }

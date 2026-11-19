@@ -322,6 +322,11 @@ type PlatformIDPDefaults struct {
 	// Kind names the token dialect the verifiers read the IdP's claims by
 	// (PLATFORM_IDP_KIND; dialect.ParseKind). Empty is thunder.
 	Kind string
+	// Claims are the names and values of the IdP's own claims
+	// (PLATFORM_IDP_CLAIMS_*), which aep-api passes to every org's AE Studio
+	// pod. They have no default, and aep-api reads no token by them: its
+	// verifiers follow Kind.
+	Claims dialect.Claims
 	// OrgHandle and OrgNamespace name the one org the IdP serves.
 	// OrgHandle (PLATFORM_IDP_ORG_HANDLE) is the handle its tokens carry;
 	// OrgNamespace (PLATFORM_IDP_ORG_NAMESPACE) is the org's OpenChoreo
@@ -378,6 +383,10 @@ type AEStudioConfig struct {
 		// to it as AE_IDP_KIND (AE_STUDIO_IDP_KIND; PLATFORM_IDP_KIND when
 		// unset). It must be the platform's kind.
 		Kind string
+		// Claims is PlatformIDP.Claims (the same PLATFORM_IDP_CLAIMS_*): the
+		// names and values of the IdP's own claims, shipped to the pod as
+		// AE_IDP_CLAIMS_*.
+		Claims dialect.Claims
 		// OrgHandle is PlatformIDP.OrgHandle (the same PLATFORM_IDP_ORG_HANDLE):
 		// when set, the handle the IdP's tokens name the org by, which the
 		// pod is given as its org handle in place of the namespace name.

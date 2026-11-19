@@ -82,6 +82,7 @@ func Load() (Config, error) {
 			JWKSURL:  r.readOptionalString("PLATFORM_IDP_JWKS_URL", "http://platform-idp-service.platform-idp.svc.cluster.local:8090/oauth2/jwks"),
 			TokenURL: r.readOptionalString("PLATFORM_IDP_TOKEN_URL", ""),
 			Kind:     r.readOptionalString("PLATFORM_IDP_KIND", string(dialect.KindThunder)),
+			Claims:   r.idpClaims(),
 			// Trimmed: a stray space would make the handle match no token.
 			OrgHandle:    strings.TrimSpace(r.readOptionalString("PLATFORM_IDP_ORG_HANDLE", "")),
 			OrgNamespace: strings.TrimSpace(r.readOptionalString("PLATFORM_IDP_ORG_NAMESPACE", "")),
@@ -304,6 +305,8 @@ func (r *configReader) aeStudio() AEStudioConfig {
 	// PLATFORM_IDP_KIND unless set; Validate refuses a different one.
 	c.IDP.Kind = r.readOptionalString("AE_STUDIO_IDP_KIND",
 		r.readOptionalString("PLATFORM_IDP_KIND", string(dialect.KindThunder)))
+	// The pod is given the same claim names and values as aep-api.
+	c.IDP.Claims = r.idpClaims()
 	c.IDP.OrgHandle = strings.TrimSpace(r.readOptionalString("PLATFORM_IDP_ORG_HANDLE", ""))
 	c.IDP.UserAudiences = splitCSV(os.Getenv("AE_STUDIO_IDP_USER_AUDIENCES"))
 	c.AEPAPIBaseURL = r.readOptionalString("AE_STUDIO_AEP_API_BASE_URL", "")
@@ -507,4 +510,19 @@ func loadEnvFile(path string) error {
 		}
 	}
 	return scanner.Err()
+}
+
+// idpClaims reads the platform IdP's claim names and values
+// (PLATFORM_IDP_CLAIMS_*). Trimmed: a stray space would make a name match no
+// claim. There are no defaults: an unset one is passed on empty.
+func (r *configReader) idpClaims() dialect.Claims {
+	get := func(key string) string { return strings.TrimSpace(r.readOptionalString(key, "")) }
+	return dialect.Claims{
+		OrgHandle:  get("PLATFORM_IDP_CLAIMS_ORG_HANDLE"),
+		OrgID:      get("PLATFORM_IDP_CLAIMS_ORG_ID"),
+		OrgName:    get("PLATFORM_IDP_CLAIMS_ORG_NAME"),
+		CallerType: get("PLATFORM_IDP_CLAIMS_CALLER_TYPE_CLAIM"),
+		Machine:    get("PLATFORM_IDP_CLAIMS_CALLER_TYPE_MACHINE"),
+		User:       get("PLATFORM_IDP_CLAIMS_CALLER_TYPE_USER"),
+	}
 }

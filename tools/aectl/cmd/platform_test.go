@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -30,6 +32,7 @@ import (
 
 	"github.com/spf13/viper"
 
+	"github.com/wso2/aep/aectl/internal/idpclaims"
 	"github.com/wso2/aep/aectl/internal/oidc"
 )
 
@@ -112,9 +115,20 @@ func TestAEStudioOverrides(t *testing.T) {
 // testPlatformIDP is the local ThunderID as discovery names it, with the
 // in-cluster endpoints on thunder.url: the values every install so far wrote
 // by appending the paths by hand.
+// presetClaims is the idp.claims block of a shipped preset with nothing laid
+// over it, for fixtures.
+func presetClaims(name string) idpclaims.Resolved {
+	r, err := idpclaims.Resolve(name, func(string) (string, idpclaims.Source) { return "", "" })
+	if err != nil {
+		panic(err)
+	}
+	return r
+}
+
 var testPlatformIDP = platformIDP{
 	Clients:      "thunder",
 	Kind:         "thunder",
+	Claims:       presetClaims("thunder"),
 	OrgHandle:    "default",
 	OrgNamespace: "default",
 	Public: oidc.Endpoints{
@@ -129,6 +143,82 @@ var testPlatformIDP = platformIDP{
 	},
 }
 
+// textLikeClaims is an idp.claims block whose values look like another type
+// to Helm: a boolean, a number, and an empty optional value.
+func textLikeClaims(t *testing.T) idpclaims.Resolved {
+	t.Helper()
+	set := map[string]string{"org.handle": "123", "caller_type.machine": "true"}
+	r, err := idpclaims.Resolve("thunder", func(key string) (string, idpclaims.Source) {
+		if v, ok := set[key]; ok {
+			return v, idpclaims.SourceConfig
+		}
+		return "", ""
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// A claim's name or value is text that the IdP's admin chose. Helm's --set
+// turns "true" into a boolean and "123" into a number, so every claim value
+// goes by --set-string, and none by --set.
+func TestPlatformIDPOverrides_ClaimValuesStayText(t *testing.T) {
+	idp := testPlatformIDP
+	idp.Claims = textLikeClaims(t)
+	args := platformIDPOverrides(idp)
+	claims := 0
+	for i := 0; i+1 < len(args); i += 2 {
+		if !strings.HasPrefix(args[i+1], "idp.claims.") {
+			continue
+		}
+		claims++
+		if args[i] != "--set-string" {
+			t.Errorf("%s is passed with %s, want --set-string", args[i+1], args[i])
+		}
+	}
+	if claims != len(idpclaims.Fields) {
+		t.Fatalf("%d claim values passed, want %d: %v", claims, len(idpclaims.Fields), args)
+	}
+	got := strings.Join(args, " ")
+	for _, want := range []string{
+		"--set-string idp.claims.org.handle=123",
+		"--set-string idp.claims.callerType.machine=true",
+		"--set-string idp.claims.callerType.user=",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %s in %s", want, got)
+		}
+	}
+}
+
+// The same values through the chart: Helm renders each as quoted text. With
+// --set the render stopped, because the chart trims a boolean or a number.
+func TestPlatformIDPOverrides_ClaimValuesRenderAsText(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skip("helm not in PATH: the render of the chart is not checked")
+	}
+	idp := testPlatformIDP
+	idp.Claims = textLikeClaims(t)
+	args := append([]string{"template", "t", filepath.Join("..", "..", "..", "deployments", "helm-charts", "platform")}, platformIDPOverrides(idp)...)
+	out, err := exec.Command("helm", args...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template: %v\n%s", err, out)
+	}
+	rendered := string(out)
+	for name, value := range map[string]string{
+		"PLATFORM_IDP_CLAIMS_ORG_HANDLE":          `"123"`,
+		"PLATFORM_IDP_CLAIMS_CALLER_TYPE_MACHINE": `"true"`,
+		"PLATFORM_IDP_CLAIMS_CALLER_TYPE_USER":    `""`,
+		"VITE_IDP_CLAIMS_ORG_HANDLE":              `"123"`,
+	} {
+		re := regexp.MustCompile(`name: ` + name + `\s+value: ` + regexp.QuoteMeta(value) + `\s`)
+		if !re.MatchString(rendered) {
+			t.Errorf("%s is not rendered as the text %s", name, value)
+		}
+	}
+}
+
 // The IdP values the chart gets are the discovered endpoints: the issuer as
 // named, the JWKS and token endpoints at the in-cluster address, and the
 // kind every reader is told. The strings equal what the install wrote before
@@ -138,6 +228,11 @@ func TestPlatformIDPOverrides(t *testing.T) {
 	for _, want := range []string{
 		"--set idp.clients=thunder",
 		"--set idp.kind=thunder",
+		"--set-string idp.claims.org.handle=ouHandle",
+		"--set-string idp.claims.org.id=ouId",
+		"--set-string idp.claims.org.name=ouName",
+		"--set-string idp.claims.callerType.claim=grant_type",
+		"--set-string idp.claims.callerType.machine=client_credentials",
 		"--set idp.jwksURL=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks",
 		"--set idp.tokenURL=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/token",
 		"--set aeStudio.idp.issuer=http://thunder.openchoreo.localhost:8080",
@@ -181,7 +276,7 @@ func TestDiscoverPlatformIDP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if idp.Kind != "thunder" || idp.Public.Issuer != srv.URL || idp.Public.JWKSURL != srv.URL+"/oauth2/jwks" {
+	if idp.Kind != "thunder" || idp.Claims.Preset != "thunder" || idp.Claims.Claims().OrgHandle != "ouHandle" || idp.Public.Issuer != srv.URL || idp.Public.JWKSURL != srv.URL+"/oauth2/jwks" {
 		t.Fatalf("public: %+v", idp)
 	}
 	if idp.InCluster.JWKSURL != "http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks" ||
@@ -305,7 +400,7 @@ func TestHelmUpgradeArgs_CarriesAEStudioValues(t *testing.T) {
 			t.Errorf("update args lack %s %s", want[i], want[i+1])
 		}
 	}
-	for _, key := range []string{"aeStudio.gatewayHost=", "aeStudio.idp.issuer=", "aeStudio.idp.jwksUrl=", "aeStudio.idp.tokenUrl=", "idp.clients=", "idp.kind=", "idp.tokenURL=", "aeStudio.consoleOrigins=", "aeStudio.extraEgress="} {
+	for _, key := range []string{"aeStudio.gatewayHost=", "aeStudio.idp.issuer=", "aeStudio.idp.jwksUrl=", "aeStudio.idp.tokenUrl=", "idp.clients=", "idp.kind=", "idp.claims.org.handle=", "idp.claims.callerType.user=", "idp.tokenURL=", "aeStudio.consoleOrigins=", "aeStudio.extraEgress="} {
 		if !strings.Contains(joined, key) {
 			t.Errorf("update args lack %s", key)
 		}
@@ -530,5 +625,107 @@ func TestTaskSigningKey_NotRequired(t *testing.T) {
 func TestOpenBaoToken_NotRequired(t *testing.T) {
 	if slices.Contains(requiredOpenBaoPaths(), "aep/openbao-token") {
 		t.Error("aep/openbao-token must not be in requiredOpenBaoPaths")
+	}
+}
+
+// The idp.claims block is layered: the preset, the config's keys, then an
+// AEP_IDP_CLAIMS_* variable for this run. Each value says where it came from,
+// so a variable that changes a value does not go unnoticed.
+func TestPlatformIDPClaims_LayersPresetConfigAndEnvironment(t *testing.T) {
+	t.Cleanup(viper.Reset)
+	viper.Set("idp.claims.preset", "asgardeo")
+	viper.Set("idp.claims.org.handle", "from_config")
+	t.Setenv("AEP_IDP_CLAIMS_CALLER_TYPE_MACHINE", "FROM_ENV")
+
+	got, err := platformIDPClaims()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := idpclaims.Claims{OrgHandle: "from_config", OrgID: "org_id", OrgName: "org_name", CallerType: "aut", Machine: "FROM_ENV", User: "APPLICATION_USER"}
+	if got.Claims() != want {
+		t.Fatalf("claims = %+v, want %+v", got.Claims(), want)
+	}
+	sources := map[string]idpclaims.Source{}
+	for _, v := range got.Values {
+		sources[v.Key] = v.Source
+	}
+	for key, src := range map[string]idpclaims.Source{
+		"org.handle": idpclaims.SourceConfig, "caller_type.machine": idpclaims.SourceEnvironment,
+		"org.id": idpclaims.SourcePreset("asgardeo"), "org.name": idpclaims.SourcePreset("asgardeo"),
+	} {
+		if sources[key] != src {
+			t.Errorf("%s came from %q, want %q", key, sources[key], src)
+		}
+	}
+}
+
+// A variable that is set but blank is refused by name. The config's own
+// reader maps the same variables, so a blank one would replace the stored
+// key with nothing and bring the preset's value back unnoticed.
+func TestPlatformIDPClaims_BlankEnvironmentVariableRefused(t *testing.T) {
+	t.Cleanup(viper.Reset)
+	viper.Set("idp.claims.org.handle", "from_config")
+	t.Setenv("AEP_IDP_CLAIMS_ORG_HANDLE", "  ")
+	_, err := platformIDPClaims()
+	if err == nil || !strings.Contains(err.Error(), "AEP_IDP_CLAIMS_ORG_HANDLE") {
+		t.Fatalf("err = %v, want one naming AEP_IDP_CLAIMS_ORG_HANDLE", err)
+	}
+}
+
+// While idp.kind exists, a config that names no preset starts from the
+// preset with the kind's name: the readers of tokens still read by the kind,
+// and the claim values passed beside it must be those of the same IdP. A
+// preset the config names wins.
+func TestPlatformIDPClaims_PresetFollowsTheKind(t *testing.T) {
+	t.Cleanup(viper.Reset)
+	viper.Set("idp.kind", "asgardeo")
+	got, err := platformIDPClaims()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Preset != "asgardeo" || got.Claims().OrgHandle != "org_handle" {
+		t.Fatalf("kind asgardeo, no preset: preset %q, org handle claim %q", got.Preset, got.Claims().OrgHandle)
+	}
+
+	viper.Set("idp.claims.preset", "thunder")
+	got, err = platformIDPClaims()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Preset != "thunder" || got.Claims().OrgHandle != "ouHandle" {
+		t.Fatalf("a named preset must win over the kind: preset %q, org handle claim %q", got.Preset, got.Claims().OrgHandle)
+	}
+
+	viper.Reset()
+	got, err = platformIDPClaims()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Preset != idpclaims.DefaultPreset {
+		t.Fatalf("neither set: preset %q, want the default", got.Preset)
+	}
+}
+
+// Every claim value is passed to the chart, the empty optional ones too: the
+// chart's own defaults are one IdP's, and a pair left out would keep it. The
+// kind is still passed: the readers of tokens read by it.
+func TestPlatformIDPOverrides_SetsEveryClaimValue(t *testing.T) {
+	args := platformIDPOverrides(testPlatformIDP)
+	pairs := map[string]bool{}
+	for i := 0; i+1 < len(args); i += 2 {
+		pairs[args[i]+" "+args[i+1]] = true
+	}
+	for _, want := range []string{
+		"--set idp.kind=thunder",
+		"--set-string idp.claims.org.handle=ouHandle",
+		"--set-string idp.claims.org.id=ouId",
+		"--set-string idp.claims.org.name=ouName",
+		"--set-string idp.claims.callerType.claim=grant_type",
+		"--set-string idp.claims.callerType.machine=client_credentials",
+		"--set-string idp.claims.callerType.user=",
+	} {
+		if !pairs[want] {
+			t.Errorf("missing %q in %v", want, args)
+		}
 	}
 }

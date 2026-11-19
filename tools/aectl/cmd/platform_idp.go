@@ -20,13 +20,16 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/spf13/viper"
 
 	"github.com/wso2/aep/aectl/internal/config"
+	"github.com/wso2/aep/aectl/internal/idpclaims"
 	"github.com/wso2/aep/aectl/internal/oidc"
+	"github.com/wso2/aep/aectl/internal/ui"
 )
 
 // platformIDPKindDefault is the token dialect an install has unless it says
@@ -45,6 +48,10 @@ type platformIDP struct {
 	// every reader of its tokens uses, told to aep-api, the AE Studio pod and
 	// the console through the chart.
 	Kind string
+	// Claims is the idp.claims block: the names and values of the claims
+	// that say a caller's org and caller type. aectl passes them to the
+	// chart beside Kind, by which the readers of tokens read.
+	Claims idpclaims.Resolved
 	// Public is what the discovery document names: the issuer every token's
 	// iss equals, and the endpoints at the IdP's public address.
 	Public oidc.Endpoints
@@ -98,8 +105,12 @@ func discoverPlatformIDP(ctx context.Context) (platformIDP, error) {
 	if err != nil {
 		return platformIDP{}, fmt.Errorf("platform IdP (%s): %w", key, err)
 	}
+	claims, err := platformIDPClaims()
+	if err != nil {
+		return platformIDP{}, err
+	}
 	idp := platformIDP{
-		Clients: platformIDPClients(), Kind: platformIDPKind(), Public: pub, InCluster: pub,
+		Clients: platformIDPClients(), Kind: platformIDPKind(), Claims: claims, Public: pub, InCluster: pub,
 		OrgHandle:    strings.TrimSpace(viper.GetString("idp.org_handle")),
 		OrgNamespace: ocOrgNamespace(),
 	}
@@ -121,8 +132,48 @@ func platformIDPKind() string {
 	return platformIDPKindDefault
 }
 
+// claimsEnvKey is the environment variable that overrides one value of the
+// idp.claims block for a run: AEP_IDP_CLAIMS_ORG_HANDLE for "org.handle".
+func claimsEnvKey(key string) string {
+	return "AEP_IDP_CLAIMS_" + strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
+}
+
+// platformIDPClaims resolves the idp.claims block: the preset
+// (config.ClaimsPreset), then the config's idp.claims.* keys, then
+// AEP_IDP_CLAIMS_* for this run. An environment value lasts for the run
+// only: the stored config keeps what the config file said, so a value meant
+// to stay belongs in that file.
+//
+// A variable that is set but blank is refused. The config's own reader maps
+// the same variables, so a blank one would replace the stored key with
+// nothing and the preset's value would come back under the preset's name.
+func platformIDPClaims() (idpclaims.Resolved, error) {
+	for _, f := range idpclaims.Fields {
+		if v, set := os.LookupEnv(claimsEnvKey(f.Key)); set && strings.TrimSpace(v) == "" {
+			return idpclaims.Resolved{}, fmt.Errorf("%s is set but blank: give it a value, or unset it to use idp.claims.%s of the config", claimsEnvKey(f.Key), f.Key)
+		}
+	}
+	fromConfig := config.ClaimsOverride(viper.GetViper())
+	return idpclaims.Resolve(config.ClaimsPreset(viper.GetViper()), func(key string) (string, idpclaims.Source) {
+		if v := strings.TrimSpace(os.Getenv(claimsEnvKey(key))); v != "" {
+			return v, idpclaims.SourceEnvironment
+		}
+		return fromConfig(key)
+	})
+}
+
+// printPlatformIDPClaims shows the claim values aectl passes to the chart
+// and the layer each came from, so a value that an environment variable
+// changed for this run does not go unnoticed.
+func printPlatformIDPClaims(claims idpclaims.Resolved) {
+	for _, line := range claims.Describe() {
+		ui.Detail(line)
+	}
+}
+
 // platformIDPOverrides returns the helm pairs the chart derives from the
-// IdP: who creates its clients, the kind, the JWKS and token endpoints aep-api
+// IdP: who creates its clients, the kind, its claim names and values, the
+// JWKS and token endpoints aep-api
 // and the AE Studio pod reach, and the issuer. Shared by `platform install` and
 // `platform update`. Undiscovered endpoints (the zero value) set nothing,
 // so a caller never writes half of them.
@@ -139,6 +190,19 @@ func platformIDPOverrides(idp platformIDP) []string {
 		"--set", "aeStudio.idp.jwksUrl=" + idp.InCluster.JWKSURL,
 		"--set", "aeStudio.idp.tokenUrl=" + idp.InCluster.TokenURL,
 	}
+	// Every claim value is set, the empty optional ones too: the chart's own
+	// defaults are one IdP's, and an unset pair would leave that default in.
+	// --set-string, because a claim's name or value is text that the IdP's
+	// admin chose: --set would turn "true" into a boolean and "123" into a
+	// number, and the chart reads each value as text.
+	c := idp.Claims.Claims()
+	args = append(args,
+		"--set-string", "idp.claims.org.handle="+c.OrgHandle,
+		"--set-string", "idp.claims.org.id="+c.OrgID,
+		"--set-string", "idp.claims.org.name="+c.OrgName,
+		"--set-string", "idp.claims.callerType.claim="+c.CallerType,
+		"--set-string", "idp.claims.callerType.machine="+c.Machine,
+		"--set-string", "idp.claims.callerType.user="+c.User)
 	// The one org the IdP serves: the handle its tokens name the org by,
 	// and the org's namespace.
 	return append(args,

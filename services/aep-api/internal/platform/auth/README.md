@@ -33,6 +33,13 @@ exist:
 | is the token a machine's? | `grant_type == client_credentials`, any other grant a user's; a token without `grant_type` answers neither | `aut == APPLICATION` a machine's, `aut == APPLICATION_USER` a user's; a token without `aut`, or with any other value, answers neither |
 | which client minted a machine token | `aud` (the same on every kind, so the verifiers read it directly) | `aud` (a single string; `sub`, `azp` and `client_id` hold it too) |
 
+`dialect.Claims` holds the same names and values as settings of the install
+(`PLATFORM_IDP_CLAIMS_ORG_{HANDLE,ID,NAME}`,
+`PLATFORM_IDP_CLAIMS_CALLER_TYPE_{CLAIM,MACHINE,USER}`, from the chart's
+`idp.claims`). aep-api passes them to every org's AE Studio pod
+(`aestudio` `environmentConfigs.idp.claims`). No verifier reads by them: each
+is optional, and the dialect follows the kind.
+
 `dialect.Raw` holds the IdP-specific claims as decoded, every kind's side by
 side, so one wire struct decodes a token of any kind and the dialect reads
 only its own kind's. It is embedded in a verifier's wire struct beside

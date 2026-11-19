@@ -21,6 +21,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/wso2/aep/aep-api/internal/platform/auth/dialect"
 )
 
 // setMinimalEnv sets the variables Load requires and clears AE_STUDIO_*.
@@ -68,6 +70,40 @@ func TestLoad_WithoutAEStudio(t *testing.T) {
 	}
 	if string(cfg.AEStudio.ExtraEgress) != "[]" || cfg.AEStudio.ListenerName != "https" || cfg.AEStudio.Storage.SizeLimit != "3Gi" || cfg.AEStudio.Storage.EphemeralRequest != "1Gi" {
 		t.Errorf("defaults wrong: %+v", cfg.AEStudio)
+	}
+}
+
+// The six claim settings are read trimmed and given to the pod as they are
+// given to aep-api. None is required: unset, each is empty.
+func TestLoad_IDPClaimsReachThePod(t *testing.T) {
+	setMinimalEnv(t)
+	t.Setenv("PLATFORM_IDP_CLAIMS_ORG_HANDLE", " org_handle ")
+	t.Setenv("PLATFORM_IDP_CLAIMS_ORG_ID", "org_id")
+	t.Setenv("PLATFORM_IDP_CLAIMS_ORG_NAME", "org_name")
+	t.Setenv("PLATFORM_IDP_CLAIMS_CALLER_TYPE_CLAIM", "aut")
+	t.Setenv("PLATFORM_IDP_CLAIMS_CALLER_TYPE_MACHINE", "APPLICATION")
+	t.Setenv("PLATFORM_IDP_CLAIMS_CALLER_TYPE_USER", "APPLICATION_USER")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := dialect.Claims{OrgHandle: "org_handle", OrgID: "org_id", OrgName: "org_name", CallerType: "aut", Machine: "APPLICATION", User: "APPLICATION_USER"}
+	if cfg.PlatformIDP.Claims != want {
+		t.Errorf("PlatformIDP.Claims = %+v, want %+v", cfg.PlatformIDP.Claims, want)
+	}
+	if cfg.AEStudio.IDP.Claims != want {
+		t.Errorf("AEStudio.IDP.Claims = %+v, want the platform's %+v", cfg.AEStudio.IDP.Claims, want)
+	}
+
+	for _, k := range []string{"ORG_HANDLE", "ORG_ID", "ORG_NAME", "CALLER_TYPE_CLAIM", "CALLER_TYPE_MACHINE", "CALLER_TYPE_USER"} {
+		t.Setenv("PLATFORM_IDP_CLAIMS_"+k, "")
+	}
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load without the claim settings = %v, want no error", err)
+	}
+	if cfg.PlatformIDP.Claims != (dialect.Claims{}) || cfg.AEStudio.IDP.Claims != (dialect.Claims{}) {
+		t.Errorf("unset claim settings: %+v / %+v, want both empty", cfg.PlatformIDP.Claims, cfg.AEStudio.IDP.Claims)
 	}
 }
 

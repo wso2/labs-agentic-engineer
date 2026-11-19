@@ -155,13 +155,88 @@ func TestValidate_UnknownKindRefused(t *testing.T) {
 	}
 }
 
+// A preset aectl does not ship is refused by name, once.
+func TestValidate_UnknownPresetRefused(t *testing.T) {
+	errs := validateViper(idpConfig(with(thunderKeys, "idp.claims.preset", "okta")))
+	if !hasErrorNaming(errs, "idp.claims.preset") || len(errs) != 1 {
+		t.Fatalf("errors %v, want one refusing the preset", errs)
+	}
+}
+
+// The idp.claims block has to be complete after the preset and the config's
+// own keys are layered. A preset alone is complete; a config key replaces a
+// preset value; no key can blank a required one, since an empty value sets
+// nothing.
+func TestValidate_ClaimsAreLayeredOverThePreset(t *testing.T) {
+	for name, extra := range map[string]map[string]string{
+		"no claims keys: the default preset": {},
+		"the asgardeo preset":                {"idp.claims.preset": "asgardeo"},
+		"a key over the preset":              {"idp.claims.org.handle": "tenant", "idp.claims.caller_type.user": "authorization_code"},
+		"an empty key sets nothing":          {"idp.claims.org.id": ""},
+	} {
+		cfg := map[string]string{}
+		for k, v := range thunderKeys {
+			cfg[k] = v
+		}
+		for k, v := range extra {
+			cfg[k] = v
+		}
+		if errs := validateViper(idpConfig(cfg)); len(errs) != 0 {
+			t.Errorf("%s: %v", name, errs)
+		}
+	}
+}
+
+// With no preset, every required value has to be in the config: one left
+// out is an error that names its key.
+func TestValidate_NoPresetRequiresEveryClaim(t *testing.T) {
+	cfg := with(with(with(thunderKeys, "idp.claims.preset", "none"), "idp.claims.org.handle", "tenant"), "idp.claims.org.id", "tenant_id")
+	errs := validateViper(idpConfig(cfg))
+	if len(errs) != 1 || !strings.Contains(errs[0], "idp.claims.caller_type.claim") || !strings.Contains(errs[0], "idp.claims.caller_type.machine") {
+		t.Fatalf("errors %v, want one naming the two missing keys", errs)
+	}
+}
+
+// While idp.kind exists, a config that names no preset starts from the
+// preset with the kind's name; a preset the config names wins; with neither
+// it is the default.
+func TestClaimsPreset_FollowsTheKind(t *testing.T) {
+	for name, tc := range map[string]struct {
+		keys map[string]string
+		want string
+	}{
+		"only the kind":        {map[string]string{"idp.kind": "asgardeo"}, "asgardeo"},
+		"a preset and a kind":  {map[string]string{"idp.kind": "asgardeo", "idp.claims.preset": "none"}, "none"},
+		"neither":              {map[string]string{}, ""},
+		"a kind in upper case": {map[string]string{"idp.kind": "Asgardeo"}, "asgardeo"},
+		// A kind this build does not know names no preset: the enum check
+		// reports the kind, and the claims are not blamed for it.
+		"an unknown kind": {map[string]string{"idp.kind": "okta"}, ""},
+		"the kind none":   {map[string]string{"idp.kind": "none"}, ""},
+	} {
+		if got := ClaimsPreset(idpConfig(tc.keys)); got != tc.want {
+			t.Errorf("%s: preset %q, want %q", name, got, tc.want)
+		}
+	}
+	// The kind "none" is not a kind: one error, which names idp.kind.
+	if errs := validateViper(idpConfig(with(thunderKeys, "idp.kind", "none"))); len(errs) != 1 || !hasErrorNaming(errs, "idp.kind") {
+		t.Errorf("kind none: errors %v, want one naming idp.kind", errs)
+	}
+	// The Asgardeo config of an install from before the claims block is
+	// valid as it is, and resolves to Asgardeo's claim names.
+	v := idpConfig(asgardeoKeys)
+	if errs := validateViper(v); len(errs) != 0 {
+		t.Fatalf("an Asgardeo config with only the kind is invalid: %v", errs)
+	}
+}
+
 // Every key validation knows is persisted, and the IdP's are among them.
 func TestIDPKeys_ArePersisted(t *testing.T) {
 	persisted := map[string]bool{}
 	for _, k := range ConfigMapKeys {
 		persisted[k] = true
 	}
-	for _, k := range []string{"idp.clients", "idp.kind", "idp.issuer", "idp.org_handle"} {
+	for _, k := range []string{"idp.clients", "idp.kind", "idp.claims.preset", "idp.claims.org.handle", "idp.claims.caller_type.user", "idp.issuer", "idp.org_handle"} {
 		if !persisted[k] {
 			t.Errorf("%s is not in ConfigMapKeys", k)
 		}
