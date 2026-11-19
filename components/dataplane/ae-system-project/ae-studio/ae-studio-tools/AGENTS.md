@@ -29,7 +29,7 @@ reaper: [`design/clone-storage.md`](design/clone-storage.md).
 |---|---|
 | `cmd/ae-studio-tools` | wiring and shutdown order |
 | `internal/config` | `Load(getenv)` reads the pod env; `CheckSecretRev` refuses to start when `AE_SECRET_REV` is not `AE_EXPECTED_SECRET_REV` |
-| `internal/auth` | JWT verifier over the IdP JWKS; `UserGate` (`/v1`), `M2MGate` (`/internal/v1`). `auth/dialect` is the platform IdP's token dialect (`AE_IDP_KIND`): how the verifier reads a token's org and type. Its package doc has the rules and names its twins |
+| `internal/auth` | JWT verifier over the IdP JWKS; `UserGate` (`/v1`), `M2MGate` (`/internal/v1`). `auth/dialect` is the platform IdP's token dialect (`AE_IDP_CLAIMS_*`): how the verifier reads a token's org and type. Its package doc has the rules and names its twins |
 | `internal/problem` | the `application/problem+json` body (a leaf, shared by gates and edge) |
 | `internal/edge` | the mount tables (`routes.go`), the `/internal/v1` group (`internal*.go`; `internal_threads.go` is aep-api's `remove-issue-thread`), the owner guard, the Files and MCP socket mounts |
 | `internal/gen` | generated, never edited; one sub-package per contract |
@@ -81,8 +81,9 @@ in [`../design/README.md`](../design/README.md). Two behaviours to know:
 `AE_WEBHOOK_URL` is the org's relay channel when the Resource's
 `webhookRelayUrl` is set, else the ResourceType's `webhookUrl` output.
 Optional: `AE_LISTEN_PORT` (8082), `AE_HEALTH_PORT` (9082, not routed),
-`AE_IDP_KIND` (the platform IdP's token dialect; `thunder` when unset, and
-a kind this build does not know fails `Load`).
+`AE_IDP_CLAIMS_ORG_NAME` and `AE_IDP_CLAIMS_CALLER_TYPE_USER`. The other
+four `AE_IDP_CLAIMS_*` keys are required and have no default: they are the
+claim names of the platform IdP, and a missing one fails `Load`.
 
 ## Dead code
 
