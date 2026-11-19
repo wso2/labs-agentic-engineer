@@ -75,7 +75,7 @@ const verify: Verify = () =>
     kind: "user",
     claims: {
       sub: "u-jo",
-      org: { handle: "acme", id: "ou-acme", name: "", handleDeclared: true },
+      org: { handle: "acme", id: "ou-acme", name: "" },
       name: "Jo",
       email: "jo@example.com",
       exp: Math.floor(Date.now() / 1000) + 3600,
@@ -92,7 +92,7 @@ async function startRoom(): Promise<{ pod: PodListeners; files: FakeFilesSocket;
       orgHandle: "acme",
       issuer: "http://thunder.test",
       jwksUrl: "http://thunder.test/oauth2/jwks",
-      idpKind: "thunder",
+      idpClaims: { orgHandle: "ouHandle", orgId: "ouId", orgName: "ouName", callerTypeClaim: "grant_type", callerTypeMachine: "client_credentials", callerTypeUser: "" },
       userAudiences: ["aep-console-client"],
       allowedOrigins: [CONSOLE_ORIGIN],
       filesSocket: files.path,

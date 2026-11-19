@@ -95,6 +95,11 @@ function podEnv(over: Record<string, string> = {}): Record<string, string> {
     AE_IDP_ISSUER: ISSUER,
     AE_IDP_JWKS_URL: "http://unused",
     AE_USER_AUDIENCES: USER_AUDIENCE,
+    AE_IDP_CLAIMS_ORG_HANDLE: "ouHandle",
+    AE_IDP_CLAIMS_ORG_ID: "ouId",
+    AE_IDP_CLAIMS_ORG_NAME: "ouName",
+    AE_IDP_CLAIMS_CALLER_TYPE_CLAIM: "grant_type",
+    AE_IDP_CLAIMS_CALLER_TYPE_MACHINE: "client_credentials",
     AE_ALLOWED_ORIGINS: "http://console.ae.localhost:8080,http://localhost:8090",
     AE_FILES_SOCKET: "/run/ae/files/files.sock",
     AE_ROOM_SOCKET: "/run/ae/room/room.sock",
@@ -351,7 +356,7 @@ test("pod config: defaults and lists", () => {
     orgHandle: "default",
     issuer: ISSUER,
     jwksUrl: "http://unused",
-    idpKind: "thunder",
+    idpClaims: { orgHandle: "ouHandle", orgId: "ouId", orgName: "ouName", callerTypeClaim: "grant_type", callerTypeMachine: "client_credentials", callerTypeUser: "" },
     userAudiences: ["aep-console-client", "other"],
     allowedOrigins: ["http://localhost:8090"],
     filesSocket: "/run/ae/files/files.sock",
@@ -361,10 +366,10 @@ test("pod config: defaults and lists", () => {
   });
 });
 
-test("pod config: the platform IdP kind is optional, and an unknown one is a boot error", () => {
-  assert.equal(loadPodConfig(podEnv({ AE_IDP_KIND: "thunder" }))?.idpKind, "thunder");
-  assert.equal(loadPodConfig(podEnv({ AE_IDP_KIND: "asgardeo" }))?.idpKind, "asgardeo");
-  assert.throws(() => loadPodConfig(podEnv({ AE_IDP_KIND: "okta" })), /invalid AE_IDP_KIND/);
+test("pod config: the platform IdP's claim names have no default; the user value is optional", () => {
+  assert.equal(loadPodConfig(podEnv({ AE_IDP_CLAIMS_CALLER_TYPE_USER: "authorization_code" }))?.idpClaims.callerTypeUser, "authorization_code");
+  assert.throws(() => loadPodConfig(podEnv({ AE_IDP_CLAIMS_ORG_HANDLE: " " })), /missing AE_IDP_CLAIMS_ORG_HANDLE/);
+  assert.throws(() => loadPodConfig(podEnv({ AE_IDP_CLAIMS_CALLER_TYPE_MACHINE: "" })), /missing AE_IDP_CLAIMS_CALLER_TYPE_MACHINE/);
 });
 
 test("pod config: AE_ORG_ID without the rest fails, naming every missing key and no value", () => {
@@ -372,7 +377,8 @@ test("pod config: AE_ORG_ID without the rest fails, naming every missing key and
     () => loadPodConfig({ AE_ORG_ID: "ou-1" }),
     new Error(
       "ae-collab pod env: missing AE_ORG_HANDLE, missing AE_IDP_ISSUER, missing AE_IDP_JWKS_URL, " +
-        "missing AE_USER_AUDIENCES, missing AE_ALLOWED_ORIGINS, missing AE_FILES_SOCKET, missing AE_ROOM_SOCKET",
+        "missing AE_USER_AUDIENCES, missing AE_IDP_CLAIMS_ORG_HANDLE, missing AE_IDP_CLAIMS_ORG_ID, missing AE_IDP_CLAIMS_CALLER_TYPE_CLAIM, missing AE_IDP_CLAIMS_CALLER_TYPE_MACHINE, " +
+        "missing AE_ALLOWED_ORIGINS, missing AE_FILES_SOCKET, missing AE_ROOM_SOCKET",
     ),
   );
   assert.throws(() => loadPodConfig(podEnv({ AE_ALLOWED_ORIGINS: " , " })), /missing AE_ALLOWED_ORIGINS/);

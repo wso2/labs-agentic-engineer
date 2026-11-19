@@ -22,6 +22,7 @@ import { SignJWT, generateKeyPair, exportJWK, createLocalJWKSet } from "jose";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createVerifier, IdpUnavailableError, UnauthenticatedError } from "../src/index.js";
+import { THUNDER } from "./helpers/idp-claims.js";
 
 const ISS = "http://thunder.openchoreo.localhost:8080";
 const USER = { name: "user" as const, audiences: ["aep-console-client"] };
@@ -42,7 +43,7 @@ async function setup() {
   const sign = (claims: Record<string, unknown>, alg = "RS256") =>
     builder(claims, alg).setIssuer(ISS).setExpirationTime("1h").sign(key(alg));
   return {
-    verify: createVerifier({ issuer: ISS, jwksUrl: "http://unused", jwks }),
+    verify: createVerifier({ issuer: ISS, jwksUrl: "http://unused", claims: THUNDER, jwks }),
     sign,
     builder,
     rsKey: rs.privateKey,
@@ -58,14 +59,14 @@ test("user token resolves to kind user (RS256 and ES256), its org read through t
     const v = await verify(t, [USER]);
     assert.equal(v.kind, "user");
     assert.equal(v.claims.sub, "u1");
-    assert.deepEqual(v.claims.org, { handle: "default", id: "ou-1", name: "", handleDeclared: true });
+    assert.deepEqual(v.claims.org, { handle: "default", id: "ou-1", name: "" });
   }
 });
 
-test("the dialect kind is a construction option; thunder is the default", async () => {
+test("the IdP's claims are a construction option", async () => {
   const rs = await generateKeyPair("RS256");
   const jwks = createLocalJWKSet({ keys: [{ ...(await exportJWK(rs.publicKey)), kid: "rs", alg: "RS256" }] });
-  const verify = createVerifier({ issuer: ISS, jwksUrl: "http://unused", kind: "thunder", jwks });
+  const verify = createVerifier({ issuer: ISS, jwksUrl: "http://unused", claims: THUNDER, jwks });
   const t = await new SignJWT({ ...user, aud: "aep-console-client", sub: "u1", ouHandle: "default" })
     .setProtectedHeader({ alg: "RS256", kid: "rs" })
     .setIssuer(ISS)
@@ -128,7 +129,7 @@ test("the ae-studio kind is only its own client_credentials client", async () =>
 test("a token without kid is refused", async () => {
   const rs = await generateKeyPair("RS256");
   const jwks = createLocalJWKSet({ keys: [{ ...(await exportJWK(rs.publicKey)), alg: "RS256" }] });
-  const verify = createVerifier({ issuer: ISS, jwksUrl: "http://unused", jwks });
+  const verify = createVerifier({ issuer: ISS, jwksUrl: "http://unused", claims: THUNDER, jwks });
   const t = await new SignJWT({ ...user, aud: "aep-console-client", sub: "u1" })
     .setProtectedHeader({ alg: "RS256" })
     .setIssuer(ISS)
@@ -189,8 +190,10 @@ test("an unknown kid or an algorithm off the list is refused", async () => {
 });
 
 test("construction fails closed on an empty issuer or JWKS URL", () => {
-  assert.throws(() => createVerifier({ issuer: "", jwksUrl: "http://idp/jwks" }), /issuer/);
-  assert.throws(() => createVerifier({ issuer: ISS, jwksUrl: "" }), /jwksUrl/);
+  assert.throws(() => createVerifier({ issuer: "", jwksUrl: "http://idp/jwks", claims: THUNDER }), /issuer/);
+  assert.throws(() => createVerifier({ issuer: ISS, jwksUrl: "", claims: THUNDER }), /jwksUrl/);
+  // The verifier knows no IdP: an incomplete set of claim names is refused.
+  assert.throws(() => createVerifier({ issuer: ISS, jwksUrl: "http://idp/jwks", claims: { ...THUNDER, orgHandle: "" } }), /orgHandle/);
 });
 
 test("no kinds, a kind without audiences or an empty audience is a wiring error, not a 401", async () => {
@@ -221,13 +224,13 @@ test("an IdP whose keys cannot be fetched is unavailable, not a verdict on the t
   // Nothing listens: the fetch is refused.
   const down = await jwksServer(() => {});
   await down.close();
-  await assert.rejects(createVerifier({ issuer: ISS, jwksUrl: down.url })(t, [USER]), IdpUnavailableError);
+  await assert.rejects(createVerifier({ issuer: ISS, jwksUrl: down.url, claims: THUNDER })(t, [USER]), IdpUnavailableError);
   // A 5xx and a body that is not a key set.
   const broken = await jwksServer((res) => res.writeHead(503).end("busy"));
-  await assert.rejects(createVerifier({ issuer: ISS, jwksUrl: broken.url })(t, [USER]), IdpUnavailableError);
+  await assert.rejects(createVerifier({ issuer: ISS, jwksUrl: broken.url, claims: THUNDER })(t, [USER]), IdpUnavailableError);
   await broken.close();
   const junk = await jwksServer((res) => res.writeHead(200, { "content-type": "application/json" }).end("{}"));
-  await assert.rejects(createVerifier({ issuer: ISS, jwksUrl: junk.url })(t, [USER]), IdpUnavailableError);
+  await assert.rejects(createVerifier({ issuer: ISS, jwksUrl: junk.url, claims: THUNDER })(t, [USER]), IdpUnavailableError);
   await junk.close();
 });
 
@@ -240,7 +243,7 @@ test("a reachable IdP still refuses a token its keys do not verify", async () =>
     ),
   );
   try {
-    const verify = createVerifier({ issuer: ISS, jwksUrl: keys.url });
+    const verify = createVerifier({ issuer: ISS, jwksUrl: keys.url, claims: THUNDER });
     // Signed by a key the IdP does not publish under that kid: bad signature.
     await assert.rejects(verify(await sign({ aud: "aep-console-client", sub: "u1" }), [USER]), UnauthenticatedError);
     // A kid the IdP does not publish at all.
