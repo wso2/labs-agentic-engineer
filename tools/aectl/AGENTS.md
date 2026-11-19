@@ -43,9 +43,9 @@ refused for `imported` (`exclusive`). `idp.issuer` is required for
 it is not set, the issuer is `thunder.public_url`. `idp.org_handle` is always
 required.
 
-`idp.kind` selects how the token readers read a token of the platform IdP:
-`thunder` (the default) or `asgardeo`. It does not select who creates the
-clients.
+`idp.kind` is `thunder` (the default) or `asgardeo`. `aectl` passes it to the
+chart. No reader of tokens reads it: its one effect is on the preset of
+`idp.claims`, below. It does not select who creates the clients.
 
 The `idp.claims` block gives the claim names of the platform IdP
 (`internal/idpclaims`). Each value comes from three layers, in this order:
@@ -57,8 +57,8 @@ value applies to one run: `platform config import` does not store it. An
 environment variable that is set but blank stops the command.
 `platform install`, `platform update` and `platform config test` print each
 value and its layer. With `none`, a required value that is not set stops the
-command. `aectl` passes the values to the chart. The token readers read by
-`idp.kind`.
+command. `aectl` passes the values to the chart. Every reader of the IdP's
+tokens reads by them.
 
 ## Thunder clients and seeds
 
