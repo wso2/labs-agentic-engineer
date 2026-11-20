@@ -1,6 +1,7 @@
 # ADR-0054 — The platform IdP is described by configuration, not by a kind
 
-**Status:** Accepted · 2026-11-11 · rewritten 2026-11-19. The first version
+**Status:** Accepted · 2026-11-11 · rewritten 2026-11-19 · the value
+`idp.clients: asgardeo` added 2026-11-20. The first version
 chose the IdP by a kind (`idp.kind`: `thunder` or `asgardeo`) that code
 branched on
 **Amends:** [ADR-0027](ADR-0027-one-cluster-one-platform-idp.md) ("installed
@@ -16,6 +17,7 @@ dialect and the one-org mapping), `services/aep-api/internal/organization/README
 (`OrgClients`), `tools/aectl/internal/idpclaims` (the presets),
 `tools/aectl/AGENTS.md` and `deployments/README.md` ("Install with Asgardeo
 as the platform IdP", "Use another IdP"),
+`tools/aectl/internal/asgardeo` (the management API client),
 `deployments/scripts/ae-asgardeo-apps.sh`.
 
 ## Context
@@ -27,8 +29,8 @@ Studio client the org's pod signs in as).
 
 A deployment target runs its identity on Asgardeo. There the IdP is a
 service outside the cluster, owned by someone else, and shared with other
-applications. AE cannot be given the right to create or reset clients on it,
-and nothing in the cluster can be installed "for" it.
+applications. No running part of AE can be given the right to create or
+reset clients on it, and nothing in the cluster can be installed "for" it.
 
 ThunderID's claim names and admin API were written into four token readers
 (aep-api, the pod's Go and TypeScript readers, the console), into aep-api's
@@ -82,9 +84,34 @@ Two separate things differ between IdPs, and the kind tied them together:
 3. **Who creates the clients is its own setting: `idp.clients`.** `thunder`
    (the default): `aectl` registers them on a ThunderID it administers and
    generates their secrets. `imported`: the IdP's admin created them and
-   imports their secrets, and `aectl` administers nothing on the IdP. This
-   is the one place a way of creating clients is named, because creating a
-   client goes through each IdP's own admin API.
+   imports their secrets, and `aectl` administers nothing on the IdP.
+   `asgardeo`: `aectl` creates them in an Asgardeo organization through its
+   Application Management API and generates their secrets. This is the one
+   place a way of creating clients is named, because creating a client goes
+   through each IdP's own admin API.
+
+   With `asgardeo`, the organization's admin gives `aectl` the credential of
+   an admin application for one command (`platform install`,
+   `platform sync-clients`), in two files. `aectl` holds it in memory for
+   that command. It is not stored in the cluster or the config, so no
+   running service has management rights on the organization. The admin
+   application needs the scopes `internal_application_mgt_view` and
+   `internal_application_mgt_create`, and
+   `internal_application_mgt_client_secret_create` to replace a secret.
+
+   Asgardeo's API sets how a secret moves. An application is created with
+   the secret `aectl` generated, so the vault is the source, as on
+   ThunderID. An application that exists does not show its secret and
+   cannot be given one (an update with a secret is refused). So `aectl`
+   checks a secret by asking the organization for a token with it. When the
+   token is refused, Asgardeo can only regenerate the secret: it chooses the
+   new value, the old one stops working at once, and `aectl` writes the new
+   value over the vault path. `aectl` does that only with
+   `--replace-client-secrets`, because the client ids are fixed: two
+   installs that share one organization would otherwise take each other's
+   secrets away without a warning. An application that exists is never
+   rewritten: `aectl` reports each setting that is not what AE needs and
+   stops.
 
 4. **aep-api administers no IdP.** The org's two clients are created before
    aep-api runs, by `aectl` or by the IdP's admin, and aep-api is given
@@ -113,13 +140,15 @@ Two separate things differ between IdPs, and the kind tied them together:
 
 7. **The second tier stays ThunderID.** The environment IdPs are still
    ThunderIDs AE installs and administers. They are told to trust the
-   platform IdP only where `aectl` registers clients on it, because that
-   trust serves Agent Manager, which needs its clients registered there.
+   platform IdP only where it is a ThunderID `aectl` administers, because
+   that trust serves Agent Manager, which needs its clients registered
+   there.
 
 ## Consequences
 
 - An IdP other than ThunderID or Asgardeo is configured, not coded: its
-  admin creates the five clients, and the config names its claims. That is
+  admin creates the five clients (`idp.clients: imported`), and the config
+  names its claims. That is
   configurable, not supported: AE has been run against two IdPs, and what a
   third needs beyond its claim names is only known for those two.
 - The IdP has to state the org and the caller type in top-level text claims.
@@ -133,9 +162,15 @@ Two separate things differ between IdPs, and the kind tied them together:
   the one-org mapping it names the install's org. A token issued before the
   org was recreated at the IdP can put the old id back until it expires
   (issue #974).
-- With `idp.clients: imported` an install lacks what needs clients `aectl`
-  registers on a ThunderID: the in-cluster ThunderID itself, Agent Manager,
-  and `aectl sre install`.
+- With `idp.clients: imported` or `asgardeo` an install lacks what needs
+  clients `aectl` registers on a ThunderID: the in-cluster ThunderID itself,
+  Agent Manager, and `aectl sre install`. With `asgardeo`, `aectl` creates
+  AE's five clients only. OpenChoreo's own clients in the organization are
+  the cluster owner's.
+- With `idp.clients: asgardeo`, a new cluster on an organization that has
+  the applications starts with an empty vault, so its install needs
+  `--replace-client-secrets`. The secrets the earlier cluster held then
+  stop working.
 - Settings and stored names every IdP has carry the IdP's role and not a
   product's (`idp.issuer`, `idp.jwksURL`, the vault path family
   `aep/idp-clients/`, the Secret `aep-idp-client-secrets`). Names that
@@ -174,9 +209,15 @@ Two separate things differ between IdPs, and the kind tied them together:
 - **aep-api registering clients on Asgardeo through the management API.** It
   works (a caller-chosen client id and secret are honoured), but a running
   service would hold application-management rights on a tenant shared with
-  other applications. Not rejected, and not built: `aectl` creating them at
-  install with a credential the operator supplies for that run, never stored
-  in the cluster (a later value of `idp.clients`).
+  other applications. `aectl` creates them instead, with a credential for
+  one command (decision 3).
+- **Replacing a mismatched Asgardeo secret without a flag.** It makes a new
+  cluster install in one step, and lets a second install on the same
+  organization break the first without a warning.
+- **`aectl` deleting and recreating an Asgardeo application to give it a
+  chosen secret.** It keeps the vault as the only source, but it needs the
+  right to delete applications, and it removes whatever the admin set on
+  the application by hand.
 - **Keeping client creation on demand in aep-api for ThunderID.** It needs
   the admin credential in a running service and a second path beside the
   pre-created one.
