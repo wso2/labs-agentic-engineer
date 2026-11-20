@@ -30,7 +30,9 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/wso2/aep/aectl/internal/asgardeo"
 )
@@ -480,53 +482,199 @@ func defOf(t *testing.T, clientID string) idpClientDef {
 	return idpClientDef{}
 }
 
-// After Asgardeo issued new secrets the cluster's Secrets are synced once,
-// and the Deployments that read a replaced secret are restarted: a running
-// pod keeps the value it started with. A Deployment that reads another
-// Secret is left alone. With nothing replaced, nothing is synced.
-func TestApplyReplacedClientSecrets_SyncsAndRestartsTheReaders(t *testing.T) {
+// orgSecret is the Secret of the org's two clients, holding value for both.
+func orgSecret(value string) *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "wso2-aep", Name: orgClientSecretsName},
+		Data: map[string][]byte{
+			"PLATFORM_IDP_ORG_PUBLISHER_SECRET": []byte(value),
+			"PLATFORM_IDP_ORG_STUDIO_SECRET":    []byte(value),
+		},
+	}
+}
+
+func recordedChecksum(t *testing.T, c *fake.Clientset, name string) string {
+	t.Helper()
+	d, err := c.AppsV1().Deployments("wso2-aep").Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d.Annotations[clientSecretChecksumAnnotation(orgClientSecretsName)]
+}
+
+// setOrgSecret is the cluster catching up with the vault: the Secret takes
+// value.
+func setOrgSecret(t *testing.T, c *fake.Clientset, value string) {
+	t.Helper()
+	if _, err := c.CoreV1().Secrets("wso2-aep").Update(context.Background(), orgSecret(value), metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// replaceRun is a cluster where aep-api reads the org's client Secret and
+// the console reads another one, with the checksums recorded as a run
+// records them before it changes anything.
+func replaceRun(t *testing.T) *fake.Clientset {
+	t.Helper()
 	setAsgardeoClientsConfig(t)
 	c := fake.NewSimpleClientset(
+		orgSecret("old"),
 		deploymentReading("aep-api", orgClientSecretsName),
 		deploymentReading("aep-console", "some-other-secret"),
 	)
-	syncs := 0
-	sync := func(context.Context) (map[string]string, error) { syncs++; return nil, nil }
+	if err := recordClientSecretChecksums(context.Background(), c, "wso2-aep", []string{orgClientSecretsName}); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
 
-	if err := applyReplacedClientSecrets(context.Background(), c, "wso2-aep", nil, sync); err != nil || syncs != 0 {
+// The checksum changes with a value and is a short fingerprint, not the
+// value.
+func TestSecretChecksum(t *testing.T) {
+	a := secretChecksum(map[string][]byte{"K1": []byte("one"), "K2": []byte("two")})
+	if b := secretChecksum(map[string][]byte{"K2": []byte("two"), "K1": []byte("one")}); a != b {
+		t.Errorf("the checksum depends on the order of the keys: %s, %s", a, b)
+	}
+	if b := secretChecksum(map[string][]byte{"K1": []byte("one"), "K2": []byte("TWO")}); a == b {
+		t.Error("a changed value gives the same checksum")
+	}
+	if b := secretChecksum(map[string][]byte{"K1": []byte("onetwo"), "K2": nil}); a == b {
+		t.Error("a value moved between keys gives the same checksum")
+	}
+	if len(a) != 16 || strings.Contains(a, "one") {
+		t.Errorf("checksum %q, want 16 characters that hold no value", a)
+	}
+}
+
+// Before a run changes anything, each reader of a client Secret is recorded
+// with the Secret's checksum. Recording restarts no pod, and a checksum that
+// is already there is kept: it says what the pods started with.
+func TestRecordClientSecretChecksums(t *testing.T) {
+	c := replaceRun(t)
+	want := secretChecksum(orgSecret("old").Data)
+	if got := recordedChecksum(t, c, "aep-api"); got != want {
+		t.Fatalf("recorded %q, want %q", got, want)
+	}
+	if restartedAt(t, c, "aep-api") != "" {
+		t.Error("recording a checksum restarted the Deployment")
+	}
+	if got := recordedChecksum(t, c, "aep-console"); got != "" {
+		t.Errorf("a Deployment that does not read the Secret was recorded: %q", got)
+	}
+	setOrgSecret(t, c, "new")
+	if err := recordClientSecretChecksums(context.Background(), c, "wso2-aep", []string{orgClientSecretsName}); err != nil {
+		t.Fatal(err)
+	}
+	if got := recordedChecksum(t, c, "aep-api"); got != want {
+		t.Errorf("a recorded checksum was overwritten: %q", got)
+	}
+}
+
+// After Asgardeo issued new secrets the cluster's Secrets are synced once,
+// and the Deployments that read a replaced secret are restarted: a running
+// pod keeps the value it started with. A Deployment that reads another
+// Secret is left alone. A run that replaced nothing, on a cluster where
+// nothing is stale, syncs nothing and restarts nothing.
+func TestReconcileClientSecretReaders_SyncsAndRestartsTheReaders(t *testing.T) {
+	c := replaceRun(t)
+	ctx, names := context.Background(), []string{orgClientSecretsName}
+	syncs := 0
+	sync := func(context.Context) (map[string]string, error) {
+		syncs++
+		setOrgSecret(t, c, "new")
+		return nil, nil
+	}
+
+	if err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, nil, sync); err != nil || syncs != 0 {
 		t.Fatalf("nothing replaced: err %v, syncs %d", err, syncs)
 	}
+	if restartedAt(t, c, "aep-api") != "" {
+		t.Fatal("a Deployment was restarted though no secret changed")
+	}
+
 	replaced := []idpClientDef{defOf(t, "aep-publisher-default"), defOf(t, "ae-studio-default")}
-	if err := applyReplacedClientSecrets(context.Background(), c, "wso2-aep", replaced, sync); err != nil {
+	if err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, replaced, sync); err != nil {
 		t.Fatal(err)
 	}
 	if syncs != 1 {
-		t.Errorf("synced %d times, want once for the two secrets of one Secret", syncs)
+		t.Errorf("synced %d times, want once", syncs)
 	}
-	if restartedAt(t, c, "aep-api") == "" {
-		t.Error("the Deployment that reads the replaced secrets was not restarted")
+	if restartedAt(t, c, "aep-api") == "" || recordedChecksum(t, c, "aep-api") != secretChecksum(orgSecret("new").Data) {
+		t.Error("the reader of the replaced secrets was not restarted and recorded with the new checksum")
 	}
 	if restartedAt(t, c, "aep-console") != "" {
 		t.Error("a Deployment that reads another Secret was restarted")
 	}
+	failing := func(context.Context) (map[string]string, error) { return nil, errors.New("no cluster") }
+	if err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, replaced, failing); err == nil {
+		t.Error("a failed sync after a replace is not reported")
+	}
 }
 
-// A Secret that did not sync still holds the old value, so its readers are
-// not restarted: a restart would start them with the old secret again.
-func TestApplyReplacedClientSecrets_DoesNotRestartReadersOfAnUnsyncedSecret(t *testing.T) {
-	setAsgardeoClientsConfig(t)
-	c := fake.NewSimpleClientset(deploymentReading("aep-api", orgClientSecretsName))
-	sync := func(context.Context) (map[string]string, error) {
-		return map[string]string{orgClientSecretsName: "not refreshed in 90s"}, nil
+// A restart that fails leaves the Deployment recorded with the old checksum.
+// The next run replaces nothing, since the vault's secret now works, and
+// still restarts the Deployment: its checksum is not the Secret's.
+func TestReconcileClientSecretReaders_TheNextRunCompletesAFailedRestart(t *testing.T) {
+	c := replaceRun(t)
+	ctx, names := context.Background(), []string{orgClientSecretsName}
+	sync := func(context.Context) (map[string]string, error) { setOrgSecret(t, c, "new"); return nil, nil }
+
+	failPatch := true
+	c.PrependReactor("patch", "deployments", func(k8stesting.Action) (bool, runtime.Object, error) {
+		if failPatch {
+			return true, nil, errors.New("the API server is not reachable")
+		}
+		return false, nil, nil
+	})
+	err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, []idpClientDef{defOf(t, "ae-studio-default")}, sync)
+	if err == nil || !strings.Contains(err.Error(), "sync-clients") {
+		t.Fatalf("err = %v, want the failed restart with the command to run again", err)
 	}
-	if err := applyReplacedClientSecrets(context.Background(), c, "wso2-aep", []idpClientDef{defOf(t, "ae-studio-default")}, sync); err != nil {
+	if restartedAt(t, c, "aep-api") != "" || recordedChecksum(t, c, "aep-api") != secretChecksum(orgSecret("old").Data) {
+		t.Fatal("the Deployment is recorded as current though its restart failed")
+	}
+
+	failPatch = false
+	neverSync := func(context.Context) (map[string]string, error) {
+		t.Error("the next run synced though it replaced nothing")
+		return nil, nil
+	}
+	if err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, nil, neverSync); err != nil {
 		t.Fatal(err)
 	}
-	if restartedAt(t, c, "aep-api") != "" {
-		t.Error("the reader of an unsynced Secret was restarted")
+	if restartedAt(t, c, "aep-api") == "" || recordedChecksum(t, c, "aep-api") != secretChecksum(orgSecret("new").Data) {
+		t.Error("the next run did not restart the Deployment that was left behind")
 	}
-	failing := func(context.Context) (map[string]string, error) { return nil, errors.New("no cluster") }
-	if err := applyReplacedClientSecrets(context.Background(), c, "wso2-aep", []idpClientDef{defOf(t, "ae-studio-default")}, failing); err == nil {
-		t.Error("a failed sync after a replace is not reported")
+}
+
+// A replaced secret whose Secret did not sync is an error, not a success:
+// Asgardeo refuses the old value and the pods still hold it. Nothing is
+// restarted with the old value. The next run, once the Secret has synced,
+// restarts the readers.
+func TestReconcileClientSecretReaders_AnUnsyncedReplacedSecretIsAnError(t *testing.T) {
+	c := replaceRun(t)
+	ctx, names := context.Background(), []string{orgClientSecretsName}
+	unsynced := func(context.Context) (map[string]string, error) {
+		return map[string]string{orgClientSecretsName: "not refreshed in 90s"}, nil
+	}
+	err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, []idpClientDef{defOf(t, "ae-studio-default")}, unsynced)
+	if err == nil {
+		t.Fatal("an unsynced replaced secret is reported as a success")
+	}
+	for _, want := range []string{"ae-studio-default", orgClientSecretsName, "not refreshed in 90s", "--idp-admin-client-id-file"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error lacks %q: %v", want, err)
+		}
+	}
+	if restartedAt(t, c, "aep-api") != "" {
+		t.Error("the reader of an unsynced Secret was restarted with the old value")
+	}
+
+	setOrgSecret(t, c, "new") // the next run's own sync brings the value
+	if err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, nil, unsynced); err != nil {
+		t.Fatal(err)
+	}
+	if restartedAt(t, c, "aep-api") == "" {
+		t.Error("the next run did not restart the reader of the Secret that has now synced")
 	}
 }

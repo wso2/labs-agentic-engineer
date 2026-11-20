@@ -453,6 +453,14 @@ What `aectl` does with the applications:
   working at once.** Do not pass the flag while another install uses the
   same organization: import the secret that install holds instead
   (`aectl platform secret import --path aep/idp-clients/<name>`).
+- A pod takes a secret only when it starts. So `aectl` records, on each
+  Deployment that reads a client Secret, a checksum of the Secret as its
+  pods started with it (the annotation
+  `aep.wso2.com/client-secret-checksum.<Secret>`), and every run restarts a
+  Deployment whose checksum is no longer the Secret's. If a run stops
+  between the write to the vault and the restart, or the Secret does not
+  sync in time, the command ends with an error. Run it again: the next run
+  completes the restart.
 
 OpenChoreo's own clients (its workload publisher, for example) are not AE's
 and `aectl` does not create them.
@@ -896,7 +904,13 @@ Never `bao kv get` a multi-field document without `-field=<name>` piped to
    not stop and start the cluster to fix it: that wipes OpenBao again.
 7. **Sync.** Run `aectl platform sync-clients`: it force-syncs the platform
    ExternalSecrets, then sets the Postgres role and the Thunder clients from
-   them.
+   them. On an install with `idp.clients: asgardeo` the command needs the
+   admin credential and stops without it:
+
+   ```bash
+   aectl platform sync-clients \
+     --idp-admin-client-id-file <file> --idp-admin-client-secret-file <file>
+   ```
 
 ## Upgrading to write-only secrets
 

@@ -113,6 +113,13 @@ Two separate things differ between IdPs, and the kind tied them together:
    rewritten: `aectl` reports each setting that is not what AE needs and
    stops.
 
+   A regenerated secret reaches a pod only when the pod starts, and a later
+   run cannot see from the vault that a pod still holds the old one. So
+   `aectl` records on each Deployment a checksum of the client Secret its
+   pods started with, and every run restarts a Deployment whose checksum is
+   no longer the Secret's. A run that failed after the write to the vault
+   is so completed by the next run.
+
 4. **aep-api administers no IdP.** The org's two clients are created before
    aep-api runs, by `aectl` or by the IdP's admin, and aep-api is given
    their secrets as settings. It writes them into the org's references on

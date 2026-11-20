@@ -30,17 +30,32 @@ package cmd
 //     one it has. aectl asks the organization for a token with the vault's
 //     secret. When that is refused, and only with --replace-client-secrets,
 //     Asgardeo issues a new secret and aectl writes it over the vault path.
+//
+// A replaced secret reaches a pod only when the pod starts. So aectl records,
+// on each Deployment that reads a client Secret, a checksum of the Secret as
+// its pods started with it, and every run restarts a Deployment whose
+// checksum is no longer the Secret's. A run that failed between the write to
+// the vault and the restart is so completed by the next run.
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/wso2/aep/aectl/internal/asgardeo"
@@ -274,8 +289,8 @@ func ensureAsgardeoClients(
 // chart's Secrets have synced, before the wait for pods. admin is the client
 // preflightAsgardeo returned, and store writes a replaced secret to the
 // vault. skipClients (clientID -> reason) are left untouched with a warning.
-// After a secret was replaced it brings the cluster in line
-// (applyReplacedClientSecrets).
+// It ends by bringing the Deployments in line with the client Secrets
+// (reconcileClientSecretReaders), whether or not the clients were set up.
 func doAsgardeoSetup(ctx context.Context, k8sClient *kubernetes.Clientset, platformNamespace, consoleURL string, admin asgardeoAdmin, store vaultPut, skipClients map[string]string) error {
 	secretsByName, err := waitForClientSecrets(ctx, k8sClient, platformNamespace, skipClients)
 	if err != nil {
@@ -284,17 +299,25 @@ func doAsgardeoSetup(ctx context.Context, k8sClient *kubernetes.Clientset, platf
 	for id, reason := range skipClients {
 		ui.Warn(fmt.Sprintf("Skipped %s: %s", id, reason))
 	}
+	// The Secrets that were read: those of the clients this run sets up.
+	secretNames := slices.Sorted(maps.Keys(secretsByName))
+	// Before anything changes, each Deployment gets the checksum of the
+	// Secret as it is now, if it has none: its pods started with that value.
+	if err := recordClientSecretChecksums(ctx, k8sClient, platformNamespace, secretNames); err != nil {
+		return err
+	}
 	replaced, err := ensureAsgardeoClients(ctx, admin, clientsToRegister(asgardeoClients(), secretsByName, skipClients),
 		secretsByName, consoleURL, replaceClientSecrets, store,
 		func(clientID, state string) { ui.Success(fmt.Sprintf("%s (%s)", clientID, state)) })
-	// A replaced secret is in the vault whether or not the run failed later:
-	// the cluster is brought in line either way.
-	applyErr := applyReplacedClientSecrets(ctx, k8sClient, platformNamespace, replaced,
+	// A replaced secret is in the vault whether or not the run failed later,
+	// and an earlier run may have left a Deployment behind: the cluster is
+	// brought in line either way.
+	reconcileErr := reconcileClientSecretReaders(ctx, k8sClient, platformNamespace, secretNames, replaced,
 		func(ctx context.Context) (map[string]string, error) {
 			return syncPlatformExternalSecrets(ctx, platformNamespace)
 		})
 	if err == nil {
-		err = applyErr
+		err = reconcileErr
 	}
 	return err
 }
@@ -322,52 +345,161 @@ func lazyVaultPut() (put vaultPut, stop func()) {
 	return put, stop
 }
 
-// applyReplacedClientSecrets brings the cluster in line with the secrets
-// Asgardeo issued this run: sync makes ESO re-read the vault (it returns the
-// Secrets that did not catch up, Secret name -> reason), and every
-// Deployment that takes one of those secrets from its Secret is restarted,
-// since a running pod keeps the value it started with. A Secret that did not
-// sync is not followed by a restart: its Deployments are named with the
-// command that restarts them, because a later run finds the vault right and
-// restarts nothing. It ends with the warning for an org client's new secret,
-// which an org that already connected GitHub still has to pick up.
-func applyReplacedClientSecrets(ctx context.Context, c kubernetes.Interface, platformNamespace string, replaced []idpClientDef, sync func(ctx context.Context) (map[string]string, error)) error {
-	if len(replaced) == 0 {
-		return nil
+// clientSecretChecksumAnnotation is the annotation, on a Deployment, that
+// holds the checksum of the client Secret secretName as the Deployment's pods
+// started with it.
+func clientSecretChecksumAnnotation(secretName string) string {
+	return "aep.wso2.com/client-secret-checksum." + secretName
+}
+
+// secretChecksum is a short fingerprint of a Secret's data: enough to see
+// that a value changed, and nothing a value can be computed from.
+func secretChecksum(data map[string][]byte) string {
+	h := sha256.New()
+	for _, k := range slices.Sorted(maps.Keys(data)) {
+		_, _ = fmt.Fprintf(h, "%d:%s=%d:", len(k), k, len(data[k]))
+		_, _ = h.Write(data[k])
 	}
-	unsynced, err := sync(ctx)
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// readersOfSecret is the Deployments in namespace whose pods take env from
+// the Secret name, sorted by name.
+func readersOfSecret(ctx context.Context, c kubernetes.Interface, namespace, name string) ([]appsv1.Deployment, error) {
+	deps, err := c.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return fmt.Errorf("sync platform Secrets after replacing client secrets: %w", err)
+		return nil, fmt.Errorf("list Deployments in %s: %w", namespace, err)
 	}
-	var seeded []seededSecret
-	done := map[string]bool{}
-	for _, def := range replaced {
-		seeded = append(seeded, seededSecret{path: def.vaultPath()})
-		name := def.secretNameOrDefault()
-		if done[name] {
-			continue
+	var out []appsv1.Deployment
+	for _, d := range deps.Items {
+		spec := d.Spec.Template.Spec
+		if containersReadSecret(append(append([]corev1.Container{}, spec.InitContainers...), spec.Containers...), name) {
+			out = append(out, d)
 		}
-		done[name] = true
-		if reason, ok := unsynced[name]; ok {
-			deployments, err := deploymentsReadingSecret(ctx, c, platformNamespace, name)
-			if err != nil {
-				return err
-			}
-			msg := fmt.Sprintf("Secret %s did not sync (%s), so it still holds the old client secret. Run '%s' until it syncs", name, reason, syncClientsCommand())
-			if len(deployments) > 0 {
-				msg += fmt.Sprintf(", then restart what reads it: kubectl -n %s rollout restart deployment %s", platformNamespace, strings.Join(deployments, " "))
-			}
-			ui.Warn(msg)
-			continue
+	}
+	slices.SortFunc(out, func(a, b appsv1.Deployment) int { return strings.Compare(a.Name, b.Name) })
+	return out, nil
+}
+
+// patchDeployment merge-patches a Deployment with patch.
+func patchDeployment(ctx context.Context, c kubernetes.Interface, namespace, name string, patch map[string]any) error {
+	raw, err := json.Marshal(patch)
+	if err != nil {
+		return err
+	}
+	if _, err := c.AppsV1().Deployments(namespace).Patch(ctx, name, types.StrategicMergePatchType, raw, metav1.PatchOptions{}); err != nil {
+		return fmt.Errorf("patch Deployment %s/%s: %w", namespace, name, err)
+	}
+	return nil
+}
+
+// recordClientSecretChecksums writes, on each Deployment that reads one of
+// the Secrets secretNames and has no checksum for it, the checksum of the
+// Secret as it is now. It changes no pod. It runs before a run changes a
+// secret, so a Deployment aectl sees for the first time is recorded with the
+// value its pods started with.
+func recordClientSecretChecksums(ctx context.Context, c kubernetes.Interface, namespace string, secretNames []string) error {
+	for _, name := range secretNames {
+		sec, err := c.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("read Secret %s/%s: %w", namespace, name, err)
 		}
-		deployments, err := restartDeploymentsReadingSecret(ctx, c, platformNamespace, name)
+		readers, err := readersOfSecret(ctx, c, namespace, name)
 		if err != nil {
 			return err
 		}
-		if len(deployments) > 0 {
-			ui.Detail(fmt.Sprintf("Restarted %s: they read Secret %s", strings.Join(deployments, ", "), name))
+		key := clientSecretChecksumAnnotation(name)
+		for _, d := range readers {
+			if d.Annotations[key] != "" {
+				continue
+			}
+			if err := patchDeployment(ctx, c, namespace, d.Name, map[string]any{
+				"metadata": map[string]any{"annotations": map[string]string{key: secretChecksum(sec.Data)}},
+			}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// restartStaleSecretReaders restarts each Deployment whose recorded checksum
+// of one of the Secrets secretNames is not the Secret's checksum now, and
+// records the new one. The restart and the record are one patch, so a
+// Deployment is never recorded as current without its restart. It returns
+// the Deployments it restarted.
+func restartStaleSecretReaders(ctx context.Context, c kubernetes.Interface, namespace string, secretNames []string) ([]string, error) {
+	var restarted []string
+	for _, name := range secretNames {
+		sec, err := c.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return restarted, fmt.Errorf("read Secret %s/%s: %w", namespace, name, err)
+		}
+		readers, err := readersOfSecret(ctx, c, namespace, name)
+		if err != nil {
+			return restarted, err
+		}
+		key, sum := clientSecretChecksumAnnotation(name), secretChecksum(sec.Data)
+		for _, d := range readers {
+			if d.Annotations[key] == sum {
+				continue
+			}
+			if err := patchDeployment(ctx, c, namespace, d.Name, map[string]any{
+				"metadata": map[string]any{"annotations": map[string]string{key: sum}},
+				"spec": map[string]any{"template": map[string]any{"metadata": map[string]any{
+					"annotations": map[string]string{"kubectl.kubernetes.io/restartedAt": time.Now().Format(time.RFC3339)},
+				}}},
+			}); err != nil {
+				return restarted, err
+			}
+			if !slices.Contains(restarted, d.Name) {
+				restarted = append(restarted, d.Name)
+			}
+		}
+	}
+	return restarted, nil
+}
+
+// reconcileClientSecretReaders brings the Deployments in line with the
+// client Secrets secretNames at the end of a run.
+//
+// Where Asgardeo issued new secrets this run (replaced), sync first makes ESO
+// re-read the vault; it returns the Secrets that did not catch up (Secret
+// name -> reason). Then every Deployment whose recorded checksum is not its
+// Secret's is restarted, since a running pod keeps the value it started
+// with. That covers this run's secrets and a restart an earlier run did not
+// reach.
+//
+// A replaced secret whose Secret did not sync is an error: Asgardeo already
+// refuses the old value, and the pods still hold it. The next run completes
+// it: the Secret syncs, its checksum changes, and the Deployments restart.
+func reconcileClientSecretReaders(ctx context.Context, c kubernetes.Interface, platformNamespace string, secretNames []string, replaced []idpClientDef, sync func(ctx context.Context) (map[string]string, error)) error {
+	var unsynced map[string]string
+	if len(replaced) > 0 {
+		var err error
+		if unsynced, err = sync(ctx); err != nil {
+			return fmt.Errorf("sync platform Secrets after replacing client secrets: %w", err)
+		}
+	}
+	restarted, err := restartStaleSecretReaders(ctx, c, platformNamespace, secretNames)
+	if len(restarted) > 0 {
+		ui.Detail("Restarted " + strings.Join(restarted, ", ") + ": a client secret they read has changed")
+	}
+	if err != nil {
+		return fmt.Errorf("%w. Run '%s' again: it restarts what still holds an old client secret", err, syncClientsCommand())
+	}
+
+	var seeded []seededSecret
+	var pending []string
+	for _, def := range replaced {
+		seeded = append(seeded, seededSecret{path: def.vaultPath()})
+		if reason, ok := unsynced[def.secretNameOrDefault()]; ok {
+			pending = append(pending, fmt.Sprintf("%s (Secret %s: %s)", def.clientID, def.secretNameOrDefault(), reason))
 		}
 	}
 	warnRegeneratedOrgClientSecrets(seeded)
+	if len(pending) > 0 {
+		return fmt.Errorf("the cluster Secret did not sync after Asgardeo issued a new secret for %d client(s): %s. The pods that read it still hold the old secret, which Asgardeo refuses. Run '%s' again: it syncs the Secret and restarts what reads it", len(pending), strings.Join(pending, "; "), syncClientsCommand())
+	}
 	return nil
 }

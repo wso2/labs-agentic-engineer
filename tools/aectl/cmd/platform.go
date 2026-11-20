@@ -24,7 +24,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1637,18 +1636,14 @@ var runPostgresPasswordCheck = func(ctx context.Context, namespace, podName, pas
 // deploymentsReadingSecret names the Deployments in namespace whose pods take
 // env from the Secret name (a secretKeyRef or an envFrom), sorted.
 func deploymentsReadingSecret(ctx context.Context, c kubernetes.Interface, namespace, name string) ([]string, error) {
-	deps, err := c.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
+	readers, err := readersOfSecret(ctx, c, namespace, name)
 	if err != nil {
-		return nil, fmt.Errorf("list Deployments in %s: %w", namespace, err)
+		return nil, err
 	}
-	var out []string
-	for _, d := range deps.Items {
-		spec := d.Spec.Template.Spec
-		if containersReadSecret(append(append([]corev1.Container{}, spec.InitContainers...), spec.Containers...), name) {
-			out = append(out, d.Name)
-		}
+	out := make([]string, 0, len(readers))
+	for _, d := range readers {
+		out = append(out, d.Name)
 	}
-	sort.Strings(out)
 	return out, nil
 }
 
