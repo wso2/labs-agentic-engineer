@@ -194,10 +194,11 @@ What differs:
   stale Secrets. The patch records the checksums and puts them into the pod
   template, so the restart and the record are one change. Thus a run that
   stopped after the write to the vault is completed by the next run. A
-  replaced secret whose Secret did not sync is an error. In
-  `platform sync-clients`, `waitForRollouts` then waits until each reader
-  has rolled out, and a rollout that does not finish is an error.
-  `platform install` waits for all pods itself.
+  replaced secret whose Secret did not sync is an error. `waitForRollouts`
+  then waits until the Deployments have rolled out, and a rollout that does
+  not finish is an error. `platform sync-clients` waits for each reader, in
+  every run (`syncClientsRolloutWait`). `platform install` waits for those
+  that it restarted (`installRolloutWait`), before its wait for all pods.
 - **GitHub reconnect.** A changed secret of one of the org's clients needs
   a GitHub reconnect, because only aep-api writes the secret that the org
   stores. `orgClientSecretWarning` says so. `reconcileClientSecretReaders`
