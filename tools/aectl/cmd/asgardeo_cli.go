@@ -291,10 +291,8 @@ func ensureAsgardeoClients(
 // vault. skipClients (clientID -> reason) are left untouched with a warning.
 // It ends by bringing the Deployments in line with the client Secrets
 // (reconcileClientSecretReaders), whether or not the clients were set up.
-// waitRollouts says whether it then waits for their restart to finish:
-// `platform install` waits for every pod itself right after, and passes
-// false.
-func doAsgardeoSetup(ctx context.Context, k8sClient *kubernetes.Clientset, platformNamespace, consoleURL string, admin asgardeoAdmin, store vaultPut, skipClients map[string]string, waitRollouts bool) error {
+// rollout says which restarts it then waits for, and how long.
+func doAsgardeoSetup(ctx context.Context, k8sClient *kubernetes.Clientset, platformNamespace, consoleURL string, admin asgardeoAdmin, store vaultPut, skipClients map[string]string, rollout rolloutWait) error {
 	secretsByName, err := waitForClientSecrets(ctx, k8sClient, platformNamespace, skipClients)
 	if err != nil {
 		return err
@@ -319,12 +317,11 @@ func doAsgardeoSetup(ctx context.Context, k8sClient *kubernetes.Clientset, platf
 		sync: func(ctx context.Context) (map[string]string, error) {
 			return syncPlatformExternalSecrets(ctx, platformNamespace)
 		},
-		warn: ui.Warn,
-	}
-	if waitRollouts {
-		steps.waitRollouts = func(ctx context.Context, names []string) error {
-			return waitForRollouts(ctx, k8sClient, platformNamespace, names, clientSecretRolloutTimeout, 3*time.Second)
-		}
+		waitRollouts: func(ctx context.Context, names []string) error {
+			return waitForRollouts(ctx, k8sClient, platformNamespace, names, rollout.timeout, 3*time.Second)
+		},
+		everyReader: rollout.everyReader,
+		warn:        ui.Warn,
 	}
 	reconcileErr := reconcileClientSecretReaders(ctx, k8sClient, platformNamespace, secretNames, replaced, steps)
 	if err == nil {
@@ -545,8 +542,30 @@ func restartStaleSecretReaders(ctx context.Context, c kubernetes.Interface, name
 	return out, nil
 }
 
-// clientSecretRolloutTimeout bounds the wait for a restarted Deployment.
-const clientSecretRolloutTimeout = 3 * time.Minute
+// rolloutWait says which rollouts a client setup waits for at its end.
+type rolloutWait struct {
+	// everyReader waits for every Deployment that reads a client Secret,
+	// those the run did not restart too. Otherwise only the ones the run
+	// restarted are waited for.
+	everyReader bool
+	// timeout bounds the wait.
+	timeout time.Duration
+}
+
+// syncClientsRolloutWait is the wait of `platform sync-clients`: every
+// reader, in every run. On an installed platform a reader that has not
+// rolled out is one whose earlier restart did not finish, and the run must
+// not end on a success line over it.
+var syncClientsRolloutWait = rolloutWait{everyReader: true, timeout: 3 * time.Minute}
+
+// installRolloutWait is the wait of `platform install`: the Deployments the
+// run restarted, within the install's own budget for pods. A first install
+// restarts nothing, so it waits for nothing here: its pods may still be
+// pulling images, which the wait for all pods that follows allows for. That
+// wait alone is not enough after a restart: it looks at the pods that
+// exist, and right after a restart request the new pod may not exist yet,
+// so the old pod, with the old secret, would pass as "all pods ready".
+var installRolloutWait = rolloutWait{everyReader: false, timeout: platformPodsReadyTimeout}
 
 // rolledOut reports whether every pod of d is of its current pod template
 // and available: no pod of an older template is left.
@@ -595,9 +614,12 @@ type reconcileSteps struct {
 	// sync makes ESO re-read the vault and returns the Secrets that did not
 	// catch up (Secret name -> reason).
 	sync func(ctx context.Context) (map[string]string, error)
-	// waitRollouts waits until the Deployments names have rolled out. nil
-	// where the caller waits for the pods itself (`platform install`).
+	// waitRollouts waits until the Deployments names have rolled out.
 	waitRollouts func(ctx context.Context, names []string) error
+	// everyReader makes the run wait for every reader of the Secrets. If it
+	// is not set, the run waits only for the Deployments it restarted
+	// (rolloutWait).
+	everyReader bool
 	// warn prints a warning.
 	warn func(msg string)
 }
@@ -609,9 +631,9 @@ type reconcileSteps struct {
 // re-read the vault. Then every Deployment whose recorded checksum is not
 // its Secret's is restarted, since a running pod keeps the value it started
 // with. That covers this run's secrets and a restart an earlier run did not
-// reach. Then it waits until every reader of the Secrets has rolled out,
-// those it did not restart too: a restart an earlier run asked for may not
-// have finished.
+// reach. Then it waits until the Deployments have rolled out: the ones it
+// restarted, or every reader of the Secrets (st.everyReader), since a
+// restart an earlier run asked for may not have finished.
 //
 // A replaced secret whose Secret did not sync is an error: Asgardeo already
 // refuses the old value, and the pods still hold it. The next run completes
@@ -661,8 +683,12 @@ func reconcileClientSecretReaders(ctx context.Context, c kubernetes.Interface, p
 	if len(pending) > 0 {
 		return fmt.Errorf("the cluster Secret did not sync after Asgardeo issued a new secret for %d client(s): %s. The pods that read it still hold the old secret, which Asgardeo refuses. Run '%s' again: it syncs the Secret and restarts what reads it", len(pending), strings.Join(pending, "; "), syncClientsCommand())
 	}
-	if st.waitRollouts != nil && len(found.readers) > 0 {
-		return st.waitRollouts(ctx, found.readers)
+	wait := found.restarted
+	if st.everyReader {
+		wait = found.readers
+	}
+	if len(wait) > 0 {
+		return st.waitRollouts(ctx, wait)
 	}
 	return nil
 }

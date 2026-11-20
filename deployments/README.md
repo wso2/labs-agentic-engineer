@@ -475,7 +475,9 @@ What `aectl` does with the applications:
   with an error that names the Deployment: pods with the old secret may
   still be running. A second restart would not help a rollout that is
   stuck, so look at `kubectl rollout status` for the cause. `platform
-  install` does not wait here, because it waits for all pods right after.
+  install` waits in the same way for the Deployments that it restarted,
+  before its wait for all pods. That wait looks at the pods that exist, and
+  right after a restart the new pod may not exist yet.
 
 OpenChoreo's own clients (its workload publisher, for example) are not AE's
 and `aectl` does not create them.

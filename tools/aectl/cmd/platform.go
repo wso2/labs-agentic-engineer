@@ -585,8 +585,7 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		skip = clientsReadingUnsynced(unsynced)
 		// The vault is opened only if a secret has to be written back.
 		put, stopVault := lazyVaultPut()
-		// No wait for the restarts here: the wait for all pods follows.
-		err := doAsgardeoSetup(ctx, k8sClient, initPlatformNamespace, consoleURL, idpAdmin, put, skip, false)
+		err := doAsgardeoSetup(ctx, k8sClient, initPlatformNamespace, consoleURL, idpAdmin, put, skip, installRolloutWait)
 		stopVault()
 		if err != nil {
 			return err

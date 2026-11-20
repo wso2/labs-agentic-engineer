@@ -579,9 +579,11 @@ type reconcileRun struct {
 	waited   [][]string
 }
 
-// steps are reconcileSteps whose sync is the given one, counted.
+// steps are reconcileSteps whose sync is the given one, counted. They wait
+// for every reader, as `platform sync-clients` does.
 func (r *reconcileRun) steps(sync func(context.Context) (map[string]string, error)) reconcileSteps {
 	return reconcileSteps{
+		everyReader: true,
 		sync: func(ctx context.Context) (map[string]string, error) {
 			r.syncs++
 			return sync(ctx)
@@ -842,6 +844,57 @@ func TestReconcileClientSecretReaders_AStalledRestartIsAnError(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "aep-api") || !strings.Contains(err.Error(), "rollout status") {
 			t.Fatalf("run %d: err = %v, want the stalled restart of aep-api", i+1, err)
 		}
+	}
+}
+
+// `platform install` waits for the Deployments it restarted, and for no
+// other. A first install restarts nothing, so it is not held up by pods
+// that are still starting. After a restart, a ready pod of the old template
+// is not enough: the wait for all pods that follows the client step would
+// pass over it, since the new pod may not exist yet.
+func TestReconcileClientSecretReaders_InstallWaitsForWhatItRestarted(t *testing.T) {
+	c := replaceRun(t)
+	ctx, names := context.Background(), []string{orgClientSecretsName}
+	setStatus := func(status appsv1.DeploymentStatus) {
+		t.Helper()
+		d, err := c.AppsV1().Deployments("wso2-aep").Get(ctx, "aep-api", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		d.Status = status
+		if _, err := c.AppsV1().Deployments("wso2-aep").UpdateStatus(ctx, d, metav1.UpdateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	install := func(run *reconcileRun, sync func(context.Context) (map[string]string, error)) reconcileSteps {
+		st := run.steps(sync)
+		st.everyReader = false
+		st.waitRollouts = func(ctx context.Context, deployments []string) error {
+			run.waited = append(run.waited, deployments)
+			return waitForRollouts(ctx, c, "wso2-aep", deployments, 0, time.Millisecond)
+		}
+		return st
+	}
+	none := func(context.Context) (map[string]string, error) { return nil, nil }
+
+	// A first install: the one pod is not available yet, and nothing was
+	// restarted. The client step does not wait for it.
+	setStatus(appsv1.DeploymentStatus{Replicas: 1, UpdatedReplicas: 1})
+	first := &reconcileRun{}
+	if err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, nil, install(first, none)); err != nil || len(first.waited) != 0 {
+		t.Fatalf("a run that restarted nothing: err %v, waited for %v; want no wait", err, first.waited)
+	}
+
+	// A replace: the old pod is ready and no pod of the new template exists.
+	setStatus(appsv1.DeploymentStatus{Replicas: 1, UpdatedReplicas: 0, AvailableReplicas: 1})
+	replace := &reconcileRun{}
+	sync := func(context.Context) (map[string]string, error) { setOrgSecret(t, c, "new"); return nil, nil }
+	err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, []idpClientDef{defOf(t, "ae-studio-default")}, install(replace, sync))
+	if err == nil || !strings.Contains(err.Error(), "aep-api") {
+		t.Fatalf("err = %v, want the unfinished restart of aep-api though its old pod is ready", err)
+	}
+	if len(replace.waited) != 1 || !slices.Equal(replace.waited[0], []string{"aep-api"}) {
+		t.Errorf("waited for %v, want the restarted Deployment", replace.waited)
 	}
 }
 
