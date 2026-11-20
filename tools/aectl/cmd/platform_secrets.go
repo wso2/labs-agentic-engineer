@@ -33,6 +33,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/wso2/aep/aectl/internal/bootstrap"
+	"github.com/wso2/aep/aectl/internal/config"
 	k8s "github.com/wso2/aep/aectl/internal/kubernetes"
 	"github.com/wso2/aep/aectl/internal/openbao"
 )
@@ -69,10 +70,11 @@ func importedPlatformSecrets() []generatedSecret {
 }
 
 // importedClientNames are the clients whose secrets the IdP's admin creates
-// where aectl registers none (on Asgardeo: deployments/scripts/ae-asgardeo-apps.sh)
+// where aectl creates none (on Asgardeo: deployments/scripts/ae-asgardeo-apps.sh)
 // and imports under aep/idp-clients/<name>: aep-api's own client, the
 // AE-only client aep-api calls every org's pod with, and the one org's
-// publisher and AE Studio clients.
+// publisher and AE Studio clients. They are the confidential clients of
+// asgardeoClients, whose secrets aectl generates where it creates them.
 var importedClientNames = []string{
 	"aep-api-client",
 	"ae-studio-internal",
@@ -81,10 +83,10 @@ var importedClientNames = []string{
 }
 
 // importedClientSecrets are the client secrets an install imports and never
-// generates: those of importedClientNames with imported clients, none where aectl registers them
-// (where aectl generates every client secret).
+// generates: those of importedClientNames with imported clients, none where
+// aectl creates the clients (where it generates every client secret).
 func importedClientSecrets() []generatedSecret {
-	if registersClients() {
+	if platformIDPClients() != config.ClientsImported {
 		return nil
 	}
 	out := make([]generatedSecret, 0, len(importedClientNames))
@@ -141,13 +143,35 @@ func generatedThunderClientSecrets() []generatedSecret {
 // webhookRelaySeedSecret is the per-org relay channels' seed.
 var webhookRelaySeedSecret = generatedSecret{path: webhookRelaySeedPath, generate: webhookRelaySeed}
 
-// generatedClientSecrets are the client secrets this install generates: the
-// Thunder clients' where aectl registers them, none where they are imported.
-func generatedClientSecrets() []generatedSecret {
-	if !registersClients() {
-		return nil
+// generatedAsgardeoClientSecrets are the generated secrets of the
+// confidential clients aectl creates in an Asgardeo organization. Each is 32
+// random bytes as hex, the form ae-asgardeo-apps.sh creates applications
+// with.
+func generatedAsgardeoClientSecrets() []generatedSecret {
+	var out []generatedSecret
+	for _, d := range asgardeoClients() {
+		if d.clientType != "confidential" {
+			continue
+		}
+		out = append(out, generatedSecret{
+			path:     d.vaultPath(),
+			generate: func() (string, error) { return bootstrap.GenerateHex(32) },
+		})
 	}
-	return generatedThunderClientSecrets()
+	return out
+}
+
+// generatedClientSecrets are the client secrets this install generates: the
+// secrets of the clients aectl creates (on a ThunderID it administers, or in
+// an Asgardeo organization), none where they are imported.
+func generatedClientSecrets() []generatedSecret {
+	switch platformIDPClients() {
+	case config.ClientsThunder:
+		return generatedThunderClientSecrets()
+	case config.ClientsAsgardeo:
+		return generatedAsgardeoClientSecrets()
+	}
+	return nil
 }
 
 // generatedPlatformSecrets is every secret an install generates.
@@ -370,7 +394,7 @@ func platformInputPaths() []string {
 		"aep/anthropic-api-key",
 		"aep/opensearch-username",
 	}
-	if !registersClients() {
+	if !administersThunder() {
 		return paths
 	}
 	return append(paths,
@@ -468,12 +492,12 @@ func syncPlatformExternalSecrets(ctx context.Context, namespace string) (map[str
 	return syncExternalSecretsNow(ctx, a, namespace, platformSecretPaths(), externalSecretSyncTimeout)
 }
 
-// clientsReadingUnsynced maps unsynced Secrets to the Thunder clients that
-// read them (clientID -> reason): registering one would hand Thunder the
-// stale value.
+// clientsReadingUnsynced maps unsynced Secrets to the clients of idpClients
+// that read them (clientID -> reason): registering one would hand the IdP
+// the stale value.
 func clientsReadingUnsynced(unsynced map[string]string) map[string]string {
 	skip := map[string]string{}
-	for _, d := range thunderClients() {
+	for _, d := range idpClients() {
 		if reason, ok := unsynced[d.secretNameOrDefault()]; ok && d.clientType == "confidential" {
 			skip[d.clientID] = reason
 		}
@@ -482,7 +506,7 @@ func clientsReadingUnsynced(unsynced map[string]string) map[string]string {
 }
 
 // orgClientVaultPaths are the vault paths of the org's two client secrets
-// (orgThunderClients).
+// (orgClients).
 var orgClientVaultPaths = []string{"aep/idp-clients/org-publisher", "aep/idp-clients/org-studio"}
 
 // regeneratedOrgClientSecrets lists the org's client secrets that a seed run

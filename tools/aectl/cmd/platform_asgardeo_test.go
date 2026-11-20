@@ -337,13 +337,13 @@ func TestRequireImportedClientSecrets_ThunderRequiresNone(t *testing.T) {
 	}
 }
 
-// sync-clients on Asgardeo restores and checks the imported secrets and
-// syncs the cluster's Secrets; it registers nothing, since aectl administers
-// nothing on the IdP.
-func TestSyncClients_AsgardeoRegistersNothing(t *testing.T) {
+// sync-clients with imported clients restores and checks the imported
+// secrets and syncs the cluster's Secrets; it registers nothing, since aectl
+// administers nothing on the IdP.
+func TestSyncClients_ImportedClientsRegisterNothing(t *testing.T) {
 	r := &syncRecorder{}
 	steps := r.steps(nil, nil, nil)
-	steps.setupThunder = nil
+	steps.setupClients = nil
 	if err := syncClients(context.Background(), steps); err != nil {
 		t.Fatal(err)
 	}

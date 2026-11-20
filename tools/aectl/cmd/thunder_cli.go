@@ -46,8 +46,8 @@ func registerThunderFlags(cmd *cobra.Command) {
 	_ = viper.BindPFlag("thunder.public_url", f.Lookup("thunder-public-url"))
 }
 
-// thunderClientDef describes a Thunder OAuth client to provision.
-type thunderClientDef struct {
+// idpClientDef describes an OAuth client aectl creates on the platform IdP.
+type idpClientDef struct {
 	clientID         string
 	clientType       string   // "confidential" or "public"
 	secretKey        string   // key in the client's K8s Secret (confidential only)
@@ -60,18 +60,19 @@ type thunderClientDef struct {
 	// vaultName is the generated vault key aep/idp-clients/<vaultName>
 	// the ExternalSecret syncs into secretKey (empty: not a generated key).
 	vaultName string
-	// orgOUHandle marks one of the org's own clients: it is registered under
-	// the organization unit with this handle (thunder.DesiredApp.OrgOUHandle).
+	// orgOUHandle marks one of the org's own clients: on ThunderID it is
+	// registered under the organization unit with this handle
+	// (thunder.DesiredApp.OrgOUHandle).
 	orgOUHandle string
 }
 
 // aepThunderClients is the canonical list of AEP's platform OAuth clients to
-// register in Thunder. The org's own two clients are orgThunderClients; the
+// register in Thunder. The org's own two clients are orgClients; the
 // registration takes both lists (thunderClients).
 // Confidential clients read their pre-generated secret from a K8s Secret: the
 // shared aep-idp-client-secrets unless the client names its own (secretName).
 // Public (PKCE) clients use the redirect URIs supplied at registration time.
-var aepThunderClients = []thunderClientDef{
+var aepThunderClients = []idpClientDef{
 	{clientID: "openchoreo-workload-publisher-client", clientType: "confidential", vaultName: "oc-workload-publisher", secretKey: "OC_WORKLOAD_PUBLISHER_SECRET"},
 	{clientID: observerReaderClientID, clientType: "confidential", vaultName: "oc-observer-reader", secretKey: "OC_OBSERVER_READER_SECRET"},
 	{clientID: "aep-api-client", clientType: "confidential", vaultName: "aep-api-client", secretKey: "AEP_API_CLIENT_SECRET"},
@@ -85,15 +86,15 @@ var aepThunderClients = []thunderClientDef{
 	{clientID: "aep-cli-client", clientType: "public", redirectURIs: []string{"http://localhost", "http://127.0.0.1"}},
 }
 
-// orgThunderClients are the two clients of the one org the install serves:
+// orgClients are the two clients of the one org the install serves:
 // its publisher client (the coding and validation runners' identity) and its
 // AE Studio client (its pod's identity). aep-api holds no rights to create
 // them, so aectl registers both here, under the org's organization unit
 // (idp.org_handle), and aep-api reads their secrets from their own Secret.
 // The client ids are the ones aep-api derives from the org's namespace.
-func orgThunderClients() []thunderClientDef {
+func orgClients() []idpClientDef {
 	org, handle := ocOrgNamespace(), viper.GetString("idp.org_handle")
-	return []thunderClientDef{
+	return []idpClientDef{
 		{clientID: "aep-publisher-" + org, clientType: "confidential", vaultName: "org-publisher", secretKey: "PLATFORM_IDP_ORG_PUBLISHER_SECRET", secretName: orgClientSecretsName, orgOUHandle: handle},
 		{clientID: "ae-studio-" + org, clientType: "confidential", vaultName: "org-studio", secretKey: "PLATFORM_IDP_ORG_STUDIO_SECRET", secretName: orgClientSecretsName, orgOUHandle: handle},
 	}
@@ -101,11 +102,14 @@ func orgThunderClients() []thunderClientDef {
 
 // thunderClients is every client aectl registers on the platform ThunderID:
 // the platform's, then the org's.
-func thunderClients() []thunderClientDef {
-	return append(slices.Clone(aepThunderClients), orgThunderClients()...)
+func thunderClients() []idpClientDef {
+	return append(slices.Clone(aepThunderClients), orgClients()...)
 }
 
-func (d thunderClientDef) secretNameOrDefault() string {
+// vaultPath is the vault path of the client's generated secret.
+func (d idpClientDef) vaultPath() string { return "aep/idp-clients/" + d.vaultName }
+
+func (d idpClientDef) secretNameOrDefault() string {
 	if d.secretName != "" {
 		return d.secretName
 	}
@@ -115,7 +119,7 @@ func (d thunderClientDef) secretNameOrDefault() string {
 // secretOptional reports whether every client reading the K8s Secret name is
 // optional, i.e. the run may continue without it.
 func secretOptional(name string) bool {
-	for _, d := range thunderClients() {
+	for _, d := range idpClients() {
 		if d.clientType == "confidential" && d.secretNameOrDefault() == name && !d.optional {
 			return false
 		}
@@ -123,11 +127,12 @@ func secretOptional(name string) bool {
 	return true
 }
 
-// clientsToRegister is the confidential and public clients doThunderSetup
-// registers: every client except those in skip (clientID -> reason) and the
-// optional ones whose K8s Secret is unavailable. The rest still register.
-func clientsToRegister(defs []thunderClientDef, secretsByName map[string]map[string]string, skip map[string]string) []thunderClientDef {
-	var out []thunderClientDef
+// clientsToRegister is the confidential and public clients a setup
+// (doThunderSetup, doAsgardeoSetup) registers: every client except those in
+// skip (clientID -> reason) and the optional ones whose K8s Secret is
+// unavailable. The rest still register.
+func clientsToRegister(defs []idpClientDef, secretsByName map[string]map[string]string, skip map[string]string) []idpClientDef {
+	var out []idpClientDef
 	for _, d := range defs {
 		if _, skipped := skip[d.clientID]; skipped {
 			continue
@@ -140,14 +145,14 @@ func clientsToRegister(defs []thunderClientDef, secretsByName map[string]map[str
 	return out
 }
 
-// thunderSecretNames lists the distinct K8s Secrets the confidential clients
-// read their secrets from. A client in skip (clientID -> reason) is not
-// registered, so a Secret that only skipped clients read is left out: a wait
-// for it would stop the clients that can register.
-func thunderSecretNames(skip map[string]string) []string {
+// clientSecretNames lists the distinct K8s Secrets the confidential clients
+// of idpClients read their secrets from. A client in skip (clientID ->
+// reason) is not registered, so a Secret that only skipped clients read is
+// left out: a wait for it would stop the clients that can register.
+func clientSecretNames(skip map[string]string) []string {
 	var names []string
 	seen := map[string]bool{}
-	for _, d := range thunderClients() {
+	for _, d := range idpClients() {
 		if _, skipped := skip[d.clientID]; skipped {
 			continue
 		}
@@ -182,34 +187,14 @@ func doThunderSetup(
 	platformNamespace, thunderNamespace, consoleURL string,
 	skipClients map[string]string,
 ) error {
-	// 1. Read client secrets from the ESO-synced K8s Secrets (aep-idp-client-secrets,
-	//    plus the AE-only client's own). ESO may take a few seconds after pod
-	//    readiness to complete its first sync, so retry for up to 60s before
-	//    failing. A Secret only optional clients read is warned about and its
-	//    clients are skipped; the rest still register.
-	sp := ui.NewSpinner("Waiting for Thunder client secrets (ESO sync)")
-	sp.Start()
-	secretsByName := map[string]map[string]string{}
-	var err error
-	var skippedSecrets []string
-	for _, name := range thunderSecretNames(skipClients) {
-		secretsByName[name], err = waitForSecretData(ctx, k8sClient, platformNamespace, name, 60*time.Second)
-		if err != nil && secretOptional(name) {
-			skippedSecrets = append(skippedSecrets, name)
-			continue
-		}
-		if err != nil {
-			sp.Fail("Thunder client secrets not available")
-			return fmt.Errorf("read Thunder client secrets from %s/%s: %w", platformNamespace, name, err)
-		}
-	}
-	sp.Success("Thunder client secrets ready")
-	for _, name := range skippedSecrets {
-		ui.Warn(fmt.Sprintf("Secret %s/%s is not available: skipping the Thunder clients that read it (seed its vault key, then re-run)", platformNamespace, name))
+	// 1. Read client secrets from the ESO-synced K8s Secrets.
+	secretsByName, err := waitForClientSecrets(ctx, k8sClient, platformNamespace, skipClients)
+	if err != nil {
+		return err
 	}
 
 	// 2. Port-forward to Thunder.
-	sp = ui.NewSpinner("Connecting to Thunder")
+	sp := ui.NewSpinner("Connecting to Thunder")
 	sp.Start()
 	pf, err := thunder.PortForward(ctx, thunderNamespace, kubeconfig)
 	if err != nil {
@@ -296,6 +281,36 @@ func doThunderSetup(
 
 	ui.Detail("Thunder setup complete")
 	return nil
+}
+
+// waitForClientSecrets reads the client secrets of idpClients from the
+// ESO-synced K8s Secrets (aep-idp-client-secrets, plus the Secrets a client
+// names itself), by Secret name. ESO may take a few seconds after the chart
+// install to complete its first sync, so each read retries for up to 60s. A
+// Secret only optional clients read is warned about and left out, which
+// skips its clients (clientsToRegister); the rest still register.
+func waitForClientSecrets(ctx context.Context, k8sClient *kubernetes.Clientset, platformNamespace string, skipClients map[string]string) (map[string]map[string]string, error) {
+	sp := ui.NewSpinner("Waiting for the IdP client secrets (ESO sync)")
+	sp.Start()
+	secretsByName := map[string]map[string]string{}
+	var skippedSecrets []string
+	for _, name := range clientSecretNames(skipClients) {
+		data, err := waitForSecretData(ctx, k8sClient, platformNamespace, name, 60*time.Second)
+		if err != nil && secretOptional(name) {
+			skippedSecrets = append(skippedSecrets, name)
+			continue
+		}
+		if err != nil {
+			sp.Fail("IdP client secrets not available")
+			return nil, fmt.Errorf("read the IdP client secrets from %s/%s: %w", platformNamespace, name, err)
+		}
+		secretsByName[name] = data
+	}
+	sp.Success("IdP client secrets ready")
+	for _, name := range skippedSecrets {
+		ui.Warn(fmt.Sprintf("Secret %s/%s is not available: skipping the clients that read it (seed its vault key, then re-run)", platformNamespace, name))
+	}
+	return secretsByName, nil
 }
 
 // waitForSecretData retries reading an ESO-synced K8s Secret until it exists
