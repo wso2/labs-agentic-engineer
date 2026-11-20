@@ -115,8 +115,8 @@ Two separate things differ between IdPs, and the kind tied them together:
 
    A regenerated secret reaches a pod only when the pod starts, and a later
    run cannot see from the vault that a pod still holds the old one. So
-   `aectl` records on each Deployment a checksum of the client Secret its
-   pods started with, and every run restarts a Deployment whose checksum is
+   `aectl` keeps, in the pod template of each Deployment, a checksum of the
+   client Secret it reads, and every run restarts a Deployment whose checksum is
    no longer the Secret's. A run that failed after the write to the vault
    is so completed by the next run.
 

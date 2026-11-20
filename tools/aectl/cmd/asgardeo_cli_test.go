@@ -463,15 +463,6 @@ func deploymentReading(name, secretName string) *appsv1.Deployment {
 	}
 }
 
-func restartedAt(t *testing.T, c *fake.Clientset, name string) string {
-	t.Helper()
-	d, err := c.AppsV1().Deployments("wso2-aep").Get(context.Background(), name, metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return d.Spec.Template.Annotations["kubectl.kubernetes.io/restartedAt"]
-}
-
 func defOf(t *testing.T, clientID string) idpClientDef {
 	t.Helper()
 	for _, d := range asgardeoClients() {
@@ -494,14 +485,31 @@ func orgSecret(value string) *corev1.Secret {
 	}
 }
 
-func recordedChecksum(t *testing.T, c *fake.Clientset, name string) string {
+// startedWith marks d as a Deployment whose pods started with sec: its pod
+// template holds the Secret's checksum.
+func startedWith(d *appsv1.Deployment, sec *corev1.Secret) *appsv1.Deployment {
+	if d.Spec.Template.Annotations == nil {
+		d.Spec.Template.Annotations = map[string]string{}
+	}
+	d.Spec.Template.Annotations[clientSecretChecksumAnnotation(sec.Name)] = secretChecksum(sec.Data)
+	return d
+}
+
+// podTemplateChecksum is the checksum of the org's client Secret in the pod
+// template of the Deployment name. A change of it is a restart.
+func podTemplateChecksum(t *testing.T, c *fake.Clientset, name string) string {
 	t.Helper()
 	d, err := c.AppsV1().Deployments("wso2-aep").Get(context.Background(), name, metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return d.Annotations[clientSecretChecksumAnnotation(orgClientSecretsName)]
+	return d.Spec.Template.Annotations[clientSecretChecksumAnnotation(orgClientSecretsName)]
 }
+
+var (
+	oldSum = secretChecksum(orgSecret("old").Data)
+	newSum = secretChecksum(orgSecret("new").Data)
+)
 
 // setOrgSecret is the cluster catching up with the vault: the Secret takes
 // value.
@@ -512,21 +520,17 @@ func setOrgSecret(t *testing.T, c *fake.Clientset, value string) {
 	}
 }
 
-// replaceRun is a cluster where aep-api reads the org's client Secret and
-// the console reads another one, with the checksums recorded as a run
-// records them before it changes anything.
+// replaceRun is a cluster where aep-api reads the org's client Secret, and
+// its pods started with the Secret's present value, and the console reads
+// another Secret.
 func replaceRun(t *testing.T) *fake.Clientset {
 	t.Helper()
 	setAsgardeoClientsConfig(t)
-	c := fake.NewSimpleClientset(
+	return fake.NewSimpleClientset(
 		orgSecret("old"),
-		deploymentReading("aep-api", orgClientSecretsName),
+		startedWith(deploymentReading("aep-api", orgClientSecretsName), orgSecret("old")),
 		deploymentReading("aep-console", "some-other-secret"),
 	)
-	if err := recordClientSecretChecksums(context.Background(), c, "wso2-aep", []string{orgClientSecretsName}); err != nil {
-		t.Fatal(err)
-	}
-	return c
 }
 
 // The checksum changes with a value and is a short fingerprint, not the
@@ -547,27 +551,31 @@ func TestSecretChecksum(t *testing.T) {
 	}
 }
 
-// Before a run changes anything, each reader of a client Secret is recorded
-// with the Secret's checksum. Recording restarts no pod, and a checksum that
-// is already there is kept: it says what the pods started with.
-func TestRecordClientSecretChecksums(t *testing.T) {
-	c := replaceRun(t)
-	want := secretChecksum(orgSecret("old").Data)
-	if got := recordedChecksum(t, c, "aep-api"); got != want {
-		t.Fatalf("recorded %q, want %q", got, want)
-	}
-	if restartedAt(t, c, "aep-api") != "" {
-		t.Error("recording a checksum restarted the Deployment")
-	}
-	if got := recordedChecksum(t, c, "aep-console"); got != "" {
-		t.Errorf("a Deployment that does not read the Secret was recorded: %q", got)
-	}
-	setOrgSecret(t, c, "new")
-	if err := recordClientSecretChecksums(context.Background(), c, "wso2-aep", []string{orgClientSecretsName}); err != nil {
+// A Deployment with no checksum for a client Secret it reads is restarted
+// once: nothing says what its pods hold. That is no sign that the Secret
+// changed, so it is not reported as changed. The next run leaves it alone,
+// and a Deployment that does not read the Secret is never touched.
+func TestRestartStaleSecretReaders_AReaderWithoutAChecksumIsRestartedOnce(t *testing.T) {
+	setAsgardeoClientsConfig(t)
+	c := fake.NewSimpleClientset(
+		orgSecret("old"),
+		deploymentReading("aep-api", orgClientSecretsName),
+		deploymentReading("aep-console", "some-other-secret"),
+	)
+	ctx, names := context.Background(), []string{orgClientSecretsName}
+	found, err := restartStaleSecretReaders(ctx, c, "wso2-aep", names)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if got := recordedChecksum(t, c, "aep-api"); got != want {
-		t.Errorf("a recorded checksum was overwritten: %q", got)
+	if !slices.Equal(found.restarted, []string{"aep-api"}) || !slices.Equal(found.readers, []string{"aep-api"}) || len(found.changedSecrets) != 0 {
+		t.Fatalf("restarted %v, readers %v, changed Secrets %v; want aep-api restarted and no Secret reported as changed", found.restarted, found.readers, found.changedSecrets)
+	}
+	if podTemplateChecksum(t, c, "aep-api") != oldSum || podTemplateChecksum(t, c, "aep-console") != "" {
+		t.Error("the reader did not get the Secret's checksum, or another Deployment got one")
+	}
+	again, err := restartStaleSecretReaders(ctx, c, "wso2-aep", names)
+	if err != nil || len(again.restarted) != 0 {
+		t.Fatalf("second run: restarted %v, err %v; want nothing", again.restarted, err)
 	}
 }
 
@@ -579,11 +587,9 @@ type reconcileRun struct {
 	waited   [][]string
 }
 
-// steps are reconcileSteps whose sync is the given one, counted. They wait
-// for every reader, as `platform sync-clients` does.
+// steps are reconcileSteps whose sync is the given one, counted.
 func (r *reconcileRun) steps(sync func(context.Context) (map[string]string, error)) reconcileSteps {
 	return reconcileSteps{
-		everyReader: true,
 		sync: func(ctx context.Context) (map[string]string, error) {
 			r.syncs++
 			return sync(ctx)
@@ -614,7 +620,7 @@ func TestReconcileClientSecretReaders_SyncsAndRestartsTheReaders(t *testing.T) {
 	if err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, nil, quiet.steps(sync)); err != nil || quiet.syncs != 0 {
 		t.Fatalf("nothing replaced: err %v, syncs %d", err, quiet.syncs)
 	}
-	if restartedAt(t, c, "aep-api") != "" || len(quiet.warnings) != 0 {
+	if podTemplateChecksum(t, c, "aep-api") != oldSum || len(quiet.warnings) != 0 {
 		t.Fatalf("a Deployment was restarted, or a warning printed, though no secret changed: %v", quiet.warnings)
 	}
 	if len(quiet.waited) != 1 || !slices.Equal(quiet.waited[0], []string{"aep-api"}) {
@@ -629,10 +635,10 @@ func TestReconcileClientSecretReaders_SyncsAndRestartsTheReaders(t *testing.T) {
 	if run.syncs != 1 {
 		t.Errorf("synced %d times, want once", run.syncs)
 	}
-	if restartedAt(t, c, "aep-api") == "" || recordedChecksum(t, c, "aep-api") != secretChecksum(orgSecret("new").Data) {
-		t.Error("the reader of the replaced secrets was not restarted and recorded with the new checksum")
+	if podTemplateChecksum(t, c, "aep-api") != newSum {
+		t.Error("the reader of the replaced secrets was not restarted with the new checksum")
 	}
-	if restartedAt(t, c, "aep-console") != "" {
+	if podTemplateChecksum(t, c, "aep-console") != "" {
 		t.Error("a Deployment that reads another Secret was restarted")
 	}
 	failing := func(context.Context) (map[string]string, error) { return nil, errors.New("no cluster") }
@@ -642,9 +648,8 @@ func TestReconcileClientSecretReaders_SyncsAndRestartsTheReaders(t *testing.T) {
 }
 
 // A Deployment that reads several client Secrets gets one patch for all that
-// are stale. Each new checksum is in the pod template too, so a changed
-// checksum changes the template and starts a rollout whatever the clock
-// says.
+// are stale, with each checksum in the pod template: a changed checksum
+// changes the template and starts a rollout, whatever the clock says.
 func TestRestartStaleSecretReaders_OnePatchPerDeployment(t *testing.T) {
 	setAsgardeoClientsConfig(t)
 	internal := &corev1.Secret{
@@ -654,11 +659,8 @@ func TestRestartStaleSecretReaders_OnePatchPerDeployment(t *testing.T) {
 	api := deploymentReading("aep-api", orgClientSecretsName)
 	api.Spec.Template.Spec.Containers[0].EnvFrom = append(api.Spec.Template.Spec.Containers[0].EnvFrom,
 		corev1.EnvFromSource{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: aeStudioInternalSecretsName}}})
-	c := fake.NewSimpleClientset(orgSecret("old"), internal, api)
+	c := fake.NewSimpleClientset(orgSecret("old"), internal.DeepCopy(), startedWith(startedWith(api, orgSecret("old")), internal))
 	ctx, names := context.Background(), []string{aeStudioInternalSecretsName, orgClientSecretsName}
-	if err := recordClientSecretChecksums(ctx, c, "wso2-aep", names); err != nil {
-		t.Fatal(err)
-	}
 	setOrgSecret(t, c, "new")
 	internal.Data["AE_STUDIO_INTERNAL_CLIENT_SECRET"] = []byte("new")
 	if _, err := c.CoreV1().Secrets("wso2-aep").Update(ctx, internal, metav1.UpdateOptions{}); err != nil {
@@ -674,8 +676,8 @@ func TestRestartStaleSecretReaders_OnePatchPerDeployment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if patches != 1 || !slices.Equal(found.restarted, []string{"aep-api"}) || len(found.staleSecrets) != 2 {
-		t.Fatalf("patches %d, restarted %v, stale Secrets %v; want one patch of aep-api for both Secrets", patches, found.restarted, found.staleSecrets)
+	if patches != 1 || !slices.Equal(found.restarted, []string{"aep-api"}) || len(found.changedSecrets) != 2 {
+		t.Fatalf("patches %d, restarted %v, changed Secrets %v; want one patch of aep-api for both Secrets", patches, found.restarted, found.changedSecrets)
 	}
 	d, err := c.AppsV1().Deployments("wso2-aep").Get(ctx, "aep-api", metav1.GetOptions{})
 	if err != nil {
@@ -683,8 +685,8 @@ func TestRestartStaleSecretReaders_OnePatchPerDeployment(t *testing.T) {
 	}
 	for name, data := range map[string]map[string][]byte{orgClientSecretsName: orgSecret("new").Data, aeStudioInternalSecretsName: internal.Data} {
 		key, want := clientSecretChecksumAnnotation(name), secretChecksum(data)
-		if d.Annotations[key] != want || d.Spec.Template.Annotations[key] != want {
-			t.Errorf("%s: recorded %q, in the pod template %q; want %q in both", name, d.Annotations[key], d.Spec.Template.Annotations[key], want)
+		if got := d.Spec.Template.Annotations[key]; got != want {
+			t.Errorf("%s: the pod template holds %q, want %q", name, got, want)
 		}
 	}
 }
@@ -714,7 +716,8 @@ func TestOrgClientSecretWarning(t *testing.T) {
 // The reconnect warning does not depend on the run that replaced the secret
 // ending well. It is printed before a step that can fail, and a later run
 // that completes the restart prints it again, though it replaced nothing.
-// A replaced platform client prints none.
+// A replaced platform client prints none, and neither does the first run on
+// a cluster, which restarts a reader only because it has no checksum yet.
 func TestReconcileClientSecretReaders_TheReconnectWarningSurvivesAFailedRun(t *testing.T) {
 	c := replaceRun(t)
 	ctx, names := context.Background(), []string{orgClientSecretsName}
@@ -740,24 +743,35 @@ func TestReconcileClientSecretReaders_TheReconnectWarningSurvivesAFailedRun(t *t
 	if err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, nil, next.steps(never)); err != nil {
 		t.Fatal(err)
 	}
-	if restartedAt(t, c, "aep-api") == "" {
+	if podTemplateChecksum(t, c, "aep-api") != newSum {
 		t.Fatal("the next run did not restart the reader")
 	}
 	if len(next.warnings) != 1 || !strings.Contains(next.warnings[0], "reconnect GitHub") {
 		t.Errorf("warnings of the next run %v, want the reconnect warning again", next.warnings)
 	}
 
-	// Run in which only a platform client was replaced: no org is concerned.
+	// A run in which only a platform client was replaced: no org is concerned.
 	platform := &reconcileRun{}
 	ok := func(context.Context) (map[string]string, error) { return nil, nil }
 	if err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, []idpClientDef{defOf(t, "aep-api-client")}, platform.steps(ok)); err != nil || len(platform.warnings) != 0 {
 		t.Errorf("a replaced platform client: err %v, warnings %v; want none", err, platform.warnings)
 	}
+
+	// The first run on a cluster: the reader has no checksum and is
+	// restarted, but no Secret is known to have changed.
+	fresh := fake.NewSimpleClientset(orgSecret("old"), deploymentReading("aep-api", orgClientSecretsName))
+	first := &reconcileRun{}
+	if err := reconcileClientSecretReaders(ctx, fresh, "wso2-aep", names, nil, first.steps(never)); err != nil {
+		t.Fatal(err)
+	}
+	if podTemplateChecksum(t, fresh, "aep-api") != oldSum || len(first.warnings) != 0 {
+		t.Errorf("first run: checksum %q, warnings %v; want the reader restarted and no warning", podTemplateChecksum(t, fresh, "aep-api"), first.warnings)
+	}
 }
 
-// A restart that fails leaves the Deployment recorded with the old checksum.
-// The next run replaces nothing, since the vault's secret now works, and
-// still restarts the Deployment: its checksum is not the Secret's.
+// A restart that fails leaves the Deployment with the old checksum. The
+// next run replaces nothing, since the vault's secret now works, and still
+// restarts the Deployment: its checksum is not the Secret's.
 func TestReconcileClientSecretReaders_TheNextRunCompletesAFailedRestart(t *testing.T) {
 	c := replaceRun(t)
 	ctx, names := context.Background(), []string{orgClientSecretsName}
@@ -775,8 +789,8 @@ func TestReconcileClientSecretReaders_TheNextRunCompletesAFailedRestart(t *testi
 	if err == nil || !strings.Contains(err.Error(), "sync-clients") {
 		t.Fatalf("err = %v, want the failed restart with the command to run again", err)
 	}
-	if restartedAt(t, c, "aep-api") != "" || recordedChecksum(t, c, "aep-api") != secretChecksum(orgSecret("old").Data) {
-		t.Fatal("the Deployment is recorded as current though its restart failed")
+	if podTemplateChecksum(t, c, "aep-api") != oldSum {
+		t.Fatal("the Deployment holds the new checksum though its restart failed")
 	}
 	if len(first.waited) != 0 {
 		t.Error("the run waited for a restart that did not happen")
@@ -790,7 +804,7 @@ func TestReconcileClientSecretReaders_TheNextRunCompletesAFailedRestart(t *testi
 	if err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, nil, (&reconcileRun{}).steps(never)); err != nil {
 		t.Fatal(err)
 	}
-	if restartedAt(t, c, "aep-api") == "" || recordedChecksum(t, c, "aep-api") != secretChecksum(orgSecret("new").Data) {
+	if podTemplateChecksum(t, c, "aep-api") != newSum {
 		t.Error("the next run did not restart the Deployment that was left behind")
 	}
 }
@@ -814,87 +828,56 @@ func TestReconcileClientSecretReaders_AnUnsyncedReplacedSecretIsAnError(t *testi
 			t.Errorf("error lacks %q: %v", want, err)
 		}
 	}
-	if restartedAt(t, c, "aep-api") != "" {
-		t.Error("the reader of an unsynced Secret was restarted with the old value")
+	if podTemplateChecksum(t, c, "aep-api") != oldSum {
+		t.Error("the reader of an unsynced Secret was restarted")
 	}
 
 	setOrgSecret(t, c, "new") // the next run's own sync brings the value
 	if err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, nil, (&reconcileRun{}).steps(unsynced)); err != nil {
 		t.Fatal(err)
 	}
-	if restartedAt(t, c, "aep-api") == "" {
+	if podTemplateChecksum(t, c, "aep-api") != newSum {
 		t.Error("the next run did not restart the reader of the Secret that has now synced")
 	}
 }
 
-// A restart that does not finish is reported: the run does not end on a
-// success line while pods of the old template may still be running. This
-// holds for a later run too, which restarts nothing.
-func TestReconcileClientSecretReaders_AStalledRestartIsAnError(t *testing.T) {
+// A restart that does not finish is reported, in the run that asked for it
+// and in every later run: the later run finds the checksum current and
+// restarts nothing, and must still not end on a success line. A ready pod of
+// the old template does not count as done: this is what the wait for all
+// pods of an install would pass over.
+func TestReconcileClientSecretReaders_AStalledRestartIsAnErrorInEveryRun(t *testing.T) {
 	c := replaceRun(t)
 	ctx, names := context.Background(), []string{orgClientSecretsName}
+	setOrgSecret(t, c, "new")
+	// The old pod is ready, and no pod of the new template is available.
+	// The fake cluster has no controller, so this state stays.
+	d, err := c.AppsV1().Deployments("wso2-aep").Get(ctx, "aep-api", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Status = appsv1.DeploymentStatus{Replicas: 1, UpdatedReplicas: 0, AvailableReplicas: 1}
+	if _, err := c.AppsV1().Deployments("wso2-aep").UpdateStatus(ctx, d, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	patches := 0
+	c.PrependReactor("patch", "deployments", func(k8stesting.Action) (bool, runtime.Object, error) {
+		patches++
+		return false, nil, nil
+	})
 	st := (&reconcileRun{}).steps(func(context.Context) (map[string]string, error) { return nil, nil })
 	st.waitRollouts = func(ctx context.Context, readers []string) error {
 		return waitForRollouts(ctx, c, "wso2-aep", readers, 0, time.Millisecond)
 	}
-	// The fake cluster has no controller: the Deployment never reports a
-	// pod of its template as available.
-	for i := 0; i < 2; i++ {
+	for run := 1; run <= 2; run++ {
 		err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, nil, st)
 		if err == nil || !strings.Contains(err.Error(), "aep-api") || !strings.Contains(err.Error(), "rollout status") {
-			t.Fatalf("run %d: err = %v, want the stalled restart of aep-api", i+1, err)
+			t.Fatalf("run %d: err = %v, want the unfinished restart of aep-api", run, err)
 		}
 	}
-}
-
-// `platform install` waits for the Deployments it restarted, and for no
-// other. A first install restarts nothing, so it is not held up by pods
-// that are still starting. After a restart, a ready pod of the old template
-// is not enough: the wait for all pods that follows the client step would
-// pass over it, since the new pod may not exist yet.
-func TestReconcileClientSecretReaders_InstallWaitsForWhatItRestarted(t *testing.T) {
-	c := replaceRun(t)
-	ctx, names := context.Background(), []string{orgClientSecretsName}
-	setStatus := func(status appsv1.DeploymentStatus) {
-		t.Helper()
-		d, err := c.AppsV1().Deployments("wso2-aep").Get(ctx, "aep-api", metav1.GetOptions{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		d.Status = status
-		if _, err := c.AppsV1().Deployments("wso2-aep").UpdateStatus(ctx, d, metav1.UpdateOptions{}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	install := func(run *reconcileRun, sync func(context.Context) (map[string]string, error)) reconcileSteps {
-		st := run.steps(sync)
-		st.everyReader = false
-		st.waitRollouts = func(ctx context.Context, deployments []string) error {
-			run.waited = append(run.waited, deployments)
-			return waitForRollouts(ctx, c, "wso2-aep", deployments, 0, time.Millisecond)
-		}
-		return st
-	}
-	none := func(context.Context) (map[string]string, error) { return nil, nil }
-
-	// A first install: the one pod is not available yet, and nothing was
-	// restarted. The client step does not wait for it.
-	setStatus(appsv1.DeploymentStatus{Replicas: 1, UpdatedReplicas: 1})
-	first := &reconcileRun{}
-	if err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, nil, install(first, none)); err != nil || len(first.waited) != 0 {
-		t.Fatalf("a run that restarted nothing: err %v, waited for %v; want no wait", err, first.waited)
-	}
-
-	// A replace: the old pod is ready and no pod of the new template exists.
-	setStatus(appsv1.DeploymentStatus{Replicas: 1, UpdatedReplicas: 0, AvailableReplicas: 1})
-	replace := &reconcileRun{}
-	sync := func(context.Context) (map[string]string, error) { setOrgSecret(t, c, "new"); return nil, nil }
-	err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, []idpClientDef{defOf(t, "ae-studio-default")}, install(replace, sync))
-	if err == nil || !strings.Contains(err.Error(), "aep-api") {
-		t.Fatalf("err = %v, want the unfinished restart of aep-api though its old pod is ready", err)
-	}
-	if len(replace.waited) != 1 || !slices.Equal(replace.waited[0], []string{"aep-api"}) {
-		t.Errorf("waited for %v, want the restarted Deployment", replace.waited)
+	if patches != 1 {
+		t.Errorf("%d restart requests in two runs, want one: the second run finds the checksum current", patches)
 	}
 }
 

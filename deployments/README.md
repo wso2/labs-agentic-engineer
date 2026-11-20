@@ -460,24 +460,26 @@ What `aectl` does with the applications:
   the run that replaced it ended with an error and a later run completed
   it. The command prints a warning that says so, in the run that replaces
   the secret and in a later run that restarts aep-api for it.
-- A pod takes a secret only when it starts. So `aectl` records, on each
-  Deployment that reads a client Secret, a checksum of the Secret as its
-  pods started with it (the annotation
-  `aep.wso2.com/client-secret-checksum.<Secret>`, on the Deployment and in
-  its pod template), and every run restarts a Deployment whose checksum is
-  no longer the Secret's. If a run stops between the write to the vault and
-  the restart, or the Secret does not sync in time, the command ends with
-  an error. Run it again: the next run completes the restart.
-- `platform sync-clients` then waits up to three minutes until each
-  Deployment that reads a client Secret has rolled out: every pod is of the
-  current pod template and available. It does so in every run, also one
-  that restarted nothing. If a rollout has not finished, the command ends
-  with an error that names the Deployment: pods with the old secret may
-  still be running. A second restart would not help a rollout that is
-  stuck, so look at `kubectl rollout status` for the cause. `platform
-  install` waits in the same way for the Deployments that it restarted,
-  before its wait for all pods. That wait looks at the pods that exist, and
-  right after a restart the new pod may not exist yet.
+- A pod takes a secret only when it starts. So `aectl` keeps a checksum of
+  each client Secret in the pod template of each Deployment that reads it
+  (the annotation `aep.wso2.com/client-secret-checksum.<Secret>`). Every
+  run writes the checksum where it is not the Secret's. That changes the
+  pod template, so the Deployment restarts. If a run stops between the
+  write to the vault and the restart, or the Secret does not sync in time,
+  the command ends with an error. Run it again: the next run completes the
+  restart.
+- A Deployment that has no checksum yet is restarted once, by the first run
+  that sees it, also when no secret was replaced: nothing tells `aectl`
+  what its pods hold.
+- Both commands then wait until each Deployment that reads a client Secret
+  has rolled out: every pod is of the current pod template and available.
+  They do so in every run, also one that restarted nothing, because a
+  restart of an earlier run may not have finished. `platform sync-clients`
+  waits up to three minutes, `platform install` as long as it waits for
+  pods. If a rollout has not finished, the command ends with an error that
+  names the Deployment: pods with the old secret may still be running. A
+  second restart would not help a rollout that is stuck, so look at
+  `kubectl rollout status` for the cause.
 
 OpenChoreo's own clients (its workload publisher, for example) are not AE's
 and `aectl` does not create them.
