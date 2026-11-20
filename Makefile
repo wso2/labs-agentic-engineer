@@ -292,9 +292,14 @@ AECTL_CONFIG ?= skaffold/defaults.yaml
 # OpenChoreo's control plane trusts the organization, no platform ThunderID is
 # installed, and aectl imports those secrets and installs with idp.clients
 # imported. Left out there, because each signs in with a client that exists
-# only in ThunderID: OpenChoreo's portal, the observability plane, Agent
-# Manager, the SRE agent and dev-seed (connect GitHub and the model key in
-# the console's welcome step). A build's last step signs in as OpenChoreo's
+# only in ThunderID: OpenChoreo's portal, Agent Manager, the SRE agent and
+# dev-seed (connect GitHub and the model key in the console's welcome step).
+# Of the observability plane only the logs part is installed, and only when
+# the observer's own client is on the organization: run ae-asgardeo-apps.sh
+# with --with-openchoreo-observer and its secret file, oc-observer-reader in
+# AE_ASGARDEO_SECRETS_DIR, makes dev-env install it, so a finished coding
+# run's log can be read back. Without that file the plane is left out.
+# A build's last step signs in as OpenChoreo's
 # own workload publisher client: run ae-asgardeo-apps.sh with
 # --with-openchoreo-publisher and its secret file, in AE_ASGARDEO_SECRETS_DIR,
 # makes dev-env point the build template at the organization
@@ -308,10 +313,11 @@ AECTL_CONFIG ?= skaffold/defaults.yaml
 #   make dev-env AE_DEV_IDP=asgardeo ASGARDEO_TENANT=<handle> \
 #     ASGARDEO_ADMIN_CLIENT_ID_FILE=<file> ASGARDEO_ADMIN_CLIENT_SECRET_FILE=<file>
 # ae-asgardeo-apps.sh and the four secret files are then not needed, and
-# AE_ASGARDEO_SECRETS_DIR is optional: it only holds OpenChoreo's publisher
-# secret file. The install runs with --replace-client-secrets, because the
-# applications stay in the organization while each new cluster starts with an
-# empty vault. Do not use it on an organization that another install uses.
+# AE_ASGARDEO_SECRETS_DIR is optional: it only holds the secret files of
+# OpenChoreo's publisher and observer clients. The install runs with
+# --replace-client-secrets, because the applications stay in the organization
+# while each new cluster starts with an empty vault. Do not use it on an
+# organization that another install uses.
 AE_DEV_IDP ?= thunder
 ASGARDEO_TENANT ?=
 AE_ASGARDEO_SECRETS_DIR ?=
