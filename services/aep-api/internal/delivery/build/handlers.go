@@ -29,6 +29,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
 	"github.com/wso2/aep/aep-api/internal/platform/reqspec"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // Handler serves the build feature on the strict interface: build-project /
@@ -138,9 +139,19 @@ func (h *Handler) GetBuildPreflight(ctx context.Context, request gen.GetBuildPre
 	}
 	pf, err := h.preflight.Preflight(ctx, org, request.ProjectName)
 	if err != nil {
-		return nil, apierr.WithCause(apierr.Internal("compute build preflight: "+err.Error()), err)
+		return nil, mapPreflightError(err)
 	}
 	return gen.GetBuildPreflight200JSONResponse(toBuildPreflight(pf)), nil
+}
+
+// mapPreflightError maps a Preflight failure onto the envelope: a project with
+// no repository is a 404 (the same status/message mapTagError already gives
+// it), never a server fault.
+func mapPreflightError(err error) error {
+	if errors.Is(err, sourcecontrol.ErrRepoNotFound) {
+		return apierr.NotFound("project repository not found")
+	}
+	return apierr.WithCause(apierr.Internal("compute build preflight: "+err.Error()), err)
 }
 
 // mapBuildRunError translates Run's failures onto the envelope: the
