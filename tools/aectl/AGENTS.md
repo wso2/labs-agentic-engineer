@@ -180,7 +180,16 @@ What differs:
   organization for a token with the secret of the vault. If the token is
   refused, the command stops. With `--replace-client-secrets`,
   `RegenerateSecret` gets a new secret from Asgardeo, and `aectl` writes it
-  over the vault path. `applyReplacedClientSecrets` then syncs the cluster
-  Secrets and restarts the Deployments that read them. This is the only
-  write of `aectl` over a client secret that the vault holds, and
-  `install --reuse-secrets` does it too with the flag.
+  over the vault path. This is the only write of `aectl` over a client
+  secret that the vault holds, and `install --reuse-secrets` does it too
+  with the flag.
+- **Pods that hold an old secret.** A pod takes a secret only when it
+  starts. `recordClientSecretChecksums` writes, on each Deployment that
+  reads a client Secret, a checksum of the Secret
+  (`clientSecretChecksumAnnotation`) before a run changes a secret.
+  `reconcileClientSecretReaders` runs at the end of each run: after a
+  replace it syncs the cluster Secrets, and it restarts each Deployment
+  whose checksum is not the checksum of the Secret
+  (`restartStaleSecretReaders`). The restart and the new checksum are one
+  patch. Thus a run that stopped after the write to the vault is completed
+  by the next run. A replaced secret whose Secret did not sync is an error.
