@@ -709,7 +709,16 @@ func (s *Service) GetProjectStatus(ctx context.Context, orgName, projectName str
 
 	repo, err := s.repoSvc.GetRepo(ctx, orgName, projectName)
 	if err != nil {
-		slog.ErrorContext(ctx, "get repo for project status", "error", err, "project", projectName)
+		// A missing repository is a state of the project, not a server fault —
+		// log it below ERROR so a project that was never given one (e.g. a
+		// sample project with nothing behind it) does not page anyone. Any
+		// other failure (DB down, etc.) stays loud: the phase still degrades to
+		// "no-repo" either way, but only the expected case is quiet.
+		if errors.Is(err, sourcecontrol.ErrRepoNotFound) {
+			slog.WarnContext(ctx, "get repo for project status", "error", err, "project", projectName)
+		} else {
+			slog.ErrorContext(ctx, "get repo for project status", "error", err, "project", projectName)
+		}
 		status.Phase = "no-repo"
 		return status, nil
 	}
