@@ -190,6 +190,17 @@ What differs:
   `reconcileClientSecretReaders` runs at the end of each run: after a
   replace it syncs the cluster Secrets, and it restarts each Deployment
   whose checksum is not the checksum of the Secret
-  (`restartStaleSecretReaders`). The restart and the new checksum are one
-  patch. Thus a run that stopped after the write to the vault is completed
-  by the next run. A replaced secret whose Secret did not sync is an error.
+  (`restartStaleSecretReaders`). A Deployment gets one patch for all its
+  stale Secrets. The patch records the checksums and puts them into the pod
+  template, so the restart and the record are one change. Thus a run that
+  stopped after the write to the vault is completed by the next run. A
+  replaced secret whose Secret did not sync is an error. In
+  `platform sync-clients`, `waitForRollouts` then waits until each reader
+  has rolled out, and a rollout that does not finish is an error.
+  `platform install` waits for all pods itself.
+- **GitHub reconnect.** A changed secret of one of the org's clients needs
+  a GitHub reconnect, because only aep-api writes the secret that the org
+  stores. `orgClientSecretWarning` says so. `reconcileClientSecretReaders`
+  prints it before a step that can fail, in the run that replaced the
+  secret, and in a later run that restarts a reader of the Secret of the
+  org's clients.
