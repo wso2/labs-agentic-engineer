@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -64,6 +65,7 @@ var ConfigMapKeys = []string{
 	"idp.claims.caller_type.user",
 	"idp.issuer",
 	"idp.org_handle",
+	"asgardeo.api_url",
 	"console.public_url",
 	"tryit.public_url",
 	"oc.api_url",
@@ -97,21 +99,23 @@ const (
 // Who creates AE's clients on the platform IdP (idp.clients). ClientsThunder:
 // aectl registers them on a ThunderID it administers. ClientsImported: the
 // IdP's admin created them and imports their secrets; aectl administers
-// nothing on the IdP.
+// nothing on the IdP. ClientsAsgardeo: aectl creates them in an Asgardeo
+// organization, with an admin credential the operator gives for that run.
 const (
 	ClientsThunder  = "thunder"
 	ClientsImported = "imported"
+	ClientsAsgardeo = "asgardeo"
 )
 
 type configKeyMeta struct {
 	required   bool
 	kind       keyKind
 	enumValues []string // only for kindEnum
-	// clients ties the key to one value of idp.clients: it is then required
-	// under that value (whatever required says) and not required under
+	// clients ties the key to values of idp.clients: it is then required
+	// under each of them (whatever required says) and not required under
 	// another. exclusive also refuses a value under another, for a key
 	// nothing reads there.
-	clients   string
+	clients   []string
 	exclusive bool
 }
 
@@ -119,15 +123,15 @@ type configKeyMeta struct {
 var keyRegistry = map[string]configKeyMeta{
 	// Who creates AE's clients on the platform IdP. Optional; unset is
 	// thunder.
-	"idp.clients": {required: false, kind: kindEnum, enumValues: []string{ClientsImported, ClientsThunder}},
+	"idp.clients": {required: false, kind: kindEnum, enumValues: []string{ClientsAsgardeo, ClientsImported, ClientsThunder}},
 	// The ThunderID aectl administers: where it runs, how pods and the
 	// browser reach it, and the admin client aectl registers clients with.
-	// Required when aectl registers the clients (idp.clients thunder or
-	// unset) and refused otherwise, where nothing reads them.
-	"thunder.namespace":       {clients: ClientsThunder, exclusive: true, kind: kindString},
-	"thunder.url":             {clients: ClientsThunder, exclusive: true, kind: kindURL},
-	"thunder.admin_client_id": {clients: ClientsThunder, exclusive: true, kind: kindString},
-	"thunder.public_url":      {clients: ClientsThunder, exclusive: true, kind: kindURL},
+	// Required when the IdP is that ThunderID (idp.clients thunder or unset)
+	// and refused otherwise, where nothing reads them.
+	"thunder.namespace":       {clients: []string{ClientsThunder}, exclusive: true, kind: kindString},
+	"thunder.url":             {clients: []string{ClientsThunder}, exclusive: true, kind: kindURL},
+	"thunder.admin_client_id": {clients: []string{ClientsThunder}, exclusive: true, kind: kindString},
+	"thunder.public_url":      {clients: []string{ClientsThunder}, exclusive: true, kind: kindURL},
 	// The claim names and values of the platform IdP: how its tokens name the
 	// caller's org and caller type (internal/idpclaims). aectl passes them to
 	// the chart. Every key is optional here: a value comes from the preset
@@ -141,15 +145,22 @@ var keyRegistry = map[string]configKeyMeta{
 	"idp.claims.caller_type.machine": {kind: kindString},
 	"idp.claims.caller_type.user":    {kind: kindString},
 	// The platform IdP's issuer: the iss of every token, and where the
-	// discovery document is read. Required with imported clients, where it
-	// must be https (see validateViper). Optional on a ThunderID aectl
-	// administers, whose issuer is thunder.public_url when this is unset.
-	"idp.issuer": {clients: ClientsImported, kind: kindURL},
+	// discovery document is read. Required where aectl does not run the IdP
+	// (idp.clients imported or asgardeo), and it must be https there (see
+	// validateViper). Optional on a ThunderID aectl administers, whose issuer
+	// is thunder.public_url when this is unset.
+	"idp.issuer": {clients: []string{ClientsImported, ClientsAsgardeo}, kind: kindURL},
 	// The handle the IdP's tokens name the one org by: a ThunderID
 	// organization unit's handle, an Asgardeo organization's handle. aep-api
 	// maps it to oc.default_org_namespace, and on ThunderID aectl registers
 	// the org's two clients under that organization unit.
 	"idp.org_handle": {required: true, kind: kindString},
+	// The address of the Asgardeo organization's management API
+	// (https://api.asgardeo.io/t/<organization>/api/server/v1), where aectl
+	// creates the clients. It is a key of its own because the IdP's discovery
+	// document does not name it. Required when idp.clients is asgardeo, where
+	// it must be https (see validateViper), and refused otherwise.
+	"asgardeo.api_url": {clients: []string{ClientsAsgardeo}, exclusive: true, kind: kindURL},
 	// The platform's three browser-facing origins. All optional: each is bound
 	// to a flag carrying the local default, so a file that omits them installs
 	// the same cluster it always did. Set them together — re-domaining one and
@@ -348,9 +359,14 @@ func validateViper(v *viper.Viper) []string {
 		errs = append(errs, err.Error())
 	}
 	// An IdP aectl does not run is reached over the public internet, by the
-	// operator's machine and by every pod: its issuer has to be https.
-	if issuer := v.GetString("idp.issuer"); clients == ClientsImported && issuer != "" && !strings.HasPrefix(issuer, "https://") {
-		errs = append(errs, fmt.Sprintf("idp.issuer: must be an https:// URL when idp.clients is %s: %q", ClientsImported, issuer))
+	// operator's machine and by every pod: its issuer has to be https. So has
+	// the management API, which is sent the admin credential's token.
+	if clients != ClientsThunder {
+		for _, k := range []string{"idp.issuer", "asgardeo.api_url"} {
+			if val := v.GetString(k); val != "" && !strings.HasPrefix(val, "https://") {
+				errs = append(errs, fmt.Sprintf("%s: must be an https:// URL when idp.clients is %s: %q", k, clients, val))
+			}
+		}
 	}
 	for _, k := range ConfigMapKeys {
 		meta, ok := keyRegistry[k]
@@ -359,16 +375,16 @@ func validateViper(v *viper.Viper) []string {
 		}
 		val := v.GetString(k)
 		required := meta.required
-		if meta.clients != "" {
-			required = meta.clients == clients
+		if len(meta.clients) > 0 {
+			required = slices.Contains(meta.clients, clients)
 			if !required && meta.exclusive && val != "" {
-				errs = append(errs, fmt.Sprintf("%s: read only when idp.clients is %s; unset it", k, meta.clients))
+				errs = append(errs, fmt.Sprintf("%s: read only when idp.clients is %s; unset it", k, strings.Join(meta.clients, " or ")))
 				continue
 			}
 		}
 		if required && val == "" {
-			if meta.clients != "" {
-				errs = append(errs, fmt.Sprintf("%s: required when idp.clients is %s but not set", k, meta.clients))
+			if len(meta.clients) > 0 {
+				errs = append(errs, fmt.Sprintf("%s: required when idp.clients is %s but not set", k, clients))
 			} else {
 				errs = append(errs, fmt.Sprintf("%s: required but not set", k))
 			}
