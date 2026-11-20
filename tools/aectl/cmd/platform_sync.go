@@ -285,7 +285,7 @@ func runSyncClients(cmd *cobra.Command, args []string) error {
 		}
 		steps.idpName = idpNameAsgardeo
 		steps.setupClients = func(ctx context.Context, skip map[string]string) error {
-			return doAsgardeoSetup(ctx, k8sClient, syncClientsNamespace, consolePublicURL(), admin, session.put, skip)
+			return doAsgardeoSetup(ctx, k8sClient, syncClientsNamespace, consolePublicURL(), admin, session.put, skip, true)
 		}
 	}
 	return syncClients(ctx, steps)

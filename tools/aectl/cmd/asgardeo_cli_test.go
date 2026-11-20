@@ -25,6 +25,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/viper"
 	appsv1 "k8s.io/api/apps/v1"
@@ -570,34 +571,61 @@ func TestRecordClientSecretChecksums(t *testing.T) {
 	}
 }
 
+// reconcileRun is the injected steps of one reconcileClientSecretReaders run
+// and what they recorded.
+type reconcileRun struct {
+	syncs    int
+	warnings []string
+	waited   [][]string
+}
+
+// steps are reconcileSteps whose sync is the given one, counted.
+func (r *reconcileRun) steps(sync func(context.Context) (map[string]string, error)) reconcileSteps {
+	return reconcileSteps{
+		sync: func(ctx context.Context) (map[string]string, error) {
+			r.syncs++
+			return sync(ctx)
+		},
+		waitRollouts: func(_ context.Context, names []string) error {
+			r.waited = append(r.waited, names)
+			return nil
+		},
+		warn: func(msg string) { r.warnings = append(r.warnings, msg) },
+	}
+}
+
 // After Asgardeo issued new secrets the cluster's Secrets are synced once,
 // and the Deployments that read a replaced secret are restarted: a running
 // pod keeps the value it started with. A Deployment that reads another
 // Secret is left alone. A run that replaced nothing, on a cluster where
-// nothing is stale, syncs nothing and restarts nothing.
+// nothing is stale, syncs nothing and restarts nothing, and still waits for
+// the readers: an earlier run's restart may not have finished.
 func TestReconcileClientSecretReaders_SyncsAndRestartsTheReaders(t *testing.T) {
 	c := replaceRun(t)
 	ctx, names := context.Background(), []string{orgClientSecretsName}
-	syncs := 0
 	sync := func(context.Context) (map[string]string, error) {
-		syncs++
 		setOrgSecret(t, c, "new")
 		return nil, nil
 	}
 
-	if err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, nil, sync); err != nil || syncs != 0 {
-		t.Fatalf("nothing replaced: err %v, syncs %d", err, syncs)
+	quiet := &reconcileRun{}
+	if err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, nil, quiet.steps(sync)); err != nil || quiet.syncs != 0 {
+		t.Fatalf("nothing replaced: err %v, syncs %d", err, quiet.syncs)
 	}
-	if restartedAt(t, c, "aep-api") != "" {
-		t.Fatal("a Deployment was restarted though no secret changed")
+	if restartedAt(t, c, "aep-api") != "" || len(quiet.warnings) != 0 {
+		t.Fatalf("a Deployment was restarted, or a warning printed, though no secret changed: %v", quiet.warnings)
+	}
+	if len(quiet.waited) != 1 || !slices.Equal(quiet.waited[0], []string{"aep-api"}) {
+		t.Errorf("waited for %v, want the one reader of the client Secret", quiet.waited)
 	}
 
+	run := &reconcileRun{}
 	replaced := []idpClientDef{defOf(t, "aep-publisher-default"), defOf(t, "ae-studio-default")}
-	if err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, replaced, sync); err != nil {
+	if err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, replaced, run.steps(sync)); err != nil {
 		t.Fatal(err)
 	}
-	if syncs != 1 {
-		t.Errorf("synced %d times, want once", syncs)
+	if run.syncs != 1 {
+		t.Errorf("synced %d times, want once", run.syncs)
 	}
 	if restartedAt(t, c, "aep-api") == "" || recordedChecksum(t, c, "aep-api") != secretChecksum(orgSecret("new").Data) {
 		t.Error("the reader of the replaced secrets was not restarted and recorded with the new checksum")
@@ -606,26 +634,122 @@ func TestReconcileClientSecretReaders_SyncsAndRestartsTheReaders(t *testing.T) {
 		t.Error("a Deployment that reads another Secret was restarted")
 	}
 	failing := func(context.Context) (map[string]string, error) { return nil, errors.New("no cluster") }
-	if err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, replaced, failing); err == nil {
+	if err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, replaced, (&reconcileRun{}).steps(failing)); err == nil {
 		t.Error("a failed sync after a replace is not reported")
 	}
 }
 
-// After a replace of an org client's secret one step is left to the
-// operator: the GitHub reconnect. The warning names the client and that
-// step, and does not tell the operator to restart aep-api, which the command
-// does. A replaced platform client needs no warning.
-func TestReplacedOrgClientWarning(t *testing.T) {
+// A Deployment that reads several client Secrets gets one patch for all that
+// are stale. Each new checksum is in the pod template too, so a changed
+// checksum changes the template and starts a rollout whatever the clock
+// says.
+func TestRestartStaleSecretReaders_OnePatchPerDeployment(t *testing.T) {
 	setAsgardeoClientsConfig(t)
-	if msg := replacedOrgClientWarning([]idpClientDef{defOf(t, "aep-api-client")}); msg != "" {
-		t.Errorf("a platform client: %q, want no warning", msg)
+	internal := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "wso2-aep", Name: aeStudioInternalSecretsName},
+		Data:       map[string][]byte{"AE_STUDIO_INTERNAL_CLIENT_SECRET": []byte("old")},
 	}
-	msg := replacedOrgClientWarning([]idpClientDef{defOf(t, "aep-api-client"), defOf(t, "aep-publisher-default")})
-	if !strings.Contains(msg, "aep-publisher-default") || !strings.Contains(msg, "reconnect GitHub") {
-		t.Errorf("warning %q lacks the client or the reconnect step", msg)
+	api := deploymentReading("aep-api", orgClientSecretsName)
+	api.Spec.Template.Spec.Containers[0].EnvFrom = append(api.Spec.Template.Spec.Containers[0].EnvFrom,
+		corev1.EnvFromSource{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: aeStudioInternalSecretsName}}})
+	c := fake.NewSimpleClientset(orgSecret("old"), internal, api)
+	ctx, names := context.Background(), []string{aeStudioInternalSecretsName, orgClientSecretsName}
+	if err := recordClientSecretChecksums(ctx, c, "wso2-aep", names); err != nil {
+		t.Fatal(err)
+	}
+	setOrgSecret(t, c, "new")
+	internal.Data["AE_STUDIO_INTERNAL_CLIENT_SECRET"] = []byte("new")
+	if _, err := c.CoreV1().Secrets("wso2-aep").Update(ctx, internal, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	patches := 0
+	c.PrependReactor("patch", "deployments", func(k8stesting.Action) (bool, runtime.Object, error) {
+		patches++
+		return false, nil, nil
+	})
+	found, err := restartStaleSecretReaders(ctx, c, "wso2-aep", names)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if patches != 1 || !slices.Equal(found.restarted, []string{"aep-api"}) || len(found.staleSecrets) != 2 {
+		t.Fatalf("patches %d, restarted %v, stale Secrets %v; want one patch of aep-api for both Secrets", patches, found.restarted, found.staleSecrets)
+	}
+	d, err := c.AppsV1().Deployments("wso2-aep").Get(ctx, "aep-api", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string]map[string][]byte{orgClientSecretsName: orgSecret("new").Data, aeStudioInternalSecretsName: internal.Data} {
+		key, want := clientSecretChecksumAnnotation(name), secretChecksum(data)
+		if d.Annotations[key] != want || d.Spec.Template.Annotations[key] != want {
+			t.Errorf("%s: recorded %q, in the pod template %q; want %q in both", name, d.Annotations[key], d.Spec.Template.Annotations[key], want)
+		}
+	}
+}
+
+// After a change of an org client's secret one step is left to the operator:
+// the GitHub reconnect. The warning names that step, and the clients where
+// the run knows them. It does not tell the operator to restart aep-api,
+// which the command does.
+func TestOrgClientSecretWarning(t *testing.T) {
+	setAsgardeoClientsConfig(t)
+	if ids := orgClientIDs([]idpClientDef{defOf(t, "aep-api-client"), defOf(t, "ae-studio-internal-client")}); len(ids) != 0 {
+		t.Errorf("platform clients are taken for the org's: %v", ids)
+	}
+	ids := orgClientIDs([]idpClientDef{defOf(t, "aep-api-client"), defOf(t, "aep-publisher-default")})
+	msg := orgClientSecretWarning(ids)
+	if !slices.Equal(ids, []string{"aep-publisher-default"}) || !strings.Contains(msg, "aep-publisher-default") || !strings.Contains(msg, "reconnect GitHub") {
+		t.Errorf("ids %v, warning %q: want the org's client and the reconnect step", ids, msg)
 	}
 	if strings.Contains(msg, "restart") || strings.Contains(msg, "aep-api-client") {
 		t.Errorf("warning %q tells the operator to restart, or names a platform client", msg)
+	}
+	if msg := orgClientSecretWarning(nil); !strings.Contains(msg, orgClientSecretsName) || !strings.Contains(msg, "reconnect GitHub") {
+		t.Errorf("warning without client ids %q lacks the Secret or the reconnect step", msg)
+	}
+}
+
+// The reconnect warning does not depend on the run that replaced the secret
+// ending well. It is printed before a step that can fail, and a later run
+// that completes the restart prints it again, though it replaced nothing.
+// A replaced platform client prints none.
+func TestReconcileClientSecretReaders_TheReconnectWarningSurvivesAFailedRun(t *testing.T) {
+	c := replaceRun(t)
+	ctx, names := context.Background(), []string{orgClientSecretsName}
+	publisher := []idpClientDef{defOf(t, "aep-publisher-default")}
+
+	failed := &reconcileRun{}
+	failing := func(context.Context) (map[string]string, error) {
+		setOrgSecret(t, c, "new")
+		return nil, errors.New("ESO is not reachable")
+	}
+	if err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, publisher, failed.steps(failing)); err == nil {
+		t.Fatal("the failed sync is not reported")
+	}
+	if len(failed.warnings) != 1 || !strings.Contains(failed.warnings[0], "aep-publisher-default") || !strings.Contains(failed.warnings[0], "reconnect GitHub") {
+		t.Fatalf("warnings of the failed run %v, want the reconnect warning for the publisher", failed.warnings)
+	}
+
+	next := &reconcileRun{}
+	never := func(context.Context) (map[string]string, error) {
+		t.Error("synced though nothing was replaced")
+		return nil, nil
+	}
+	if err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, nil, next.steps(never)); err != nil {
+		t.Fatal(err)
+	}
+	if restartedAt(t, c, "aep-api") == "" {
+		t.Fatal("the next run did not restart the reader")
+	}
+	if len(next.warnings) != 1 || !strings.Contains(next.warnings[0], "reconnect GitHub") {
+		t.Errorf("warnings of the next run %v, want the reconnect warning again", next.warnings)
+	}
+
+	// Run in which only a platform client was replaced: no org is concerned.
+	platform := &reconcileRun{}
+	ok := func(context.Context) (map[string]string, error) { return nil, nil }
+	if err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, []idpClientDef{defOf(t, "aep-api-client")}, platform.steps(ok)); err != nil || len(platform.warnings) != 0 {
+		t.Errorf("a replaced platform client: err %v, warnings %v; want none", err, platform.warnings)
 	}
 }
 
@@ -644,20 +768,24 @@ func TestReconcileClientSecretReaders_TheNextRunCompletesAFailedRestart(t *testi
 		}
 		return false, nil, nil
 	})
-	err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, []idpClientDef{defOf(t, "ae-studio-default")}, sync)
+	first := &reconcileRun{}
+	err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, []idpClientDef{defOf(t, "ae-studio-default")}, first.steps(sync))
 	if err == nil || !strings.Contains(err.Error(), "sync-clients") {
 		t.Fatalf("err = %v, want the failed restart with the command to run again", err)
 	}
 	if restartedAt(t, c, "aep-api") != "" || recordedChecksum(t, c, "aep-api") != secretChecksum(orgSecret("old").Data) {
 		t.Fatal("the Deployment is recorded as current though its restart failed")
 	}
+	if len(first.waited) != 0 {
+		t.Error("the run waited for a restart that did not happen")
+	}
 
 	failPatch = false
-	neverSync := func(context.Context) (map[string]string, error) {
+	never := func(context.Context) (map[string]string, error) {
 		t.Error("the next run synced though it replaced nothing")
 		return nil, nil
 	}
-	if err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, nil, neverSync); err != nil {
+	if err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, nil, (&reconcileRun{}).steps(never)); err != nil {
 		t.Fatal(err)
 	}
 	if restartedAt(t, c, "aep-api") == "" || recordedChecksum(t, c, "aep-api") != secretChecksum(orgSecret("new").Data) {
@@ -675,7 +803,7 @@ func TestReconcileClientSecretReaders_AnUnsyncedReplacedSecretIsAnError(t *testi
 	unsynced := func(context.Context) (map[string]string, error) {
 		return map[string]string{orgClientSecretsName: "not refreshed in 90s"}, nil
 	}
-	err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, []idpClientDef{defOf(t, "ae-studio-default")}, unsynced)
+	err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, []idpClientDef{defOf(t, "ae-studio-default")}, (&reconcileRun{}).steps(unsynced))
 	if err == nil {
 		t.Fatal("an unsynced replaced secret is reported as a success")
 	}
@@ -689,10 +817,57 @@ func TestReconcileClientSecretReaders_AnUnsyncedReplacedSecretIsAnError(t *testi
 	}
 
 	setOrgSecret(t, c, "new") // the next run's own sync brings the value
-	if err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, nil, unsynced); err != nil {
+	if err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, nil, (&reconcileRun{}).steps(unsynced)); err != nil {
 		t.Fatal(err)
 	}
 	if restartedAt(t, c, "aep-api") == "" {
 		t.Error("the next run did not restart the reader of the Secret that has now synced")
+	}
+}
+
+// A restart that does not finish is reported: the run does not end on a
+// success line while pods of the old template may still be running. This
+// holds for a later run too, which restarts nothing.
+func TestReconcileClientSecretReaders_AStalledRestartIsAnError(t *testing.T) {
+	c := replaceRun(t)
+	ctx, names := context.Background(), []string{orgClientSecretsName}
+	st := (&reconcileRun{}).steps(func(context.Context) (map[string]string, error) { return nil, nil })
+	st.waitRollouts = func(ctx context.Context, readers []string) error {
+		return waitForRollouts(ctx, c, "wso2-aep", readers, 0, time.Millisecond)
+	}
+	// The fake cluster has no controller: the Deployment never reports a
+	// pod of its template as available.
+	for i := 0; i < 2; i++ {
+		err := reconcileClientSecretReaders(ctx, c, "wso2-aep", names, nil, st)
+		if err == nil || !strings.Contains(err.Error(), "aep-api") || !strings.Contains(err.Error(), "rollout status") {
+			t.Fatalf("run %d: err = %v, want the stalled restart of aep-api", i+1, err)
+		}
+	}
+}
+
+// A Deployment has rolled out when every pod is of its current template and
+// available.
+func TestRolledOut(t *testing.T) {
+	two := int32(2)
+	d := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Generation: 4}, Spec: appsv1.DeploymentSpec{Replicas: &two}}
+	for name, tc := range map[string]struct {
+		status appsv1.DeploymentStatus
+		want   bool
+	}{
+		"done":                    {appsv1.DeploymentStatus{ObservedGeneration: 4, Replicas: 2, UpdatedReplicas: 2, AvailableReplicas: 2}, true},
+		"the change is not seen":  {appsv1.DeploymentStatus{ObservedGeneration: 3, Replicas: 2, UpdatedReplicas: 2, AvailableReplicas: 2}, false},
+		"an old pod is left":      {appsv1.DeploymentStatus{ObservedGeneration: 4, Replicas: 3, UpdatedReplicas: 2, AvailableReplicas: 3}, false},
+		"a new pod is not up":     {appsv1.DeploymentStatus{ObservedGeneration: 4, Replicas: 2, UpdatedReplicas: 2, AvailableReplicas: 1}, false},
+		"one pod is not replaced": {appsv1.DeploymentStatus{ObservedGeneration: 4, Replicas: 2, UpdatedReplicas: 1, AvailableReplicas: 2}, false},
+	} {
+		d.Status = tc.status
+		if got := rolledOut(d); got != tc.want {
+			t.Errorf("%s: rolledOut = %v, want %v", name, got, tc.want)
+		}
+	}
+	// No replica count means one.
+	one := &appsv1.Deployment{Status: appsv1.DeploymentStatus{Replicas: 1, UpdatedReplicas: 1, AvailableReplicas: 1}}
+	if !rolledOut(one) {
+		t.Error("a Deployment with no replica count and one available pod is not rolled out")
 	}
 }
