@@ -1,6 +1,8 @@
 # ADR-0046 — AE Studio checks Platform IdP tokens itself
 
-**Status:** Accepted · 2026-10-06
+**Status:** Accepted · 2026-10-06 · decision 2 amended by
+[ADR-0054](ADR-0054-the-platform-idp-is-a-setup-choice.md) (decision 6): the
+gate for aep-api's install-wide client does not read that token's org claim
 **Related:** [ADR-0045](ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)
 (the org's AE Studio) ·
 [ADR-0028](ADR-0028-the-platform-idp-is-neutral-infrastructure.md) (the

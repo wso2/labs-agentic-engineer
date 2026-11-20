@@ -38,17 +38,14 @@ reads them from `<thunder.public_url>/.well-known/openid-configuration` at
 install and update, and puts their paths on `thunder.url` for the pods.
 `idp.clients` says who creates AE's clients on the IdP: `thunder` (the
 default) means `aectl` registers them on the ThunderID of the `thunder:`
-block, `imported` means the IdP's admin created them. The optional `idp.claims`
-block gives the names and values of the IdP's own claims, by which every
-reader of its tokens says who the caller is (`org.handle`, `org.id`,
-`org.name`, `caller_type.claim`, `caller_type.machine`, `caller_type.user`):
-each comes from a preset (`idp.claims.preset`: `thunder`, `asgardeo` or
-`none`; the preset with the name of `idp.kind` when it is not set), then from
-the block's own keys, then from an `AEP_IDP_CLAIMS_*` environment variable
-for one run. `aectl` passes them to the chart, and
-`aectl platform config test` prints each value and where it came from. The
-optional `idp.kind` (`thunder` when unset) has that one effect on the preset.
-No reader of tokens reads it.
+block, `imported` means the IdP's admin created them. The `idp.claims` block
+is the IdP's token dialect: how its tokens name the caller's org and whether
+a token was issued to a machine or to a user (`org.handle`, `org.id`,
+`org.name`, `caller_type.claim`, `caller_type.machine`, `caller_type.user`).
+Each value comes from a preset (`idp.claims.preset`: `thunder`, `asgardeo` or
+`none`; `thunder` when unset), then from the block's own keys, so a ThunderID
+install sets nothing there. `aectl` passes the values to the chart, and
+`aectl platform config test` prints each value and where it came from.
 `idp.org_handle` names the one org the install serves, by the handle the
 IdP's tokens carry.
 
@@ -377,7 +374,7 @@ the Compose-chain removal.
 
 ## Install with Asgardeo as the platform IdP
 
-`idp.clients: imported` with `idp.kind: asgardeo` makes an Asgardeo
+`idp.clients: imported` with `idp.claims.preset: asgardeo` makes an Asgardeo
 organization the platform IdP, in place of the in-cluster ThunderID. AE holds
 no management rights on the organization, so its admin prepares it first and
 `aectl` administers nothing on it. Like every install, it serves one org.
@@ -402,7 +399,8 @@ no management rights on the organization, so its admin prepares it first and
    ```yaml
    idp:
      clients: "imported"
-     kind: "asgardeo"
+     claims:
+       preset: "asgardeo"
      issuer: "https://api.asgardeo.io/t/<handle>/oauth2/token"
      org_handle: "<handle>"
    oc:
@@ -441,6 +439,79 @@ OpenChoreo itself must trust the same organization (its `security.oidc`
 issuer and key set), and its own clients are the cluster owner's to create.
 The chart's `aep-api-client-binding` grants aep-api's client by its
 `client_id` claim, which Asgardeo sets to the client id.
+
+## Use another IdP
+
+AE reads the platform IdP's tokens by configuration, so an IdP other than
+ThunderID or Asgardeo can be configured without a code change. That is
+**configurable, not supported**: AE has been run against ThunderID and
+Asgardeo only, and the list below is what those two runs showed AE needs.
+Expect to find more on a third.
+
+**What the IdP has to provide**
+
+- An OIDC discovery document at `<issuer>/.well-known/openid-configuration`,
+  over https.
+- Access tokens that are signed JWTs (not opaque tokens), with `iss`, `aud`,
+  `exp` and `sub`.
+- The client credentials grant for machine clients, and browser sign-in with
+  the authorization code grant and PKCE for the console. Sign-out returns to
+  the console's origin, which has to be registered.
+- On a machine token, the client's id in a top-level `client_id` claim, as
+  RFC 9068 names it, and in `aud`.
+- In **top-level text claims** of every access token: the caller's org as a
+  handle and as an id, and whether the token was issued to a machine or to a
+  user. The org's id has to be a UUID. Most IdPs can be configured to add
+  such claims; AE does not read nested claims.
+- One org: every user and client AE sees belongs to it.
+
+**Steps**
+
+1. **Check the IdP** against the list above.
+2. **Point OpenChoreo at the same IdP.** This is the cluster owner's, outside
+   AE's install: OpenChoreo's `security.oidc` issuer and key set, its own
+   clients, and its setting for the claim that names a machine caller, which
+   has to be `client_id`.
+3. **Create AE's five clients** with the IdP's own tools: the console's
+   browser client `aep-console-client`, and the machine clients
+   `aep-api-client`, `ae-studio-internal-client`, `aep-publisher-<namespace>`
+   and `ae-studio-<namespace>`. `deployments/scripts/ae-asgardeo-apps.sh` is
+   the worked example: its header lists each client's settings.
+4. **Find the claim names.** Get one user token and one machine token and
+   decode their payloads. Do not paste a token into a website or a chat.
+5. **Write the config.** Copy `skaffold/defaults.yaml`, comment the four
+   `thunder.*` keys out, and write the whole `idp:` block with no preset:
+
+   ```yaml
+   idp:
+     clients: "imported"
+     issuer: "https://<the IdP's issuer>"
+     org_handle: "<the org's handle in the tokens>"
+     claims:
+       preset: "none"
+       org:
+         handle: "<claim>"
+         id: "<claim>"
+         name: "<claim>"          # optional
+       caller_type:
+         claim: "<claim>"
+         machine: "<value>"
+         user: "<value>"          # set it: any third value is then refused
+   ```
+
+   With `preset: "none"` a required value that is missing stops the install.
+   Without it the block would start from ThunderID's names.
+   `deployments/scripts/ae-asgardeo-aectl-config.sh` writes such a config for
+   Asgardeo.
+6. **Check, import, install.** `aectl platform config test --config <file>`
+   prints each claim value and where it came from. Then import the config,
+   import the four client secrets (step 2 of the section above) and run
+   `aectl platform install`.
+
+A claim value belongs in the config file. `aectl` stops when an
+`AEP_IDP_CLAIMS_*` environment variable is set: such a value would hold for
+one run, and the next update without it would send the config's value back
+to every reader. Install and update print every claim value with its source.
 
 ## Credentials
 

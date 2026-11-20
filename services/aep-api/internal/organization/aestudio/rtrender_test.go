@@ -218,7 +218,6 @@ func rtVars(relayURL string) map[string]any {
 			"gatewayHost": "openchoreoapis.localhost", "publicScheme": "http", "publicPortSuffix": ":19080",
 			"listenerName": "http", "consoleOrigins": []any{"http://console.ae.localhost:8080"},
 			"idp": map[string]any{"issuer": "http://idp", "jwksUrl": "http://idp/jwks", "tokenUrl": "http://idp/token",
-				"kind": "thunder",
 				"claims": map[string]any{"orgHandle": "ouHandle", "orgId": "ouId", "orgName": "ouName",
 					"callerTypeClaim": "grant_type", "callerTypeMachine": "client_credentials", "callerTypeUser": ""},
 				"userAudiences": []any{"APP_FACTORY_CONSOLE"}},

@@ -182,10 +182,30 @@ idp:
   #             `aectl platform secret import`. `aectl` administers nothing on
   #             the IdP. Use it for an Asgardeo organization.
   clients: "thunder"
-  # The IdP's token dialect: the claim names and rules every reader of its
-  # tokens uses to say who the caller is (aep-api, the AE Studio pod, the
-  # console): `thunder` or `asgardeo`. Unset means thunder.
-  kind: "thunder"
+  # How the IdP's tokens name two things no standard defines: the caller's
+  # org, and whether a token was issued to a machine or to a user. `aectl`
+  # passes the values to aep-api, the AE Studio pod and the console, which
+  # read tokens by them and know no IdP. A value comes from the preset, then
+  # from a key set here. An AEP_IDP_CLAIMS_* environment variable is refused:
+  # a claim value belongs in this file. Install, update and
+  # `platform config test` print each value with where it came from.
+  claims:
+    # The shipped values to start from: `thunder` (unset means this) or
+    # `asgardeo`. `none` starts from nothing, for another IdP: every value
+    # marked required below then has to be set, and a missing one stops the
+    # install.
+    preset: "thunder"
+    # Each is the name of a top-level text claim of the IdP's tokens.
+    # org:
+    #   handle: ""   # required: the handle the IdP knows the caller's org by
+    #   id: ""       # required: the IdP's own id for that org, a UUID
+    #   name: ""     # optional: a display name for the org
+    # caller_type:
+    #   claim: ""    # required: the claim that says who a token was issued to
+    #   machine: ""  # required: its value that means a machine
+    #   user: ""     # optional: its value that means a user. Set: only these
+    #                # two values are accepted. Unset: any value other than
+    #                # the machine's is read as a user's.
   # The handle the IdP's tokens name the one org by: the handle of a ThunderID
   # organization unit (local: the built-in `default` unit), or the handle of
   # an Asgardeo organization. aep-api maps it to oc.default_org_namespace and

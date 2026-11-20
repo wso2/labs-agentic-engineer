@@ -194,21 +194,9 @@ func TestTemplate_ContainerCommandsAndEnv(t *testing.T) {
 	}
 }
 
-// The platform IdP's token dialect reaches every container as AE_IDP_KIND,
-// from environmentConfigs.idp.kind: the three readers of the IdP's tokens
-// must read them by the same rules aep-api does.
-func TestTemplate_IDPKindReachesEveryContainer(t *testing.T) {
-	cs := byName(renderedContainers(t, ""))
-	for _, name := range []string{"ae-design-agent", "ae-collab", "ae-studio-tools"} {
-		got, ok := cs[name].env("AE_IDP_KIND")
-		if !ok || got != "thunder" {
-			t.Errorf("%s AE_IDP_KIND = %q (set %v), want thunder from environmentConfigs.idp.kind", name, got, ok)
-		}
-	}
-}
-
-// The IdP's claim names and values reach every container as AE_IDP_CLAIMS_*,
-// from environmentConfigs.idp.claims: the same values aep-api is given.
+// The platform IdP's token dialect reaches every container as AE_IDP_CLAIMS_*,
+// from environmentConfigs.idp.claims: the three readers of the IdP's tokens
+// must read them by the same claim names and values aep-api does.
 func TestTemplate_IDPClaimsReachEveryContainer(t *testing.T) {
 	cs := byName(renderedContainers(t, ""))
 	want := map[string]string{
@@ -225,6 +213,9 @@ func TestTemplate_IDPClaimsReachEveryContainer(t *testing.T) {
 			if !ok || got != value {
 				t.Errorf("%s %s = %q (set %v), want %q from environmentConfigs.idp.claims", name, key, got, ok, value)
 			}
+		}
+		if _, ok := cs[name].env("AE_IDP_KIND"); ok {
+			t.Errorf("%s still gets AE_IDP_KIND", name)
 		}
 	}
 }
@@ -344,10 +335,9 @@ func TestTemplate_ToolsExternalSecretHoldsOnlyThePodsClient(t *testing.T) {
 }
 
 // aep-api's claim settings map onto the RT's environmentConfigs.idp.claims
-// under the property names the RT declares, beside the kind.
+// under the property names the RT declares. No kind is passed.
 func TestEnvConfigsOf_CarriesTheIDPClaims(t *testing.T) {
 	var cfg config.AEStudioConfig
-	cfg.IDP.Kind = "asgardeo"
 	cfg.IDP.Claims = dialect.Claims{OrgHandle: "org_handle", OrgID: "org_id", OrgName: "org_name", CallerType: "aut", Machine: "APPLICATION", User: "APPLICATION_USER"}
 	raw, err := json.Marshal(envConfigsOf(cfg))
 	if err != nil {
@@ -355,7 +345,7 @@ func TestEnvConfigsOf_CarriesTheIDPClaims(t *testing.T) {
 	}
 	var got struct {
 		IDP struct {
-			Kind   string            `json:"kind"`
+			Kind   *string           `json:"kind"`
 			Claims map[string]string `json:"claims"`
 		} `json:"idp"`
 	}
@@ -366,8 +356,8 @@ func TestEnvConfigsOf_CarriesTheIDPClaims(t *testing.T) {
 		"orgHandle": "org_handle", "orgId": "org_id", "orgName": "org_name",
 		"callerTypeClaim": "aut", "callerTypeMachine": "APPLICATION", "callerTypeUser": "APPLICATION_USER",
 	}
-	if got.IDP.Kind != "asgardeo" || !maps.Equal(got.IDP.Claims, want) {
-		t.Fatalf("idp = %+v, want kind asgardeo and claims %v", got.IDP, want)
+	if got.IDP.Kind != nil || !maps.Equal(got.IDP.Claims, want) {
+		t.Fatalf("idp = %+v, want no kind and claims %v", got.IDP, want)
 	}
 }
 

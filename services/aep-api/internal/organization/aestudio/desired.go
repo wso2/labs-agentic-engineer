@@ -103,7 +103,6 @@ type envConfigs struct {
 		Issuer        string    `json:"issuer"`
 		JWKSURL       string    `json:"jwksUrl"`
 		TokenURL      string    `json:"tokenUrl"`
-		Kind          string    `json:"kind"`
 		Claims        idpClaims `json:"claims"`
 		UserAudiences []string  `json:"userAudiences"`
 	} `json:"idp"`
@@ -374,7 +373,7 @@ func (s *Service) githubConnection(ctx context.Context, org string) (login strin
 }
 
 // idpClaims is the RT's environmentConfigs.idp.claims: the names and values of
-// the IdP's own claims, which the pod's containers get as AE_IDP_CLAIMS_*.
+// the IdP's own claims, which the pod's containers read tokens by.
 type idpClaims struct {
 	OrgHandle         string `json:"orgHandle"`
 	OrgID             string `json:"orgId"`
@@ -395,7 +394,6 @@ func envConfigsOf(cfg config.AEStudioConfig) envConfigs {
 	e.IDP.Issuer = cfg.IDP.Issuer
 	e.IDP.JWKSURL = cfg.IDP.JWKSURL
 	e.IDP.TokenURL = cfg.IDP.TokenURL
-	e.IDP.Kind = cfg.IDP.Kind
 	e.IDP.Claims = idpClaims{
 		OrgHandle:         cfg.IDP.Claims.OrgHandle,
 		OrgID:             cfg.IDP.Claims.OrgID,

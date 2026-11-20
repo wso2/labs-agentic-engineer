@@ -147,9 +147,10 @@ stale prefix.
 An environment Thunder trusts the platform IdP as an issuer so a platform token
 is *understood* there (and then refused on audience, which is the correct
 answer — the tiers are not interchangeable). This holds where the platform IdP
-is ThunderID. Where it is an Asgardeo organization (ADR-0054) the environment
+is a ThunderID aectl registers clients on. Where it is not (`idp.clients`
+`imported`: an Asgardeo organization, for example; ADR-0054) the environment
 Thunder is given no trusted issuer: the trust serves Agent Manager, which
-installs on a ThunderID platform only.
+installs only where aectl registers its clients.
 
 ThunderID fetches a trusted issuer's JWKS over **HTTPS only**; a plain-`http`
 JWKS URL makes the pod crash-loop. So the URL is

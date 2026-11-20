@@ -127,7 +127,6 @@ func presetClaims(name string) idpclaims.Resolved {
 
 var testPlatformIDP = platformIDP{
 	Clients:      "thunder",
-	Kind:         "thunder",
 	Claims:       presetClaims("thunder"),
 	OrgHandle:    "default",
 	OrgNamespace: "default",
@@ -227,7 +226,6 @@ func TestPlatformIDPOverrides(t *testing.T) {
 	got := strings.Join(platformIDPOverrides(testPlatformIDP), " ")
 	for _, want := range []string{
 		"--set idp.clients=thunder",
-		"--set idp.kind=thunder",
 		"--set-string idp.claims.org.handle=ouHandle",
 		"--set-string idp.claims.org.id=ouId",
 		"--set-string idp.claims.org.name=ouName",
@@ -251,7 +249,7 @@ func TestPlatformIDPOverrides(t *testing.T) {
 // Undiscovered endpoints set no IdP value: the chart keeps what it has rather
 // than taking half-built URLs.
 func TestPlatformIDPOverrides_UndiscoveredSetsNothing(t *testing.T) {
-	if got := platformIDPOverrides(platformIDP{Kind: "thunder"}); len(got) != 0 {
+	if got := platformIDPOverrides(platformIDP{Clients: "thunder"}); len(got) != 0 {
 		t.Errorf("want nothing, got %v", got)
 	}
 }
@@ -271,12 +269,11 @@ func TestDiscoverPlatformIDP(t *testing.T) {
 	t.Cleanup(srv.Close)
 	viper.Set("thunder.public_url", srv.URL)
 	viper.Set("thunder.url", "http://thunder-service.thunder.svc.cluster.local:8090")
-	viper.Set("idp.kind", "thunder")
 	idp, err := discoverPlatformIDP(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if idp.Kind != "thunder" || idp.Claims.Preset != "thunder" || idp.Claims.Claims().OrgHandle != "ouHandle" || idp.Public.Issuer != srv.URL || idp.Public.JWKSURL != srv.URL+"/oauth2/jwks" {
+	if idp.Claims.Preset != "thunder" || idp.Claims.Claims().OrgHandle != "ouHandle" || idp.Public.Issuer != srv.URL || idp.Public.JWKSURL != srv.URL+"/oauth2/jwks" {
 		t.Fatalf("public: %+v", idp)
 	}
 	if idp.InCluster.JWKSURL != "http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks" ||
@@ -400,7 +397,7 @@ func TestHelmUpgradeArgs_CarriesAEStudioValues(t *testing.T) {
 			t.Errorf("update args lack %s %s", want[i], want[i+1])
 		}
 	}
-	for _, key := range []string{"aeStudio.gatewayHost=", "aeStudio.idp.issuer=", "aeStudio.idp.jwksUrl=", "aeStudio.idp.tokenUrl=", "idp.clients=", "idp.kind=", "idp.claims.org.handle=", "idp.claims.callerType.user=", "idp.tokenURL=", "aeStudio.consoleOrigins=", "aeStudio.extraEgress="} {
+	for _, key := range []string{"aeStudio.gatewayHost=", "aeStudio.idp.issuer=", "aeStudio.idp.jwksUrl=", "aeStudio.idp.tokenUrl=", "idp.clients=", "idp.claims.org.handle=", "idp.claims.callerType.user=", "idp.tokenURL=", "aeStudio.consoleOrigins=", "aeStudio.extraEgress="} {
 		if !strings.Contains(joined, key) {
 			t.Errorf("update args lack %s", key)
 		}
@@ -628,20 +625,18 @@ func TestOpenBaoToken_NotRequired(t *testing.T) {
 	}
 }
 
-// The idp.claims block is layered: the preset, the config's keys, then an
-// AEP_IDP_CLAIMS_* variable for this run. Each value says where it came from,
-// so a variable that changes a value does not go unnoticed.
-func TestPlatformIDPClaims_LayersPresetConfigAndEnvironment(t *testing.T) {
+// The idp.claims block is layered: the preset, then the config's keys. Each
+// value says which layer it came from.
+func TestPlatformIDPClaims_LayersPresetAndConfig(t *testing.T) {
 	t.Cleanup(viper.Reset)
 	viper.Set("idp.claims.preset", "asgardeo")
 	viper.Set("idp.claims.org.handle", "from_config")
-	t.Setenv("AEP_IDP_CLAIMS_CALLER_TYPE_MACHINE", "FROM_ENV")
 
 	got, err := platformIDPClaims()
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := idpclaims.Claims{OrgHandle: "from_config", OrgID: "org_id", OrgName: "org_name", CallerType: "aut", Machine: "FROM_ENV", User: "APPLICATION_USER"}
+	want := idpclaims.Claims{OrgHandle: "from_config", OrgID: "org_id", OrgName: "org_name", CallerType: "aut", Machine: "APPLICATION", User: "APPLICATION_USER"}
 	if got.Claims() != want {
 		t.Fatalf("claims = %+v, want %+v", got.Claims(), want)
 	}
@@ -650,8 +645,8 @@ func TestPlatformIDPClaims_LayersPresetConfigAndEnvironment(t *testing.T) {
 		sources[v.Key] = v.Source
 	}
 	for key, src := range map[string]idpclaims.Source{
-		"org.handle": idpclaims.SourceConfig, "caller_type.machine": idpclaims.SourceEnvironment,
-		"org.id": idpclaims.SourcePreset("asgardeo"), "org.name": idpclaims.SourcePreset("asgardeo"),
+		"org.handle": idpclaims.SourceConfig,
+		"org.id":     idpclaims.SourcePreset("asgardeo"), "org.name": idpclaims.SourcePreset("asgardeo"),
 	} {
 		if sources[key] != src {
 			t.Errorf("%s came from %q, want %q", key, sources[key], src)
@@ -659,64 +654,59 @@ func TestPlatformIDPClaims_LayersPresetConfigAndEnvironment(t *testing.T) {
 	}
 }
 
-// A variable that is set but blank is refused by name. The config's own
-// reader maps the same variables, so a blank one would replace the stored
-// key with nothing and bring the preset's value back unnoticed.
-func TestPlatformIDPClaims_BlankEnvironmentVariableRefused(t *testing.T) {
-	t.Cleanup(viper.Reset)
-	viper.Set("idp.claims.org.handle", "from_config")
-	t.Setenv("AEP_IDP_CLAIMS_ORG_HANDLE", "  ")
-	_, err := platformIDPClaims()
-	if err == nil || !strings.Contains(err.Error(), "AEP_IDP_CLAIMS_ORG_HANDLE") {
-		t.Fatalf("err = %v, want one naming AEP_IDP_CLAIMS_ORG_HANDLE", err)
+// A claim value is not taken from the environment: it would hold for one
+// run, and the next update without the variable would send the stored value
+// back to the chart. Any AEP_IDP_CLAIMS_* variable stops the command and is
+// named, the preset's and a blank one included.
+func TestPlatformIDPClaims_EnvironmentVariableRefused(t *testing.T) {
+	for _, tc := range []struct{ name, value string }{
+		{"AEP_IDP_CLAIMS_ORG_HANDLE", "org_handle"},
+		{"AEP_IDP_CLAIMS_PRESET", "asgardeo"},
+		{"AEP_IDP_CLAIMS_CALLER_TYPE_USER", " "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Cleanup(viper.Reset)
+			t.Setenv(tc.name, tc.value)
+			_, err := platformIDPClaims()
+			if err == nil || !strings.Contains(err.Error(), tc.name) || !strings.Contains(err.Error(), "idp.claims") {
+				t.Fatalf("err = %v, want one naming %s and idp.claims", err, tc.name)
+			}
+		})
+	}
+	// Another AEP_* variable is not a claim value.
+	t.Setenv("AEP_IDP_ORG_HANDLE", "default")
+	if _, err := platformIDPClaims(); err != nil {
+		t.Fatalf("AEP_IDP_ORG_HANDLE must not be refused: %v", err)
 	}
 }
 
-// While idp.kind exists, a config that names no preset starts from the
-// preset with the kind's name: the readers of tokens still read by the kind,
-// and the claim values passed beside it must be those of the same IdP. A
-// preset the config names wins.
-func TestPlatformIDPClaims_PresetFollowsTheKind(t *testing.T) {
+// A config that names no preset starts from the default one, ThunderID's.
+func TestPlatformIDPClaims_AnUnsetPresetIsTheDefault(t *testing.T) {
 	t.Cleanup(viper.Reset)
-	viper.Set("idp.kind", "asgardeo")
 	got, err := platformIDPClaims()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Preset != "asgardeo" || got.Claims().OrgHandle != "org_handle" {
-		t.Fatalf("kind asgardeo, no preset: preset %q, org handle claim %q", got.Preset, got.Claims().OrgHandle)
-	}
-
-	viper.Set("idp.claims.preset", "thunder")
-	got, err = platformIDPClaims()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Preset != "thunder" || got.Claims().OrgHandle != "ouHandle" {
-		t.Fatalf("a named preset must win over the kind: preset %q, org handle claim %q", got.Preset, got.Claims().OrgHandle)
-	}
-
-	viper.Reset()
-	got, err = platformIDPClaims()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Preset != idpclaims.DefaultPreset {
-		t.Fatalf("neither set: preset %q, want the default", got.Preset)
+	if got.Preset != idpclaims.DefaultPreset || got.Claims().OrgHandle != "ouHandle" {
+		t.Fatalf("no preset: preset %q, org handle claim %q; want the default and ouHandle", got.Preset, got.Claims().OrgHandle)
 	}
 }
 
 // Every claim value is passed to the chart, the empty optional ones too: the
-// chart's own defaults are one IdP's, and a pair left out would keep it. The
-// kind is still passed: the readers of tokens read by it.
+// chart's own defaults are one IdP's, and a pair left out would keep it. No
+// kind is passed.
 func TestPlatformIDPOverrides_SetsEveryClaimValue(t *testing.T) {
 	args := platformIDPOverrides(testPlatformIDP)
 	pairs := map[string]bool{}
 	for i := 0; i+1 < len(args); i += 2 {
 		pairs[args[i]+" "+args[i+1]] = true
 	}
+	for pair := range pairs {
+		if strings.Contains(pair, "idp.kind") {
+			t.Errorf("a kind is still passed to the chart: %s", pair)
+		}
+	}
 	for _, want := range []string{
-		"--set idp.kind=thunder",
 		"--set-string idp.claims.org.handle=ouHandle",
 		"--set-string idp.claims.org.id=ouId",
 		"--set-string idp.claims.org.name=ouName",

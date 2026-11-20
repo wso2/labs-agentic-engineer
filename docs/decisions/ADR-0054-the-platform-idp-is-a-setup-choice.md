@@ -1,41 +1,27 @@
-# ADR-0054 — The platform IdP is a setup choice: ThunderID or an Asgardeo organization
+# ADR-0054 — The platform IdP is described by configuration, not by a kind
 
-**Status:** Accepted · 2026-11-11
+**Status:** Accepted · 2026-11-11 · rewritten 2026-11-19. The first version
+chose the IdP by a kind (`idp.kind`: `thunder` or `asgardeo`) that code
+branched on
 **Amends:** [ADR-0027](ADR-0027-one-cluster-one-platform-idp.md) ("installed
 unconditionally"), [ADR-0028](ADR-0028-the-platform-idp-is-neutral-infrastructure.md)
 (who administers the platform IdP), [ADR-0029](ADR-0029-environment-identity-is-bound-by-a-record.md)
-(an environment IdP's trust of the platform IdP) and
+(an environment IdP's trust of the platform IdP),
+[ADR-0046](ADR-0046-ae-studio-checks-platform-idp-tokens-itself.md) (decision
+2, the AE-only token's org claim) and
 [ADR-0047](ADR-0047-an-org-secrets-value-lives-only-in-vault.md) (decision 3,
 for two secrets).
 **Detail:** `services/aep-api/internal/platform/auth/README.md` (the token
 dialect and the one-org mapping), `services/aep-api/internal/organization/README.md`
-(`OrgClients`), `tools/aectl/AGENTS.md` and `deployments/README.md`
-("Install with Asgardeo as the platform IdP"),
+(`OrgClients`), `tools/aectl/internal/idpclaims` (the presets),
+`tools/aectl/AGENTS.md` and `deployments/README.md` ("Install with Asgardeo
+as the platform IdP", "Use another IdP"),
 `deployments/scripts/ae-asgardeo-apps.sh`.
-
-**Amended 2026-11-18.** Who creates AE's clients no longer follows the kind.
-`idp.clients` says it (`thunder`: `aectl` registers them; `imported`: the
-IdP's admin creates them), and `idp.kind` selects the token dialect only.
-aep-api administers no IdP on either kind. So what decisions 3, 4 and 5 say
-of aep-api on Asgardeo holds on ThunderID too: an install serves one org,
-the org's two clients are created before aep-api runs (on ThunderID by
-`aectl`), and aep-api holds their two secrets as settings. A ThunderID
-install is therefore not unchanged, and one from before this amendment is
-reinstalled. The settings that carry the IdP's endpoints are `idp.jwksURL`,
-`idp.tokenURL` and `idp.issuer`.
-
-**Amended 2026-11-19.** The token dialect of decision 2 is no longer chosen
-by the kind. It is six settings, `idp.claims`: the names of the claims that
-carry the org's handle, id and display name, the name of the claim that says
-who a token was issued to, and its values for a machine and for a user. All
-four readers (aep-api, the pod's Go tools, its two TypeScript services and
-the console) read by those values and know no IdP. `idp.kind` is still
-accepted, and no reader reads it.
 
 ## Context
 
 AE's platform IdP was ThunderID, installed in the cluster and administered
-by AE: `aectl` registers AE's OAuth clients in it, and aep-api creates two
+by AE: `aectl` registered AE's OAuth clients in it, and aep-api created two
 more per org (the publisher client a coding run signs in as, and the AE
 Studio client the org's pod signs in as).
 
@@ -46,99 +32,157 @@ and nothing in the cluster can be installed "for" it.
 
 ThunderID's claim names and admin API were written into four token readers
 (aep-api, the pod's Go and TypeScript readers, the console), into aep-api's
-client lifecycle, into `aectl` and into the chart.
+client lifecycle, into `aectl` and into the chart. Adding Asgardeo as a
+second kind put a branch at each of those places, and a third IdP would have
+added a third arm to every one.
+
+Two separate things differ between IdPs, and the kind tied them together:
+
+- how a token names the caller's org and says whether it was issued to a
+  machine or to a user. No standard defines either;
+- who creates AE's clients on the IdP.
 
 ## Decision
 
-1. **One install has one platform IdP kind, chosen at setup.** `idp.kind` is
-   `thunder` (the default) or `asgardeo`. The kind is not changed on a
-   running install: an org's secret paths are derived from the IdP's id for
-   the org.
+1. **No code branches on which IdP the platform IdP is.** The two
+   differences are two independent settings, `idp.claims` and `idp.clients`.
+   Nothing else about the IdP is configured: its endpoints come from its OIDC
+   discovery document.
 
-2. **Every token reader reads the IdP's claims through a token dialect.** A
-   dialect is the claim names and rules one kind uses to say who a caller
-   is. ThunderID names the org in `ouHandle` / `ouId` / `ouName` and the
-   grant in `grant_type`. Asgardeo names the org in `org_handle` / `org_id`
-   / `org_name` and who a token was issued to in `aut`. A token the dialect
-   cannot place as a user's or a machine's is refused on user routes and on
-   machine routes alike, and a token of one kind read by the other's dialect
-   names no org.
+2. **The token dialect is configuration: `idp.claims`.** It names the claim
+   that carries the org's handle, the one that carries the IdP's id for the
+   org, optionally one for its display name, the claim that says who a token
+   was issued to, its value for a machine and optionally its value for a
+   user. Each is a top-level text claim.
+   - Every reader of the IdP's tokens is given the values and knows no IdP.
+     The mandatory four have no default in any reader: one that is missing
+     stops aep-api and the pod's containers at start. The console reads one
+     value, the name of the handle claim. A built console fails at load
+     without it, and its image does not start unless the config file that
+     is served names it. The console's local dev server keeps a default for
+     it, the dev ThunderID's, as it does for its other settings: the console
+     has no dev config file.
+   - With a user value set, any third value is refused. With none, any value
+     other than the machine's is a user's, which is what ThunderID needs: it
+     has several user grants.
+   - A token the dialect cannot place as a user's or a machine's is refused
+     by both kinds of route. Nothing stands in for the org's handle.
+   - Claims a standard names are read by their standard names on every IdP
+     (`sub`, `aud`, `iss`, `exp`, `client_id` as in RFC 9068, `name`,
+     `email`). They are not in the block.
+   - `aectl` ships the values for the IdPs AE has been run against as
+     presets, `thunder` and `asgardeo`, and layers the block: the preset
+     (`thunder` when unset), then the config's keys. It prints each value
+     with its source, because a value changes which tokens count as a
+     machine's. `preset: none` starts from nothing, so that a config for
+     another IdP cannot inherit a name it left out. Only `aectl` knows a
+     preset's name. A claim value is not taken from the environment: `aectl`
+     stops when an `AEP_IDP_CLAIMS_*` variable is set.
 
-3. **An Asgardeo install serves one org.** An Asgardeo token names its org
-   by the organization's handle, which is not the org's OpenChoreo
-   namespace. aep-api maps the configured handle to the configured
-   namespace in its dialect; a token of any other org reads as no org. The
-   org's pod is given the IdP's handle as its own, since it uses the handle
-   only to check a token's org and to name its Rooms, which the console
-   names from the same token.
+3. **Who creates the clients is its own setting: `idp.clients`.** `thunder`
+   (the default): `aectl` registers them on a ThunderID it administers and
+   generates their secrets. `imported`: the IdP's admin created them and
+   imports their secrets, and `aectl` administers nothing on the IdP. This
+   is the one place a way of creating clients is named, because creating a
+   client goes through each IdP's own admin API.
 
-4. **AE holds no management rights on an Asgardeo organization.** Its admin
-   creates AE's five applications once, with a script run under the admin's
-   own credentials, and imports the four client secrets into the vault.
-   `aectl` asks for no admin secret, generates no client secret and
-   registers no client; it requires the imported secrets before it installs.
-   aep-api's `OrgClients` is static: it serves the org's two pre-created
-   clients and never calls the IdP. A write on one (set its secret, delete
-   it) is refused.
+4. **aep-api administers no IdP.** The org's two clients are created before
+   aep-api runs, by `aectl` or by the IdP's admin, and aep-api is given
+   their secrets as settings. It writes them into the org's references on
+   GitHub connect (this amends ADR-0047 decision 3 for these two secrets) and
+   never creates, changes or deletes a client. It holds no IdP admin
+   credential. The two secrets so have copies in the control plane: in the
+   vault (`aep/idp-clients/`), in the cluster Secret that aep-api reads
+   (`aep-org-client-secrets`) and in aep-api's environment. That is accepted
+   for now. aep-api reading them from the vault at GitHub connect would
+   remove the last two copies (issue #975).
 
-5. **On Asgardeo aep-api holds the org's two client secrets as settings.**
-   This amends ADR-0047's decision 3 for the publisher and AE Studio client
-   secrets only. They reach aep-api the way its own client secret does
-   (vault, ExternalSecret, Secret, env), and aep-api writes them into the
-   org's references on GitHub connect as it writes every org secret. The
-   readers of those references, the coding run and the org's pod, still
-   take keys from the reference and never a value. ThunderID installs are
-   as ADR-0047 has them.
+5. **An install serves one org.** The org is named at install by the handle
+   the IdP's tokens carry (`idp.org_handle`) and by its OpenChoreo namespace.
+   aep-api maps one to the other, and a token of any other org of the IdP
+   reads as no org. The pod is given the IdP's handle, so the pod and the
+   console need no mapping.
 
-6. **The second tier stays ThunderID.** The per-environment IdPs of
-   generated applications (ADR-0029) are installed on either kind. On
-   Asgardeo they are not told to trust the platform IdP: that trust serves
-   Agent Manager, which installs on a ThunderID platform only.
+6. **The pod's gate for aep-api's install-wide client does not read that
+   token's org claim.** The client is install-wide: the `X-Impersonate-Org`
+   header says which org a call is for, and the gate pins the caller by
+   signature, issuer, audience, `client_id` and caller type. What an IdP puts
+   in the org claim of a client outside any org is the IdP's choice
+   (ThunderID: nothing; Asgardeo: the organization), so reading it needed a
+   rule per IdP. This amends ADR-0046 decision 2.
 
-7. **What an Asgardeo install does not have.** No ThunderID is installed
-   for the platform, so ADR-0027's "installed unconditionally" holds for
-   kind `thunder`. Agent Manager and `aectl sre install` are ThunderID
-   only. OpenChoreo's own clients, and its trust of the same organization,
-   are the cluster owner's.
+7. **The second tier stays ThunderID.** The environment IdPs are still
+   ThunderIDs AE installs and administers. They are told to trust the
+   platform IdP only where `aectl` registers clients on it, because that
+   trust serves Agent Manager, which needs its clients registered there.
 
 ## Consequences
 
-- A ThunderID install is unchanged: the same chart render, the same
-  `make dev-env`, the same config keys.
-- Who may sign in to an Asgardeo install rests on the Asgardeo
-  application's own access settings. AE refuses a token of another
-  organization, and does not yet refuse a user of the organization by
-  group.
-- A client secret is rotated in Asgardeo, imported again, and reaches the
-  org when aep-api is restarted and GitHub is reconnected. aep-api cannot
-  rotate it.
-- aep-api holds two narrow client secrets on Asgardeo in place of the
-  ThunderID admin client's secret, which can create or reset any client.
-- The local Asgardeo dev-env leaves out what signs in with a client that
-  exists only in ThunderID: OpenChoreo's portal, the observability plane,
-  Agent Manager and the SRE agent.
-- On that dev-env a build finishes only when OpenChoreo's workload publisher
-  client is also on the organization. It is opt-in:
-  `ae-asgardeo-apps.sh --with-openchoreo-publisher` creates the client, and
-  the dev-env then puts its secret in a default value of the cluster-wide
-  build template, which is why this is for a local cluster only.
-- The settings that carry the IdP's endpoints, and the vault path family of
-  the client secrets, do not name an IdP (`idp.jwksURL`, `idp.tokenURL`,
-  `idp.issuer`, `aep/idp-clients/`).
+- An IdP other than ThunderID or Asgardeo is configured, not coded: its
+  admin creates the five clients, and the config names its claims. That is
+  configurable, not supported: AE has been run against two IdPs, and what a
+  third needs beyond its claim names is only known for those two.
+- The IdP has to state the org and the caller type in top-level text claims.
+  One that does not is configured to add them, or cannot be used.
+- Adding an org is not automatic on any IdP: the install names the one org.
+  On ThunderID this replaces onboarding at first sign-in, for one org.
+- Rotating an org client's secret: change it at the IdP, store it again,
+  restart aep-api, reconnect GitHub. aep-api cannot rotate it.
+- aep-api no longer checks that an org id from a token exists at the IdP: it
+  has no admin client to ask. The token is the IdP's statement, and under
+  the one-org mapping it names the install's org. A token issued before the
+  org was recreated at the IdP can put the old id back until it expires
+  (issue #974).
+- With `idp.clients: imported` an install lacks what needs clients `aectl`
+  registers on a ThunderID: the in-cluster ThunderID itself, Agent Manager,
+  and `aectl sre install`.
+- Settings and stored names every IdP has carry the IdP's role and not a
+  product's (`idp.issuer`, `idp.jwksURL`, the vault path family
+  `aep/idp-clients/`, the Secret `aep-idp-client-secrets`). Names that
+  describe a ThunderID AE administers keep ThunderID's name (`thunder.*`,
+  `aep-thunder-admin-creds`).
+- Three names still say "thunder" for a value every IdP has, because each
+  is a wide rename left for its own change (issue #972): the organization
+  row's `thunder_org_uuid`, which holds the IdP's id for the org; the
+  console's `VITE_THUNDER_*` settings; and "Thunder OU" in some of aep-api's
+  error text.
+- aep-api keeps no IdP entity id of a client: the two columns that held one
+  are dropped. It records the client ids only.
+- An install from before this decision is reinstalled, not upgraded.
 
 ## Alternatives rejected
 
-- **AE registers its clients on Asgardeo through the management API.** It
-  works (a caller-chosen client id and secret are honoured), and fits the
-  same `OrgClients` port. It needs application-management rights on a
-  tenant AE shares with other applications, which this decision avoids.
-- **Many orgs on one Asgardeo organization.** Asgardeo's sub-organizations
-  could carry them. No install needs it, and the one-org mapping keeps the
-  org model unchanged.
+- **A kind per IdP, with a branch at each place it matters.** The first
+  version of this decision. Every new IdP is a code change in four readers,
+  the installer and the chart, and the kind hides that reading tokens and
+  creating clients are separate questions.
+- **A separate claims file.** `aectl` has no second file: its config already
+  holds a block per concern and validates it. A snippet of that config is as
+  easy to share.
+- **An environment variable that overrides a claim value for one run.**
+  Built, then removed. The value is not stored, so an install with the
+  variable followed by an update without it sent the stored value to the
+  chart, and every reader then read a claim that the tokens do not carry.
+- **`idp.clients: managed` in place of `thunder`.** The chart has to know
+  that the IdP is a ThunderID `aectl` administers (its CORS policy, its
+  admin credentials), and creating clients is specific to an IdP's admin
+  API. One explicit value says both, with no guess from which config block
+  is filled.
+- **One JSON value carried to the readers.** Two hops insert the value into
+  text (the console's start script, the pod's template), and JSON there
+  needs escaping that a plain value does not.
+- **aep-api registering clients on Asgardeo through the management API.** It
+  works (a caller-chosen client id and secret are honoured), but a running
+  service would hold application-management rights on a tenant shared with
+  other applications. Not rejected, and not built: `aectl` creating them at
+  install with a credential the operator supplies for that run, never stored
+  in the cluster (a later value of `idp.clients`).
+- **Keeping client creation on demand in aep-api for ThunderID.** It needs
+  the admin credential in a running service and a second path beside the
+  pre-created one.
+- **Many orgs per install.** Possible on the same design (a mapping, a pair
+  of clients and an "add an org" step per org), and not needed yet. On
+  Asgardeo it needs sub-organizations, which are untested.
 - **Mapping the handle in every reader.** The pod and the console would each
-  need the organization's handle and the namespace as new settings. Giving
-  the pod the IdP's handle needs none.
-- **Adopting the imported secret in place**, so aep-api never sees it. It
-  needs a second write path through the org secret writer and `aectl`
-  creating the org's secret references. Decision 5 uses the path every org
-  secret already takes.
+  need the handle and the namespace as settings. Giving the pod the IdP's
+  handle needs none.

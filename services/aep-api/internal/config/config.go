@@ -297,8 +297,8 @@ type KubeAPIConfig struct {
 }
 
 // PlatformIDPDefaults are the issuer + JWKS URL of the cluster's
-// platform IDP (Thunder in v1), seeded into every new
-// organization_idp_profiles row, and the IdP's token dialect kind.
+// platform IDP, seeded into every new organization_idp_profiles row, the
+// IdP's token dialect and the one org it serves.
 type PlatformIDPDefaults struct {
 	Issuer  string
 	JWKSURL string
@@ -380,10 +380,6 @@ type AEStudioConfig struct {
 
 	IDP struct {
 		Issuer, JWKSURL, TokenURL string
-		// Kind is the kind of the platform IdP (AE_STUDIO_IDP_KIND, `thunder`
-		// when unset), shipped to the pod as AE_IDP_KIND. Nothing reads it
-		// there: the pod reads tokens by Claims.
-		Kind string
 		// Claims is PlatformIDP.Claims (the same PLATFORM_IDP_CLAIMS_*): the
 		// token dialect the pod reads the IdP's claims by, shipped to it as
 		// AE_IDP_CLAIMS_*. The pod reads the same IdP's tokens as aep-api.

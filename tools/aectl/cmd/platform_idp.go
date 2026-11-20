@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -32,10 +31,6 @@ import (
 	"github.com/wso2/aep/aectl/internal/ui"
 )
 
-// platformIDPKindDefault is the token dialect an install has unless it says
-// otherwise: ThunderID's. idp.kind unset means it.
-const platformIDPKindDefault = config.IDPKindThunder
-
 // platformIDP is the platform IdP as the install writes it into the chart.
 // Nothing here knows the IdP's URL layout: the endpoints come from its OIDC
 // discovery document, and the rest from config.
@@ -44,13 +39,9 @@ type platformIDP struct {
 	// on a ThunderID it administers (config.ClientsThunder), or the IdP's
 	// admin, who then imports their secrets (config.ClientsImported).
 	Clients string
-	// Kind is the IdP's token dialect (idp.kind): the claim names and rules
-	// every reader of its tokens uses, told to aep-api, the AE Studio pod and
-	// the console through the chart.
-	Kind string
 	// Claims is the idp.claims block: the names and values of the claims
 	// that say a caller's org and caller type. aectl passes them to the
-	// chart beside Kind, by which the readers of tokens read.
+	// chart, and every reader of the IdP's tokens reads by them.
 	Claims idpclaims.Resolved
 	// Public is what the discovery document names: the issuer every token's
 	// iss equals, and the endpoints at the IdP's public address.
@@ -110,7 +101,7 @@ func discoverPlatformIDP(ctx context.Context) (platformIDP, error) {
 		return platformIDP{}, err
 	}
 	idp := platformIDP{
-		Clients: platformIDPClients(), Kind: platformIDPKind(), Claims: claims, Public: pub, InCluster: pub,
+		Clients: platformIDPClients(), Claims: claims, Public: pub, InCluster: pub,
 		OrgHandle:    strings.TrimSpace(viper.GetString("idp.org_handle")),
 		OrgNamespace: ocOrgNamespace(),
 	}
@@ -123,48 +114,19 @@ func discoverPlatformIDP(ctx context.Context) (platformIDP, error) {
 	return idp, nil
 }
 
-// platformIDPKind reads idp.kind; config validation has already refused a
-// value this build does not know.
-func platformIDPKind() string {
-	if k := strings.ToLower(strings.TrimSpace(viper.GetString("idp.kind"))); k != "" {
-		return k
-	}
-	return platformIDPKindDefault
-}
-
-// claimsEnvKey is the environment variable that overrides one value of the
-// idp.claims block for a run: AEP_IDP_CLAIMS_ORG_HANDLE for "org.handle".
-func claimsEnvKey(key string) string {
-	return "AEP_IDP_CLAIMS_" + strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
-}
-
-// platformIDPClaims resolves the idp.claims block: the preset
-// (config.ClaimsPreset), then the config's idp.claims.* keys, then
-// AEP_IDP_CLAIMS_* for this run. An environment value lasts for the run
-// only: the stored config keeps what the config file said, so a value meant
-// to stay belongs in that file.
-//
-// A variable that is set but blank is refused. The config's own reader maps
-// the same variables, so a blank one would replace the stored key with
-// nothing and the preset's value would come back under the preset's name.
+// platformIDPClaims resolves the idp.claims block of the loaded config: the
+// preset (idp.claims.preset, thunder when unset), then the config's
+// idp.claims.* keys. An AEP_IDP_CLAIMS_* variable stops it
+// (config.ClaimsEnvRefusal): a claim value belongs in the config.
 func platformIDPClaims() (idpclaims.Resolved, error) {
-	for _, f := range idpclaims.Fields {
-		if v, set := os.LookupEnv(claimsEnvKey(f.Key)); set && strings.TrimSpace(v) == "" {
-			return idpclaims.Resolved{}, fmt.Errorf("%s is set but blank: give it a value, or unset it to use idp.claims.%s of the config", claimsEnvKey(f.Key), f.Key)
-		}
+	if err := config.ClaimsEnvRefusal(); err != nil {
+		return idpclaims.Resolved{}, err
 	}
-	fromConfig := config.ClaimsOverride(viper.GetViper())
-	return idpclaims.Resolve(config.ClaimsPreset(viper.GetViper()), func(key string) (string, idpclaims.Source) {
-		if v := strings.TrimSpace(os.Getenv(claimsEnvKey(key))); v != "" {
-			return v, idpclaims.SourceEnvironment
-		}
-		return fromConfig(key)
-	})
+	return config.ResolveClaims(viper.GetViper())
 }
 
 // printPlatformIDPClaims shows the claim values aectl passes to the chart
-// and the layer each came from, so a value that an environment variable
-// changed for this run does not go unnoticed.
+// and the layer each came from: the preset or the config.
 func printPlatformIDPClaims(claims idpclaims.Resolved) {
 	for _, line := range claims.Describe() {
 		ui.Detail(line)
@@ -172,9 +134,8 @@ func printPlatformIDPClaims(claims idpclaims.Resolved) {
 }
 
 // platformIDPOverrides returns the helm pairs the chart derives from the
-// IdP: who creates its clients, the kind, its claim names and values, the
-// JWKS and token endpoints aep-api
-// and the AE Studio pod reach, and the issuer. Shared by `platform install` and
+// IdP: who creates its clients, its claim names and values, the JWKS and
+// token endpoints aep-api and the AE Studio pod reach, and the issuer. Shared by `platform install` and
 // `platform update`. Undiscovered endpoints (the zero value) set nothing,
 // so a caller never writes half of them.
 func platformIDPOverrides(idp platformIDP) []string {
@@ -183,7 +144,6 @@ func platformIDPOverrides(idp platformIDP) []string {
 	}
 	args := []string{
 		"--set", "idp.clients=" + idp.Clients,
-		"--set", "idp.kind=" + idp.Kind,
 		"--set", "idp.jwksURL=" + idp.InCluster.JWKSURL,
 		"--set", "idp.tokenURL=" + idp.InCluster.TokenURL,
 		"--set", "aeStudio.idp.issuer=" + idp.Public.Issuer,

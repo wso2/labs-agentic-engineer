@@ -84,19 +84,18 @@ spec:
             issuer: { type: string }
             jwksUrl: { type: string }
             tokenUrl: { type: string }
-            # The IdP's token dialect, which the containers read its claims by.
-            kind: { type: string, default: thunder }
-            # The names and values of the IdP's own claims, which say a
-            # caller's org and caller type. The same values aep-api is given.
-            # The containers read tokens by kind, so each may be empty.
+            # The IdP's token dialect: the names and values of its own claims,
+            # which the containers read the caller's org and caller type by.
+            # The same values aep-api reads its tokens by.
             claims:
               type: object
+              required: [orgHandle, orgId, callerTypeClaim, callerTypeMachine]
               properties:
-                orgHandle: { type: string, default: "" }
-                orgId: { type: string, default: "" }
+                orgHandle: { type: string }
+                orgId: { type: string }
                 orgName: { type: string, default: "" }
-                callerTypeClaim: { type: string, default: "" }
-                callerTypeMachine: { type: string, default: "" }
+                callerTypeClaim: { type: string }
+                callerTypeMachine: { type: string }
                 callerTypeUser: { type: string, default: "" }
             userAudiences: { type: array, items: { type: string }, default: [APP_FACTORY_CONSOLE] }
         aepApiBaseUrl: { type: string }
@@ -264,7 +263,6 @@ spec:
                     - { name: AE_ORG_HANDLE, value: "${parameters.org.handle}" }
                     - { name: AE_IDP_ISSUER, value: "${environmentConfigs.idp.issuer}" }
                     - { name: AE_IDP_JWKS_URL, value: "${environmentConfigs.idp.jwksUrl}" }
-                    - { name: AE_IDP_KIND, value: "${environmentConfigs.idp.kind}" }
                     - { name: AE_IDP_CLAIMS_ORG_HANDLE, value: "${environmentConfigs.idp.claims.orgHandle}" }
                     - { name: AE_IDP_CLAIMS_ORG_ID, value: "${environmentConfigs.idp.claims.orgId}" }
                     - { name: AE_IDP_CLAIMS_ORG_NAME, value: "${environmentConfigs.idp.claims.orgName}" }
@@ -300,7 +298,6 @@ spec:
                     - { name: AE_ORG_HANDLE, value: "${parameters.org.handle}" }
                     - { name: AE_IDP_ISSUER, value: "${environmentConfigs.idp.issuer}" }
                     - { name: AE_IDP_JWKS_URL, value: "${environmentConfigs.idp.jwksUrl}" }
-                    - { name: AE_IDP_KIND, value: "${environmentConfigs.idp.kind}" }
                     - { name: AE_IDP_CLAIMS_ORG_HANDLE, value: "${environmentConfigs.idp.claims.orgHandle}" }
                     - { name: AE_IDP_CLAIMS_ORG_ID, value: "${environmentConfigs.idp.claims.orgId}" }
                     - { name: AE_IDP_CLAIMS_ORG_NAME, value: "${environmentConfigs.idp.claims.orgName}" }
@@ -330,7 +327,6 @@ spec:
                     - { name: AE_ORG_HANDLE, value: "${parameters.org.handle}" }
                     - { name: AE_IDP_ISSUER, value: "${environmentConfigs.idp.issuer}" }
                     - { name: AE_IDP_JWKS_URL, value: "${environmentConfigs.idp.jwksUrl}" }
-                    - { name: AE_IDP_KIND, value: "${environmentConfigs.idp.kind}" }
                     - { name: AE_IDP_CLAIMS_ORG_HANDLE, value: "${environmentConfigs.idp.claims.orgHandle}" }
                     - { name: AE_IDP_CLAIMS_ORG_ID, value: "${environmentConfigs.idp.claims.orgId}" }
                     - { name: AE_IDP_CLAIMS_ORG_NAME, value: "${environmentConfigs.idp.claims.orgName}" }

@@ -1,9 +1,9 @@
 # ADR-0047 — An org secret's value lives only in vault
 
 **Status:** Accepted · 2026-10-06 · decision 3 amended for two secrets by
-[ADR-0054](ADR-0054-the-platform-idp-is-a-setup-choice.md) (decision 5, on
-every install since its amendment): aep-api is given the publisher and AE Studio client secrets as
-settings and writes them into the org's references
+[ADR-0054](ADR-0054-the-platform-idp-is-a-setup-choice.md) (decision 4):
+aep-api is given the publisher and AE Studio client secrets as settings and
+writes them into the org's references
 **Related:** [CONTEXT.md](../../CONTEXT.md) **Org secret** ·
 [ADR-0045](ADR-0045-design-work-runs-in-the-organizations-ae-studio.md) (the
 pod that reads them) ·

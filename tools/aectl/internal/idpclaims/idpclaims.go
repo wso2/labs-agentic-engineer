@@ -21,10 +21,10 @@
 // values to the chart, and every reader of the IdP's tokens (aep-api, the AE
 // Studio pod, the console) reads by them and knows no IdP.
 //
-// A value comes from three layers, lowest first: a preset shipped with aectl
-// (a data file per IdP AE has been run against), the config's idp.claims.*
-// keys, and an AEP_IDP_CLAIMS_* environment variable for one run. The preset
-// names live only here: nothing downstream of aectl sees one.
+// A value comes from two layers, lowest first: a preset shipped with aectl
+// (a data file per IdP AE has been run against), then the config's
+// idp.claims.* keys. The preset names live only here: nothing downstream of
+// aectl sees one.
 package idpclaims
 
 import (
@@ -82,8 +82,7 @@ type Source string
 
 // The layers, as shown to the operator.
 const (
-	SourceConfig      Source = "config"
-	SourceEnvironment Source = "environment variable"
+	SourceConfig Source = "config"
 	// SourceUnset is an optional value no layer set.
 	SourceUnset Source = "not set"
 )
@@ -106,7 +105,7 @@ type Resolved struct {
 
 // Override answers the value a higher layer sets for a field's key, and that
 // layer's source; "" means the layer does not set it. The caller supplies it
-// from the config and the environment.
+// from the config.
 type Override func(key string) (value string, source Source)
 
 // ErrUnknownPreset is a preset name aectl does not ship.

@@ -106,7 +106,7 @@ func TestResolve_LayersOverThePreset(t *testing.T) {
 		case "org.handle":
 			return " tenant_handle ", SourceConfig
 		case "caller_type.machine":
-			return "SERVICE", SourceEnvironment
+			return "SERVICE", SourceConfig
 		case "org.id":
 			return "  ", SourceConfig
 		}
@@ -124,7 +124,7 @@ func TestResolve_LayersOverThePreset(t *testing.T) {
 		sources[v.Key] = v.Source
 	}
 	for key, src := range map[string]Source{
-		"org.handle": SourceConfig, "caller_type.machine": SourceEnvironment,
+		"org.handle": SourceConfig, "caller_type.machine": SourceConfig,
 		"org.id": SourcePreset("asgardeo"), "caller_type.user": SourcePreset("asgardeo"),
 	} {
 		if sources[key] != src {
