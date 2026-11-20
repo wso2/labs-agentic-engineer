@@ -180,7 +180,13 @@ idp:
   #             Unset means this.
   #   imported  the IdP's admin created them and imports their secrets with
   #             `aectl platform secret import`. `aectl` administers nothing on
-  #             the IdP. Use it for an Asgardeo organization.
+  #             the IdP. Use it for any IdP whose admin creates the clients.
+  #   asgardeo  `aectl` creates them in the Asgardeo organization of the
+  #             asgardeo: block below and generates their secrets. Install and
+  #             `platform sync-clients` then take the credential of the
+  #             organization's admin application from two files
+  #             (--idp-admin-client-id-file, --idp-admin-client-secret-file).
+  #             It is read for that run and never stored.
   clients: "thunder"
   # How the IdP's tokens name two things no standard defines: the caller's
   # org, and whether a token was issued to a machine or to a user. `aectl`
@@ -213,11 +219,16 @@ idp:
   # org's two clients under that organization unit, which has to exist.
   org_handle: "default"
   # The IdP's issuer: the `iss` of every token. Required, and https, with
-  # idp.clients imported (an Asgardeo organization's is
-  # https://api.asgardeo.io/t/<handle>/oauth2/token). Optional where aectl
-  # registers the clients: unset, it is thunder.public_url.
-  # With an Asgardeo organization its admin first creates AE's applications
-  # with deployments/scripts/ae-asgardeo-apps.sh and imports their four
-  # secrets; see "Install with Asgardeo as the platform IdP" in
-  # deployments/README.md.
+  # idp.clients imported or asgardeo (an Asgardeo organization's is
+  # https://api.asgardeo.io/t/<handle>/oauth2/token). Optional on the
+  # ThunderID aectl administers: unset, it is thunder.public_url.
+  # See "Install with Asgardeo as the platform IdP" in deployments/README.md
+  # for both ways to create AE's applications in an Asgardeo organization.
   # issuer: ""
+
+# The Asgardeo organization where `aectl` creates AE's applications. Read only
+# with idp.clients asgardeo, and refused otherwise.
+# asgardeo:
+#   # The address of the organization's management API. It is a key of its
+#   # own because the IdP's discovery document does not name it.
+#   api_url: "https://api.asgardeo.io/t/<handle>/api/server/v1"

@@ -260,6 +260,8 @@ idp:
   #             policy on ThunderID's route.
   #   imported  the IdP's admin created them and stored their secrets; the
   #             chart renders none of the above.
+  #   asgardeo  aectl created them in an Asgardeo organization and stored
+  #             their secrets; the chart renders as for imported.
   clients: "thunder"
   # The names and values of the claims that say which org a caller belongs to
   # and whether a token was issued to a machine or to a user. No standard

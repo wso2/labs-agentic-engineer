@@ -25,26 +25,39 @@
 # developer's organization handle is never written into the repository;
 # everything else (URLs, namespaces, toggles) stays the base's.
 #
-# Usage: ae-asgardeo-aectl-config.sh <base config> <organization handle> [base URL]
+# With [clients] `asgardeo`, aectl creates the applications itself: the
+# `idp:` block then says `clients: "asgardeo"`, and the base's commented
+# `asgardeo:` block is turned on with the address of the organization's
+# management API.
+#
+# Usage: ae-asgardeo-aectl-config.sh <base config> <organization handle> [base URL] [clients]
 #   <base config>           skaffold/defaults.yaml, or a copy of it
 #   <organization handle>   the Asgardeo organization's handle
 #   [base URL]              default https://api.asgardeo.io
+#   [clients]               imported (the default) or asgardeo
 #
 # It edits lines of the base that must be in the shape skaffold/defaults.yaml
 # ships them: in the `idp:` block `  clients: "thunder"`,
 # `    preset: "thunder"`, `  org_handle: "default"` and the commented
 # `  # issuer: ""`; in the
-# `thunder:` block its four keys. A base without them is refused, not guessed
-# at.
+# `thunder:` block its four keys; and, for [clients] `asgardeo`, the commented
+# `# asgardeo:` line and its `#   api_url: "..."` line. A base without them is
+# refused, not guessed at.
 set -euo pipefail
 
-base="${1:?usage: ae-asgardeo-aectl-config.sh <base config> <organization handle> [base URL]}"
-tenant="${2:?usage: ae-asgardeo-aectl-config.sh <base config> <organization handle> [base URL]}"
+usage="usage: ae-asgardeo-aectl-config.sh <base config> <organization handle> [base URL] [clients]"
+base="${1:?$usage}"
+tenant="${2:?$usage}"
 url="${3:-https://api.asgardeo.io}"
+clients="${4:-imported}"
 
 [ -r "$base" ] || { echo "❌ cannot read the base config ${base}" >&2; exit 1; }
 [[ "$tenant" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "❌ the organization handle must be lowercase letters, digits and hyphens" >&2; exit 1; }
 [[ "$url" =~ ^https://[^/|]+ ]] || { echo "❌ the base URL must be an https:// URL" >&2; exit 1; }
+case "$clients" in
+    imported|asgardeo) ;;
+    *) echo "❌ clients must be imported or asgardeo, not '${clients}'" >&2; exit 1 ;;
+esac
 
 issuer="${url%/}/t/${tenant}/oauth2/token"
 # The thunder: block's own keys, each commented out; only inside that block,
@@ -57,7 +70,7 @@ out="$(awk '
     END { if (n != 4) exit 3 }
 ' "$base")" || { echo "❌ ${base}: its thunder: block does not hold the four keys this script comments out (see the header)" >&2; exit 1; }
 out="$(printf '%s\n' "$out" | sed \
-    -e 's|^  clients: "thunder"$|  clients: "imported"|' \
+    -e 's|^  clients: "thunder"$|  clients: "'"${clients}"'"|' \
     -e 's|^  # issuer: ""$|  issuer: "'"${issuer}"'"|' \
     -e 's|^  org_handle: "default"$|  org_handle: "'"${tenant}"'"|')"
 
@@ -74,10 +87,24 @@ claims='    preset: "none"\
       user: "APPLICATION_USER"'
 out="$(printf '%s\n' "$out" | sed -e 's|^    preset: "thunder"$|'"${claims}"'|')"
 
-for line in '  clients: "imported"' '    preset: "none"' '      user: "APPLICATION_USER"' "  issuer: \"${issuer}\"" "  org_handle: \"${tenant}\""; do
+for line in "  clients: \"${clients}\"" '    preset: "none"' '      user: "APPLICATION_USER"' "  issuer: \"${issuer}\"" "  org_handle: \"${tenant}\""; do
     if [ "$(printf '%s\n' "$out" | grep -cxF -- "$line")" != "1" ]; then
         echo "❌ ${base}: its idp: block is not in the shape this script edits (see the header); could not set: ${line}" >&2
         exit 1
     fi
 done
+if [ "$clients" = "asgardeo" ]; then
+    # The base's asgardeo: block is commented out (it is read only with
+    # idp.clients asgardeo): its two lines are turned on.
+    api="${url%/}/t/${tenant}/api/server/v1"
+    out="$(printf '%s\n' "$out" | sed \
+        -e 's|^# asgardeo:$|asgardeo:|' \
+        -e 's|^#   api_url: ".*"$|  api_url: "'"${api}"'"|')"
+    for line in 'asgardeo:' "  api_url: \"${api}\""; do
+        if [ "$(printf '%s\n' "$out" | grep -cxF -- "$line")" != "1" ]; then
+            echo "❌ ${base}: its commented asgardeo: block is not in the shape this script edits (see the header); could not set: ${line}" >&2
+            exit 1
+        fi
+    done
+fi
 printf '%s\n' "$out"

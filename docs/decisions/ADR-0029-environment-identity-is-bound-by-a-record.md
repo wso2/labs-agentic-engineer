@@ -1,7 +1,7 @@
 # ADR-0029 — Environment Thunders and gateways are platform infrastructure bound by a record
 
-**Status:** Accepted · 2026-09-05 · where aectl registers no clients on the
-platform IdP an environment Thunder is not given it as a trusted issuer
+**Status:** Accepted · 2026-09-05 · where the platform IdP is not a ThunderID
+aectl administers, an environment Thunder is not given it as a trusted issuer
 ([ADR-0054](ADR-0054-the-platform-idp-is-a-setup-choice.md), decision 7)
 **Context:** the second identity tier, after [ADR-0028](ADR-0028-the-platform-idp-is-neutral-infrastructure.md)
 settled ownership of the first.

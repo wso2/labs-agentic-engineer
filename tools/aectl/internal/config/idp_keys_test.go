@@ -151,6 +151,65 @@ func TestValidate_ImportedClientsIssuerMustBeHTTPS(t *testing.T) {
 	}
 }
 
+// asgardeoClientsKeys is a config where aectl creates the clients in an
+// Asgardeo organization (idp.clients asgardeo). asgardeoKeys above is the
+// same organization with imported clients.
+var asgardeoClientsKeys = with(with(asgardeoKeys, "idp.clients", "asgardeo"),
+	"asgardeo.api_url", "https://api.asgardeo.io/t/acmecorp/api/server/v1")
+
+// Where aectl creates the clients in an Asgardeo organization it needs the
+// issuer, the org's handle and the address of the management API, and none
+// of the thunder.* keys.
+func TestValidate_AsgardeoClientsNeedTheIssuerAndTheAPIAddress(t *testing.T) {
+	if errs := validateViper(idpConfig(asgardeoClientsKeys)); len(errs) != 0 {
+		t.Fatalf("a complete config with idp.clients asgardeo is invalid: %v", errs)
+	}
+	for _, key := range []string{"idp.issuer", "idp.org_handle", "asgardeo.api_url"} {
+		errs := validateViper(idpConfig(without(asgardeoClientsKeys, key)))
+		if !hasErrorNaming(errs, key) {
+			t.Errorf("without %s: errors %v do not name it", key, errs)
+		}
+	}
+	for key, val := range thunderKeys {
+		if key == "idp.org_handle" {
+			continue
+		}
+		errs := validateViper(idpConfig(with(asgardeoClientsKeys, key, val)))
+		if !hasErrorNaming(errs, key) {
+			t.Errorf("%s with idp.clients asgardeo: errors %v do not refuse it", key, errs)
+		}
+	}
+}
+
+// The management API is sent the token of the admin credential: plain http is
+// refused, as is anything that is not an absolute URL. So is a plain http
+// issuer.
+func TestValidate_AsgardeoClientsAddressesMustBeHTTPS(t *testing.T) {
+	for _, key := range []string{"asgardeo.api_url", "idp.issuer"} {
+		for _, val := range []string{"http://api.asgardeo.io/t/acmecorp/api/server/v1", "api.asgardeo.io/t/acmecorp", "not a url"} {
+			errs := validateViper(idpConfig(with(asgardeoClientsKeys, key, val)))
+			if !hasErrorNaming(errs, key) {
+				t.Errorf("%s %q: errors %v do not refuse it", key, val, errs)
+			}
+		}
+	}
+}
+
+// asgardeo.api_url is read only where aectl creates the clients in Asgardeo.
+// Under another value it would look as if it took effect, so it is refused.
+func TestValidate_AsgardeoAPIAddressRefusedUnderAnotherValue(t *testing.T) {
+	const api = "https://api.asgardeo.io/t/acmecorp/api/server/v1"
+	for name, cfg := range map[string]map[string]string{
+		"imported": with(asgardeoKeys, "asgardeo.api_url", api),
+		"thunder":  with(thunderKeys, "asgardeo.api_url", api),
+	} {
+		errs := validateViper(idpConfig(cfg))
+		if !hasErrorNaming(errs, "asgardeo.api_url") {
+			t.Errorf("%s: errors %v do not refuse asgardeo.api_url", name, errs)
+		}
+	}
+}
+
 // A preset aectl does not ship is refused by name, once.
 func TestValidate_UnknownPresetRefused(t *testing.T) {
 	errs := validateViper(idpConfig(with(thunderKeys, "idp.claims.preset", "okta")))
@@ -219,7 +278,7 @@ func TestIDPKeys_ArePersisted(t *testing.T) {
 	for _, k := range ConfigMapKeys {
 		persisted[k] = true
 	}
-	for _, k := range []string{"idp.clients", "idp.claims.preset", "idp.claims.org.handle", "idp.claims.caller_type.user", "idp.issuer", "idp.org_handle"} {
+	for _, k := range []string{"idp.clients", "idp.claims.preset", "idp.claims.org.handle", "idp.claims.caller_type.user", "idp.issuer", "idp.org_handle", "asgardeo.api_url"} {
 		if !persisted[k] {
 			t.Errorf("%s is not in ConfigMapKeys", k)
 		}

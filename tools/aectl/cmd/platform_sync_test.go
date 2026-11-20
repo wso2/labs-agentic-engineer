@@ -52,7 +52,8 @@ func (r *syncRecorder) steps(missing []string, seeded []seededSecret, unsynced m
 			r.order = append(r.order, "postgres")
 			return nil
 		},
-		setupThunder: func(_ context.Context, skip map[string]string) error {
+		idpName: idpNameThunder,
+		setupClients: func(_ context.Context, skip map[string]string) error {
 			r.setup++
 			r.order = append(r.order, "thunder")
 			r.skip = skip
@@ -141,8 +142,8 @@ func TestClientsToRegister_OptionalSecretMissing(t *testing.T) {
 // A Secret that only skipped clients read is not waited for: the wait would
 // stop the clients that can register. A Secret an unskipped client reads is
 // still waited for.
-func TestThunderSecretNames_LeavesOutASecretOnlySkippedClientsRead(t *testing.T) {
-	all := thunderSecretNames(nil)
+func TestClientSecretNames_LeavesOutASecretOnlySkippedClientsRead(t *testing.T) {
+	all := clientSecretNames(nil)
 	for _, want := range []string{thunderSecretsName, aeStudioInternalSecretsName, orgClientSecretsName} {
 		if !slices.Contains(all, want) {
 			t.Fatalf("with nothing skipped, %s is missing from %v", want, all)
@@ -154,7 +155,7 @@ func TestThunderSecretNames_LeavesOutASecretOnlySkippedClientsRead(t *testing.T)
 	if len(skip) != 2 {
 		t.Fatalf("skip = %v, want the org's two clients", skip)
 	}
-	got := thunderSecretNames(skip)
+	got := clientSecretNames(skip)
 	if slices.Contains(got, orgClientSecretsName) {
 		t.Errorf("%s is waited for although every client that reads it is skipped: %v", orgClientSecretsName, got)
 	}
@@ -164,7 +165,7 @@ func TestThunderSecretNames_LeavesOutASecretOnlySkippedClientsRead(t *testing.T)
 
 	// One org client skipped: the other still reads the Secret.
 	one := map[string]string{"aep-publisher-" + ocOrgNamespace(): "stale"}
-	if !slices.Contains(thunderSecretNames(one), orgClientSecretsName) {
+	if !slices.Contains(clientSecretNames(one), orgClientSecretsName) {
 		t.Errorf("%s must be waited for while one client that reads it registers", orgClientSecretsName)
 	}
 }
@@ -224,11 +225,11 @@ func TestSyncClients_SeedErrorStillWarnsForWhatItWrote(t *testing.T) {
 
 // A run that skipped clients does not end on the success line: it names the
 // clients that are not registered and the command that registers them.
-func TestThunderSetupOutcome(t *testing.T) {
-	if msg, complete := thunderSetupOutcome(nil); !complete || msg != "Thunder configured" {
+func TestClientSetupOutcome(t *testing.T) {
+	if msg, complete := clientSetupOutcome(idpNameThunder, nil); !complete || msg != "Thunder configured" {
 		t.Fatalf("nothing skipped: got %q complete=%v", msg, complete)
 	}
-	msg, complete := thunderSetupOutcome(map[string]string{"ae-studio-default": "not synced", "aep-publisher-default": "not synced"})
+	msg, complete := clientSetupOutcome(idpNameThunder, map[string]string{"ae-studio-default": "not synced", "aep-publisher-default": "not synced"})
 	if complete {
 		t.Fatal("clients were skipped: the run is not complete")
 	}
@@ -297,13 +298,13 @@ func TestPathExists_FailsClosed(t *testing.T) {
 // The org's two clients carry the client ids aep-api derives from the org's
 // namespace, are placed under the org's organization unit, and read their
 // secrets from the Secret aep-api reads them from.
-func TestOrgThunderClients(t *testing.T) {
+func TestOrgClients(t *testing.T) {
 	t.Cleanup(viper.Reset)
 	viper.Set("oc.default_org_namespace", "acme")
 	viper.Set("idp.org_handle", "acme-unit")
 
-	got := map[string]thunderClientDef{}
-	for _, d := range orgThunderClients() {
+	got := map[string]idpClientDef{}
+	for _, d := range orgClients() {
 		got[d.clientID] = d
 	}
 	for id, want := range map[string]struct{ vaultName, secretKey string }{

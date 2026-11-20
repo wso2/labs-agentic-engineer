@@ -24,7 +24,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -235,11 +234,11 @@ func aeStudioImageOverrides(designAgent, collab, studioTools string) []string {
 
 // aeStudioExtraEgress is the pod's egress to aep-api and, where the IdP is
 // the in-cluster Thunder, to its namespace and port (thunder.namespace /
-// thunder.url). An install with imported clients opens no IdP rule: the pod's
+// thunder.url). An IdP outside the cluster opens no IdP rule: the pod's
 // NetworkPolicy already lets it reach public HTTPS endpoints.
 func aeStudioExtraEgress(platformNamespace string) string {
 	var rules []map[string]any
-	if registersClients() {
+	if administersThunder() {
 		thunderNS := viper.GetString("thunder.namespace")
 		thunderPort := portOfURL(viper.GetString("thunder.url"), 8090)
 		rules = append(rules, map[string]any{
@@ -280,13 +279,16 @@ func imageTagOverrides(tag string) []string {
 
 var initCmd = &cobra.Command{
 	Use:   "install",
-	Short: "Provision OpenBao secrets, install the platform, and configure Thunder",
+	Short: "Provision OpenBao secrets, install the platform, and set up the platform IdP's clients",
 	Long: `Full AEP platform installation in one command:
   1. Validates the cluster config (imported via 'aectl platform config import')
   2. Seeds all platform secrets into OpenChoreo's built-in OpenBao instance
   3. Installs or upgrades the platform Helm chart (idempotent)
-  4. Registers AEP OAuth clients in Thunder
+  4. Registers AEP's OAuth clients on the platform IdP (see idp.clients below)
   5. Waits for all platform pods to be ready
+
+idp.clients says who creates the clients. With thunder (the default) aectl
+registers them on the ThunderID in the cluster.
 
 With idp.clients imported the platform IdP is one aectl administers nothing
 on (an Asgardeo organization, for example): it asks for no admin credentials,
@@ -294,6 +296,15 @@ generates no client secret and registers no client. It requires the client
 secrets the IdP's admin imported (aep/idp-clients/aep-api-client,
 ae-studio-internal, org-publisher, org-studio) and stops before Helm if one
 is missing.
+
+With idp.clients asgardeo aectl creates the clients in an Asgardeo
+organization, with the credential of the organization's admin application
+(--idp-admin-client-id-file, --idp-admin-client-secret-file). It reads the
+credential for this run and never stores it. It checks the credential before
+it changes the cluster. It does not change an application that exists: a
+wrong setting, or a secret that is not the one in this install's vault, stops
+the install after the chart is installed. --replace-client-secrets has
+Asgardeo issue a new secret in the second case.
 
 Run 'aectl platform config import --config <file>' before this command.
 All configuration values are read from the imported ConfigMap — no
@@ -334,6 +345,7 @@ func init() {
 	initCmd.Flags().StringVar(&initAEStudioImageStudioTools, "ae-studio-image-studio-tools", "", "Full image ref of the ae-studio pod's studio-tools container (aeStudio.images.studioTools)")
 	initCmd.Flags().StringVar(&initImageTag, "image-tag", "", "Tag to use for every platform service image instead of the chart's released default. Repositories are unchanged, so the images must already be loaded into the cluster under those names (local dev — see 'make dev-env')")
 	registerThunderFlags(initCmd)
+	registerIDPAdminFlags(initCmd)
 }
 
 func runAEPInit(cmd *cobra.Command, args []string) error {
@@ -357,6 +369,19 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	}
 	ui.Success(fmt.Sprintf("Platform IdP %s (claims from preset %s, then config)", idp.Public.Issuer, idp.Claims.Preset))
 	printPlatformIDPClaims(idp.Claims)
+
+	// Where aectl creates the clients in an Asgardeo organization, the admin
+	// credential is checked now, for the same reason: a wrong one stops the
+	// install with nothing changed.
+	if err := refuseIDPAdminFlags(); err != nil {
+		return err
+	}
+	var idpAdmin asgardeoAdmin
+	if idp.Clients == config.ClientsAsgardeo {
+		if idpAdmin, err = preflightAsgardeo(ctx, idp.Public.TokenURL); err != nil {
+			return err
+		}
+	}
 
 	if _, err := exec.LookPath("helm"); err != nil {
 		return fmt.Errorf("helm not found in PATH — install from https://helm.sh/docs/intro/install/")
@@ -418,11 +443,11 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 			ui.Success("Anthropic API key (from env)")
 		}
 
-		// The Thunder admin credentials register the clients; with imported
-		// clients aectl registers none and asks for none.
+		// The Thunder admin credentials register the clients on a ThunderID
+		// aectl administers. An IdP outside the cluster has none to ask for.
 		var adminClientID, adminClientSecret string
-		if !registersClients() {
-			ui.Success("The platform IdP's clients are imported: no admin credentials needed")
+		if !administersThunder() {
+			ui.Success("The platform IdP is not a ThunderID in this cluster: no Thunder admin credentials needed")
 		} else {
 			thunderSecret := strings.TrimSpace(os.Getenv("AEP_THUNDER_ADMIN_CLIENT_SECRET"))
 			if thunderSecret == "" {
@@ -537,14 +562,15 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	// different secret, e.g. a reinstall against a Thunder that was never
 	// wiped.
 	//
-	// With imported clients there is nothing to register: the IdP's admin
-	// created the clients and aectl holds no rights on it.
+	// In an Asgardeo organization aectl creates the clients at the same
+	// place, for the same reason. With imported clients there is nothing to
+	// register: the IdP's admin created the clients and aectl holds no rights
+	// on it.
 	fmt.Println()
 	// skip is the clients this run does not register (clientID -> reason).
 	var skip map[string]string
-	if !registersClients() {
-		ui.Success("The platform IdP's clients are imported: none registered")
-	} else {
+	switch idp.Clients {
+	case config.ClientsThunder:
 		ui.Step("Registering Thunder OAuth clients")
 		skip = clientsReadingUnsynced(unsynced)
 		if err := doThunderSetup(ctx, k8sClient, initPlatformNamespace,
@@ -553,7 +579,20 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		); err != nil {
 			return err
 		}
-		reportThunderSetup(skip)
+		reportClientSetup(idpNameThunder, skip)
+	case config.ClientsAsgardeo:
+		ui.Step("Setting up the Asgardeo applications")
+		skip = clientsReadingUnsynced(unsynced)
+		// The vault is opened only if a secret has to be written back.
+		put, stopVault := lazyVaultPut()
+		err := doAsgardeoSetup(ctx, k8sClient, initPlatformNamespace, consoleURL, idpAdmin, put, skip, platformPodsReadyTimeout)
+		stopVault()
+		if err != nil {
+			return err
+		}
+		reportClientSetup(idpNameAsgardeo, skip)
+	default:
+		ui.Success("The platform IdP's clients are imported: none registered")
 	}
 
 	if err := waitForAllPodsReady(ctx, k8sClient, initPlatformNamespace, platformPodsReadyTimeout); err != nil {
@@ -941,6 +980,15 @@ func openOpenBaoSession(ctx context.Context) (*openBaoSession, error) {
 	return &openBaoSession{baseURL: baseURL, token: token, stop: stop}, nil
 }
 
+// put writes value at path, over what the store holds there. It is for a
+// value the caller received and nothing else holds.
+func (s *openBaoSession) put(ctx context.Context, path, value string) error {
+	_, err := openbao.Must(ctx, "PUT", s.baseURL, s.token, "/v1/secret/data/"+path, map[string]interface{}{
+		"data": map[string]interface{}{"value": value},
+	})
+	return err
+}
+
 // putCreateOnly writes value at path as a KV v2 create-only (cas 0): the store
 // refuses to overwrite an existing key, which comes back as errSecretExists.
 func (s *openBaoSession) putCreateOnly(ctx context.Context, path, value string) error {
@@ -1022,7 +1070,7 @@ func requiredOpenBaoPaths() []string {
 		"aep/opensearch-username",
 		"aep/opensearch-password",
 	}
-	if !registersClients() {
+	if !administersThunder() {
 		return paths
 	}
 	return append(paths,
@@ -1074,7 +1122,7 @@ var generatedThunderClientNames = []string{
 	"local-dev-seeder",
 	"openchoreo-rca-agent",
 	"ae-studio-internal",
-	// The org's two clients (orgThunderClients).
+	// The org's two clients (orgClients).
 	"org-publisher",
 	"org-studio",
 }
@@ -1126,7 +1174,7 @@ func provisionOpenBao(ctx context.Context, platformNamespace, anthropicKey, thun
 		{"aep/anthropic-api-key", anthropicKey},
 		{"aep/opensearch-username", "admin"},
 	}
-	if registersClients() {
+	if administersThunder() {
 		inputs = append(inputs,
 			platformInput{"aep/thunder-admin/client-id", thunderAdminClientID},
 			platformInput{"aep/thunder-admin/client-secret", thunderAdminClientSecret},
@@ -1588,18 +1636,14 @@ var runPostgresPasswordCheck = func(ctx context.Context, namespace, podName, pas
 // deploymentsReadingSecret names the Deployments in namespace whose pods take
 // env from the Secret name (a secretKeyRef or an envFrom), sorted.
 func deploymentsReadingSecret(ctx context.Context, c kubernetes.Interface, namespace, name string) ([]string, error) {
-	deps, err := c.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
+	readers, err := readersOfSecret(ctx, c, namespace, name)
 	if err != nil {
-		return nil, fmt.Errorf("list Deployments in %s: %w", namespace, err)
+		return nil, err
 	}
-	var out []string
-	for _, d := range deps.Items {
-		spec := d.Spec.Template.Spec
-		if containersReadSecret(append(append([]corev1.Container{}, spec.InitContainers...), spec.Containers...), name) {
-			out = append(out, d.Name)
-		}
+	out := make([]string, 0, len(readers))
+	for _, d := range readers {
+		out = append(out, d.Name)
 	}
-	sort.Strings(out)
 	return out, nil
 }
 

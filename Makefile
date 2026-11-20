@@ -302,9 +302,21 @@ AECTL_CONFIG ?= skaffold/defaults.yaml
 # cluster comes up and a build stops at that step.
 # It is a mode of a NEW cluster, not a switch on a running one: an org's
 # secret paths are derived from the IdP's id for it.
+#
+# aectl can create AE's five applications itself (idp.clients asgardeo). Give
+# the credential of the organization's admin application in two files:
+#   make dev-env AE_DEV_IDP=asgardeo ASGARDEO_TENANT=<handle> \
+#     ASGARDEO_ADMIN_CLIENT_ID_FILE=<file> ASGARDEO_ADMIN_CLIENT_SECRET_FILE=<file>
+# ae-asgardeo-apps.sh and the four secret files are then not needed, and
+# AE_ASGARDEO_SECRETS_DIR is optional: it only holds OpenChoreo's publisher
+# secret file. The install runs with --replace-client-secrets, because the
+# applications stay in the organization while each new cluster starts with an
+# empty vault. Do not use it on an organization that another install uses.
 AE_DEV_IDP ?= thunder
 ASGARDEO_TENANT ?=
 AE_ASGARDEO_SECRETS_DIR ?=
+ASGARDEO_ADMIN_CLIENT_ID_FILE ?=
+ASGARDEO_ADMIN_CLIENT_SECRET_FILE ?=
 # Asgardeo's API address, for an organization in another region. One value
 # for the cluster script (which points OpenChoreo at the issuer under it) and
 # the generated aectl config (whose idp.issuer is under it): the two must name
@@ -317,6 +329,13 @@ AE_ASGARDEO_CLIENT_SECRETS := aep-api-client ae-studio-internal org-publisher or
 # The generated aectl config of an Asgardeo dev-env: a build artifact, never
 # committed (it names the developer's organization).
 AE_ASGARDEO_AECTL_CONFIG := tools/aectl/.aectl-asgardeo.yaml
+# Who creates the applications: aectl when an admin credential file is given
+# (idp.clients asgardeo), the organization's admin otherwise (imported).
+AE_ASGARDEO_CLIENTS := $(if $(ASGARDEO_ADMIN_CLIENT_ID_FILE)$(ASGARDEO_ADMIN_CLIENT_SECRET_FILE),asgardeo,imported)
+# The admin credential flags of the aectl commands that create or check the
+# applications. The install also replaces a secret that does not match.
+AE_ASGARDEO_ADMIN_ARGS := $(if $(filter asgardeo,$(AE_ASGARDEO_CLIENTS)),--idp-admin-client-id-file="$(ASGARDEO_ADMIN_CLIENT_ID_FILE)" --idp-admin-client-secret-file="$(ASGARDEO_ADMIN_CLIENT_SECRET_FILE)")
+AE_ASGARDEO_INSTALL_ARGS := $(if $(AE_ASGARDEO_ADMIN_ARGS),$(AE_ASGARDEO_ADMIN_ARGS) --replace-client-secrets)
 
 .PHONY: dev-env-thunder dev-env-asgardeo
 dev-env: dev-env-$(AE_DEV_IDP)
@@ -325,14 +344,21 @@ dev-env-asgardeo:
 	@if [ "$(AE_DOMAIN)" != "localhost" ]; then \
 		echo "❌ dev-env is the localhost flow (see AE_DOMAIN in this Makefile)." >&2; exit 1; \
 	fi
-	@if [ -z "$(ASGARDEO_TENANT)" ] || [ -z "$(AE_ASGARDEO_SECRETS_DIR)" ]; then \
-		echo "❌ AE_DEV_IDP=asgardeo needs ASGARDEO_TENANT (the organization's handle) and AE_ASGARDEO_SECRETS_DIR (the directory ae-asgardeo-apps.sh wrote the secret files to)." >&2; exit 1; \
+	@if [ -z "$(ASGARDEO_TENANT)" ]; then \
+		echo "❌ AE_DEV_IDP=asgardeo needs ASGARDEO_TENANT (the organization's handle)." >&2; exit 1; \
 	fi
-	@for f in $(AE_ASGARDEO_CLIENT_SECRETS); do \
-		[ -s "$(AE_ASGARDEO_SECRETS_DIR)/$$f" ] || { echo "❌ $(AE_ASGARDEO_SECRETS_DIR)/$$f is missing or empty: run deployments/scripts/ae-asgardeo-apps.sh first." >&2; exit 1; }; \
-	done
+	@if [ "$(AE_ASGARDEO_CLIENTS)" = "asgardeo" ]; then \
+		for f in "$(ASGARDEO_ADMIN_CLIENT_ID_FILE)" "$(ASGARDEO_ADMIN_CLIENT_SECRET_FILE)"; do \
+			[ -s "$$f" ] || { echo "❌ ASGARDEO_ADMIN_CLIENT_ID_FILE and ASGARDEO_ADMIN_CLIENT_SECRET_FILE must both name a non-empty file (the credential of the organization's admin application)." >&2; exit 1; }; \
+		done; \
+	else \
+		[ -n "$(AE_ASGARDEO_SECRETS_DIR)" ] || { echo "❌ AE_DEV_IDP=asgardeo needs AE_ASGARDEO_SECRETS_DIR (the directory ae-asgardeo-apps.sh wrote the secret files to), or the two ASGARDEO_ADMIN_CLIENT_*_FILE variables for aectl to create the applications." >&2; exit 1; }; \
+		for f in $(AE_ASGARDEO_CLIENT_SECRETS); do \
+			[ -s "$(AE_ASGARDEO_SECRETS_DIR)/$$f" ] || { echo "❌ $(AE_ASGARDEO_SECRETS_DIR)/$$f is missing or empty: run deployments/scripts/ae-asgardeo-apps.sh first." >&2; exit 1; }; \
+		done; \
+	fi
 	cd tools/aectl && go build -o aectl-skaffold .
-	bash deployments/scripts/ae-asgardeo-aectl-config.sh $(AECTL_CONFIG) $(ASGARDEO_TENANT) $(ASGARDEO_BASE_URL) > $(AE_ASGARDEO_AECTL_CONFIG)
+	bash deployments/scripts/ae-asgardeo-aectl-config.sh $(AECTL_CONFIG) $(ASGARDEO_TENANT) $(ASGARDEO_BASE_URL) $(AE_ASGARDEO_CLIENTS) > $(AE_ASGARDEO_AECTL_CONFIG)
 	AE_DOMAIN=$(AE_DOMAIN) AE_DEV_IDP=asgardeo ASGARDEO_TENANT=$(ASGARDEO_TENANT) ASGARDEO_BASE_URL=$(ASGARDEO_BASE_URL) AE_ASGARDEO_SECRETS_DIR="$(AE_ASGARDEO_SECRETS_DIR)" bash deployments/scripts/setup-env-for-aectl.sh
 	$(MAKE) dev-images
 	$(MAKE) ae-studio-refs-check
@@ -340,14 +366,17 @@ dev-env-asgardeo:
 	@# so the generated file is checked here and not before the cluster exists.
 	./tools/aectl/aectl-skaffold platform config test --config $(AE_ASGARDEO_AECTL_CONFIG)
 	./tools/aectl/aectl-skaffold platform config import --config $(AE_ASGARDEO_AECTL_CONFIG)
-	@for f in $(AE_ASGARDEO_CLIENT_SECRETS); do \
-		./tools/aectl/aectl-skaffold platform secret import --path aep/idp-clients/$$f --value-file "$(AE_ASGARDEO_SECRETS_DIR)/$$f" || exit 1; \
-	done
+	@if [ "$(AE_ASGARDEO_CLIENTS)" = "imported" ]; then \
+		for f in $(AE_ASGARDEO_CLIENT_SECRETS); do \
+			./tools/aectl/aectl-skaffold platform secret import --path aep/idp-clients/$$f --value-file "$(AE_ASGARDEO_SECRETS_DIR)/$$f" || exit 1; \
+		done; \
+	fi
 	ANTHROPIC_API_KEY=none \
 		./tools/aectl/aectl-skaffold platform install --addons=all --platform-version=latest --platform-chart=deployments/helm-charts/platform --image-tag=dev-local \
 		--ae-studio-image-design-agent="$(call ae_studio_ref,ae-design-agent)" \
 		--ae-studio-image-collab="$(call ae_studio_ref,ae-collab)" \
-		--ae-studio-image-studio-tools="$(call ae_studio_ref,ae-studio-tools)"
+		--ae-studio-image-studio-tools="$(call ae_studio_ref,ae-studio-tools)" \
+		$(AE_ASGARDEO_INSTALL_ARGS)
 	@echo "⏭️  Skipping Agent Manager, the SRE agent and dev-seed (AE_DEV_IDP=asgardeo). Sign in at the console and connect GitHub and the model key in its welcome step."
 
 dev-env-thunder:
@@ -504,7 +533,10 @@ obs-status:
 # runs the install's Thunder setup: on an install that predates a Thunder
 # client it seeds that client's missing vault key (never rotating an existing
 # one) and registers it. Idempotent, and it touches no database or Thunder
-# admin secret.
+# admin secret. On an Asgardeo cluster where aectl created the applications
+# (idp.clients asgardeo) it needs the admin credential again: pass the same
+# ASGARDEO_ADMIN_CLIENT_ID_FILE and ASGARDEO_ADMIN_CLIENT_SECRET_FILE as to
+# `make dev-env`. Without them it stops there and names the two flags.
 #
 # One-shot, not a watch loop. Run after `make dev-env`.
 # Console: http://console.ae.localhost:8080
@@ -522,7 +554,7 @@ dev-update:
 		--set console.image.repository=ghcr.io/wso2/aep/console --set console.image.tag=dev-local \
 		--set tryIt.image.repository=ghcr.io/wso2/aep/tryit --set tryIt.image.tag=dev-local \
 		$(AE_STUDIO_IMAGE_SET)
-	./tools/aectl/aectl-skaffold platform sync-clients
+	./tools/aectl/aectl-skaffold platform sync-clients $(AE_ASGARDEO_ADMIN_ARGS)
 	kubectl -n wso2-aep rollout restart deployment/aep-api deployment/aep-console deployment/aep-tryit
 
 # Builds the coding-agent runner images from this checkout (Claude Code and

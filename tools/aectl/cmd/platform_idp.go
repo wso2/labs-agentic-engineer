@@ -36,8 +36,9 @@ import (
 // discovery document, and the rest from config.
 type platformIDP struct {
 	// Clients is who creates AE's clients on the IdP (idp.clients): aectl,
-	// on a ThunderID it administers (config.ClientsThunder), or the IdP's
-	// admin, who then imports their secrets (config.ClientsImported).
+	// on a ThunderID it administers (config.ClientsThunder); aectl, in an
+	// Asgardeo organization (config.ClientsAsgardeo); or the IdP's admin, who
+	// then imports their secrets (config.ClientsImported).
 	Clients string
 	// Claims is the idp.claims block: the names and values of the claims
 	// that say a caller's org and caller type. aectl passes them to the
@@ -49,7 +50,7 @@ type platformIDP struct {
 	// InCluster is the same endpoints at thunder.url, the address a pod
 	// reaches a ThunderID aectl administers at (on k3d the public hostname is
 	// loopback inside a pod). Public itself when thunder.url is unset, and
-	// always with imported clients: such an IdP has no in-cluster address.
+	// always for an IdP outside the cluster, which has no in-cluster address.
 	InCluster oidc.Endpoints
 	// OrgHandle and OrgNamespace name the one org the IdP serves: the handle
 	// its tokens name the org by (idp.org_handle), and the org's OpenChoreo
@@ -68,12 +69,26 @@ func platformIDPClients() string {
 	return config.ClientsThunder
 }
 
-// registersClients reports whether aectl creates AE's clients itself, on a
-// ThunderID it administers. Otherwise the IdP's admin created them and aectl
-// administers nothing there: it registers no client, generates no client
-// secret, asks for no admin secret, and has no in-cluster IdP to reach.
-func registersClients() bool {
+// administersThunder reports whether the platform IdP is a ThunderID that
+// aectl administers (idp.clients thunder): aectl registers AE's clients on it
+// with the ThunderID admin credential, and pods reach it at an in-cluster
+// address. Under every other value the IdP is outside the cluster: aectl
+// asks for no ThunderID admin secret and has no in-cluster IdP to reach.
+func administersThunder() bool {
 	return platformIDPClients() == config.ClientsThunder
+}
+
+// idpClients is the clients aectl creates on the platform IdP: thunderClients
+// on a ThunderID it administers, asgardeoClients in an Asgardeo organization,
+// none where the IdP's admin creates them.
+func idpClients() []idpClientDef {
+	switch platformIDPClients() {
+	case config.ClientsThunder:
+		return thunderClients()
+	case config.ClientsAsgardeo:
+		return asgardeoClients()
+	}
+	return nil
 }
 
 // platformIssuerKey is the config key that holds the platform IdP's issuer:
@@ -105,7 +120,7 @@ func discoverPlatformIDP(ctx context.Context) (platformIDP, error) {
 		OrgHandle:    strings.TrimSpace(viper.GetString("idp.org_handle")),
 		OrgNamespace: ocOrgNamespace(),
 	}
-	if !registersClients() {
+	if !administersThunder() {
 		return idp, nil
 	}
 	if base := viper.GetString("thunder.url"); base != "" {
@@ -173,8 +188,8 @@ func platformIDPOverrides(idp platformIDP) []string {
 // envIDPPlatformTrust is the platform IdP an environment ThunderID is told
 // to trust, or nothing. The trust exists for one caller, Agent Manager,
 // whose token is minted by the platform IdP. Agent Manager needs its clients
-// registered on a ThunderID, so it installs only where aectl registers
-// clients; with imported clients nothing presents such a token and the
+// registered on a ThunderID, so it installs only where aectl administers
+// one; with an IdP outside the cluster nothing presents such a token and the
 // environment IdP trusts only itself. A trust nothing uses would read as
 // configured and tie the environment IdP to an endpoint it never needs.
 func envIDPPlatformTrust(idp platformIDP) oidc.Endpoints {

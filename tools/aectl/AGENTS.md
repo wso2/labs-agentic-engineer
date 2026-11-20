@@ -1,6 +1,6 @@
 # AGENTS.md — tools/aectl
 
-AEP Control Plane CLI. Single binary (`aectl`) that installs AEP, provisions OpenBao, and manages Thunder OAuth clients.
+AEP Control Plane CLI. Single binary (`aectl`) that installs AEP, provisions OpenBao, and creates the OAuth clients of the platform IdP (on ThunderID, or in an Asgardeo organization).
 
 ## Commands
 
@@ -15,6 +15,7 @@ go build -o aectl .  # build CLI
 | `cmd/` | Cobra commands for the CLI (`platform`, `config`, `secret`, `sre`, `uninstall`) |
 | `internal/openbao/` | HTTP client for OpenBao API |
 | `internal/thunder/` | Thunder admin client (OAuth app registration over HTTP), port-forward |
+| `internal/asgardeo/` | Client of the Application Management API of an Asgardeo organization, for `idp.clients: asgardeo`: creates AE's applications, lists the wrong settings of an application that exists, checks a secret by a token request, regenerates a secret |
 | `internal/kubernetes/` | k8s client helpers (Job runner, port-forward) |
 | `internal/config/` | Viper config defaults and init |
 | `internal/idpclaims/` | Resolves the `idp.claims` block: a preset (data files in `presets/`), then the values that the caller lays over it. `platformIDPClaims` (`cmd/platform_idp.go`) supplies the config keys of the loaded config |
@@ -35,13 +36,17 @@ always override the ConfigMap.
 in-process `platform update`).
 
 `idp.clients` selects who creates the clients of the platform IdP: `thunder`
-(the default) or `imported`. A key in `keyRegistry`
-(`internal/config/config.go`) can belong to one value of `idp.clients`
+(the default), `imported` or `asgardeo`. A key in `keyRegistry`
+(`internal/config/config.go`) can belong to values of `idp.clients`
 (`clients`). The four `thunder.*` keys are required for `thunder` and are
-refused for `imported` (`exclusive`). `idp.issuer` is required for
-`imported`, where it must be an https URL. For `thunder` it is optional: if
-it is not set, the issuer is `thunder.public_url`. `idp.org_handle` is always
-required.
+refused for the other values (`exclusive`). `asgardeo.api_url` is required
+for `asgardeo` and is refused for the other values. `idp.issuer` is required
+for `imported` and `asgardeo`. There, `idp.issuer` and `asgardeo.api_url`
+must be https URLs. For `thunder`, `idp.issuer` is optional: if it is not
+set, the issuer is `thunder.public_url`. `idp.org_handle` is always
+required. `administersThunder` (`cmd/platform_idp.go`) reports the value
+`thunder`. `idpClients` gives the clients that `aectl` creates for the
+value.
 
 The `idp.claims` block gives the claim names of the platform IdP
 (`internal/idpclaims`). Each value comes from two layers, in this order:
@@ -65,7 +70,7 @@ tokens reads by them.
   `AE_STUDIO_INTERNAL_CLIENT_SECRET`) carries no org claims
   (`noUserAttributes`), and is `optional` (its own Secret, `aep-ae-studio-internal-secrets`; a
   missing Secret skips the client with a warning).
-- `orgThunderClients` (`cmd/thunder_cli.go`) adds the two clients of the org:
+- `orgClients` (`cmd/thunder_cli.go`) adds the two clients of the org:
   `aep-publisher-<org>` and `ae-studio-<org>`. `aectl` registers them under
   the organization unit that `idp.org_handle` names (`OrgOUHandle`,
   `internal/thunder`). It does not create an organization unit. Their vault
@@ -94,9 +99,10 @@ tokens reads by them.
   (the empty ones too, because the defaults of the chart are those of one
   IdP), `idp.jwksURL` and `idp.tokenURL`,
   `aeStudio.idp.{issuer,jwksUrl,tokenUrl}`, `idp.orgHandle` and
-  `idp.orgNamespace`. When `aectl` registers the clients, the JWKS and token
-  URLs are the paths of the document on `thunder.url`, the address at which
-  pods reach the IdP. If not, they are the URLs that the document gives.
+  `idp.orgNamespace`. When the IdP is a ThunderID that `aectl` administers
+  (`idp.clients: thunder`), the JWKS and token URLs are the paths of the
+  document on `thunder.url`, the address at which pods reach the IdP. If
+  not, they are the URLs that the document gives.
   `platformIDPInstallArgs` writes `idp.issuer`.
   `envidp` builds the environment Thunders' trust of the platform IdP from
   the same endpoints on `https://<host>:8443`.
@@ -105,7 +111,8 @@ tokens reads by them.
   `aep/anthropic-api-key`, `aep/postgres-password`, `aep/webhook-relay-seed`
   (relay on or off), `aep/opensearch-{username,password}` and
   `aep/thunder-admin/client-{id,secret}` (`cmd/platform.go`, the `secrets`
-  list). `install --reuse-secrets` overwrites nothing: it requires
+  list). `install --reuse-secrets` overwrites nothing (the one exception is
+  `--replace-client-secrets`, see "Asgardeo clients"): it requires
   `requiredOpenBaoPaths` and tops up, create-only, missing Thunder client
   secrets and (relay on) the relay seed. `platform update` writes only
   `aep/webhook-relay-seed`, create-only and only with
@@ -117,8 +124,7 @@ tokens reads by them.
 
 With `idp.clients: imported`, the admin of the platform IdP creates the
 clients, and `aectl` administers nothing on the IdP. An Asgardeo organization
-is an example. `registersClients` (`cmd/platform_idp.go`) reads the setting.
-What differs from the sections above:
+is an example. What differs from the sections above:
 
 - **Secrets.** `aectl` generates no client secret and asks for no admin
   secret. The admin of the IdP creates the clients (for Asgardeo:
@@ -143,3 +149,57 @@ What differs from the sections above:
 - **`sre install`** refuses (`sreIDPSupported`, `cmd/sre.go`). It uses the
   observer and RCA clients of OpenChoreo, which `platform install` registers
   only with `idp.clients: thunder`.
+
+## Asgardeo clients
+
+With `idp.clients: asgardeo`, `aectl` creates AE's clients in an Asgardeo
+organization (`internal/asgardeo`, `cmd/asgardeo_cli.go`). The Helm values,
+the environment Thunders and `sre install` are as in "Imported clients".
+What differs:
+
+- **Clients.** `asgardeoClients` gives five: three of `aepThunderClients`
+  (`asgardeoPlatformClientIDs`) and the two of `orgClients`. `aectl` does
+  not create the clients of OpenChoreo.
+- **Admin credential.** `platform install` and `platform sync-clients` read
+  it from the files of `--idp-admin-client-id-file` and
+  `--idp-admin-client-secret-file` (`readIDPAdminCredential`). It is not a
+  config key and is not stored. `preflightAsgardeo` gets a management token
+  and looks up each client before the command changes the cluster. The
+  command uses that token to its end.
+  `refuseIDPAdminFlags` refuses the flags for another value of
+  `idp.clients`.
+- **Secrets.** `generatedClientSecrets` gives the four secrets of
+  `importedClientNames` a generator (`generatedAsgardeoClientSecrets`).
+  Nothing is imported.
+- **Setup.** `doAsgardeoSetup` runs where `doThunderSetup` runs.
+  `ensureAsgardeoClients` creates a client that the organization does not
+  have, with its secret from the cluster Secret. It does not change a client
+  that exists: a wrong setting stops the command.
+- **A secret that does not match.** Asgardeo does not return a secret and
+  does not accept one for an application that exists. `SecretWorks` asks the
+  organization for a token with the secret of the vault. If the token is
+  refused, the command stops. With `--replace-client-secrets`,
+  `RegenerateSecret` gets a new secret from Asgardeo, and `aectl` writes it
+  over the vault path. This is the only write of `aectl` over a client
+  secret that the vault holds, and `install --reuse-secrets` does it too
+  with the flag.
+- **Pods that hold an old secret.** A pod takes a secret only when it
+  starts. The pod template of each Deployment that reads a client Secret
+  holds a checksum of the Secret (`clientSecretChecksumAnnotation`).
+  `reconcileClientSecretReaders` runs at the end of each run. After a
+  replace it syncs the cluster Secrets. Then `restartStaleSecretReaders`
+  writes the checksum to each Deployment whose checksum is not the checksum
+  of the Secret, in one patch for all its stale Secrets. The changed pod
+  template restarts the Deployment. A Deployment that has no checksum is
+  restarted once. Thus a run that stopped after the write to the vault is
+  completed by the next run. A replaced secret whose Secret did not sync is
+  an error. `waitForRollouts` then waits until each reader has rolled out,
+  in every run, and a rollout that does not finish is an error.
+  `platform sync-clients` waits for `syncClientsRolloutTimeout`, and
+  `platform install` for `platformPodsReadyTimeout`.
+- **GitHub reconnect.** A changed secret of one of the org's clients needs
+  a GitHub reconnect, because only aep-api writes the secret that the org
+  stores. `orgClientSecretWarning` says so. `reconcileClientSecretReaders`
+  prints it before a step that can fail, in the run that replaced the
+  secret, and in a later run that finds the Secret of the org's clients
+  changed after the pods of a reader started.
