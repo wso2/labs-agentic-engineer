@@ -184,24 +184,22 @@ What differs:
   secret that the vault holds, and `install --reuse-secrets` does it too
   with the flag.
 - **Pods that hold an old secret.** A pod takes a secret only when it
-  starts. `recordClientSecretChecksums` writes, on each Deployment that
-  reads a client Secret, a checksum of the Secret
-  (`clientSecretChecksumAnnotation`) before a run changes a secret.
-  `reconcileClientSecretReaders` runs at the end of each run: after a
-  replace it syncs the cluster Secrets, and it restarts each Deployment
-  whose checksum is not the checksum of the Secret
-  (`restartStaleSecretReaders`). A Deployment gets one patch for all its
-  stale Secrets. The patch records the checksums and puts them into the pod
-  template, so the restart and the record are one change. Thus a run that
-  stopped after the write to the vault is completed by the next run. A
-  replaced secret whose Secret did not sync is an error. `waitForRollouts`
-  then waits until the Deployments have rolled out, and a rollout that does
-  not finish is an error. `platform sync-clients` waits for each reader, in
-  every run (`syncClientsRolloutWait`). `platform install` waits for those
-  that it restarted (`installRolloutWait`), before its wait for all pods.
+  starts. The pod template of each Deployment that reads a client Secret
+  holds a checksum of the Secret (`clientSecretChecksumAnnotation`).
+  `reconcileClientSecretReaders` runs at the end of each run. After a
+  replace it syncs the cluster Secrets. Then `restartStaleSecretReaders`
+  writes the checksum to each Deployment whose checksum is not the checksum
+  of the Secret, in one patch for all its stale Secrets. The changed pod
+  template restarts the Deployment. A Deployment that has no checksum is
+  restarted once. Thus a run that stopped after the write to the vault is
+  completed by the next run. A replaced secret whose Secret did not sync is
+  an error. `waitForRollouts` then waits until each reader has rolled out,
+  in every run, and a rollout that does not finish is an error.
+  `platform sync-clients` waits for `syncClientsRolloutTimeout`, and
+  `platform install` for `platformPodsReadyTimeout`.
 - **GitHub reconnect.** A changed secret of one of the org's clients needs
   a GitHub reconnect, because only aep-api writes the secret that the org
   stores. `orgClientSecretWarning` says so. `reconcileClientSecretReaders`
   prints it before a step that can fail, in the run that replaced the
-  secret, and in a later run that restarts a reader of the Secret of the
-  org's clients.
+  secret, and in a later run that finds the Secret of the org's clients
+  changed after the pods of a reader started.
