@@ -345,6 +345,27 @@ func lazyVaultPut() (put vaultPut, stop func()) {
 	return put, stop
 }
 
+// replacedOrgClientWarning is the warning for the org's clients among
+// replaced, or "" when none of them is the org's. aep-api stores the secrets
+// of the org's two clients in the org's references when the org connects
+// GitHub, so an org that is already connected still holds the old one. One
+// step is left to the operator, and only aep-api can do the rest: a GitHub
+// reconnect, after this command has restarted aep-api with the new secret.
+// It is not orgClientRepairWarning: that one is for a secret aectl generated
+// before the client was registered, where the restart is the operator's too.
+func replacedOrgClientWarning(replaced []idpClientDef) string {
+	var ids []string
+	for _, def := range replaced {
+		if slices.Contains(orgClientVaultPaths, def.vaultPath()) {
+			ids = append(ids, def.clientID)
+		}
+	}
+	if len(ids) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("Asgardeo issued a new secret for the org's client (%s). An org that already connected GitHub still holds the previous secret, so its builds and its AE Studio cannot get a token. When this command has completed without an error, reconnect GitHub in the console: aep-api then stores the new secret for the org.", strings.Join(ids, ", "))
+}
+
 // clientSecretChecksumAnnotation is the annotation, on a Deployment, that
 // holds the checksum of the client Secret secretName as the Deployment's pods
 // started with it.
@@ -473,6 +494,9 @@ func restartStaleSecretReaders(ctx context.Context, c kubernetes.Interface, name
 // A replaced secret whose Secret did not sync is an error: Asgardeo already
 // refuses the old value, and the pods still hold it. The next run completes
 // it: the Secret syncs, its checksum changes, and the Deployments restart.
+//
+// A replaced secret of one of the org's clients ends with
+// replacedOrgClientWarning.
 func reconcileClientSecretReaders(ctx context.Context, c kubernetes.Interface, platformNamespace string, secretNames []string, replaced []idpClientDef, sync func(ctx context.Context) (map[string]string, error)) error {
 	var unsynced map[string]string
 	if len(replaced) > 0 {
@@ -489,15 +513,15 @@ func reconcileClientSecretReaders(ctx context.Context, c kubernetes.Interface, p
 		return fmt.Errorf("%w. Run '%s' again: it restarts what still holds an old client secret", err, syncClientsCommand())
 	}
 
-	var seeded []seededSecret
 	var pending []string
 	for _, def := range replaced {
-		seeded = append(seeded, seededSecret{path: def.vaultPath()})
 		if reason, ok := unsynced[def.secretNameOrDefault()]; ok {
 			pending = append(pending, fmt.Sprintf("%s (Secret %s: %s)", def.clientID, def.secretNameOrDefault(), reason))
 		}
 	}
-	warnRegeneratedOrgClientSecrets(seeded)
+	if msg := replacedOrgClientWarning(replaced); msg != "" {
+		ui.Warn(msg)
+	}
 	if len(pending) > 0 {
 		return fmt.Errorf("the cluster Secret did not sync after Asgardeo issued a new secret for %d client(s): %s. The pods that read it still hold the old secret, which Asgardeo refuses. Run '%s' again: it syncs the Secret and restarts what reads it", len(pending), strings.Join(pending, "; "), syncClientsCommand())
 	}

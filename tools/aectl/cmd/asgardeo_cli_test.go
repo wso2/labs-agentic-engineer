@@ -611,6 +611,24 @@ func TestReconcileClientSecretReaders_SyncsAndRestartsTheReaders(t *testing.T) {
 	}
 }
 
+// After a replace of an org client's secret one step is left to the
+// operator: the GitHub reconnect. The warning names the client and that
+// step, and does not tell the operator to restart aep-api, which the command
+// does. A replaced platform client needs no warning.
+func TestReplacedOrgClientWarning(t *testing.T) {
+	setAsgardeoClientsConfig(t)
+	if msg := replacedOrgClientWarning([]idpClientDef{defOf(t, "aep-api-client")}); msg != "" {
+		t.Errorf("a platform client: %q, want no warning", msg)
+	}
+	msg := replacedOrgClientWarning([]idpClientDef{defOf(t, "aep-api-client"), defOf(t, "aep-publisher-default")})
+	if !strings.Contains(msg, "aep-publisher-default") || !strings.Contains(msg, "reconnect GitHub") {
+		t.Errorf("warning %q lacks the client or the reconnect step", msg)
+	}
+	if strings.Contains(msg, "restart") || strings.Contains(msg, "aep-api-client") {
+		t.Errorf("warning %q tells the operator to restart, or names a platform client", msg)
+	}
+}
+
 // A restart that fails leaves the Deployment recorded with the old checksum.
 // The next run replaces nothing, since the vault's secret now works, and
 // still restarts the Deployment: its checksum is not the Secret's.

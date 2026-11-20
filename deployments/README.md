@@ -453,6 +453,10 @@ What `aectl` does with the applications:
   working at once.** Do not pass the flag while another install uses the
   same organization: import the secret that install holds instead
   (`aectl platform secret import --path aep/idp-clients/<name>`).
+- If the replaced secret is of one of the org's two clients and the org has
+  already connected GitHub, reconnect GitHub in the console when the command
+  has completed: aep-api then stores the new secret for the org. The
+  command prints a warning that says so.
 - A pod takes a secret only when it starts. So `aectl` records, on each
   Deployment that reads a client Secret, a checksum of the Secret as its
   pods started with it (the annotation
