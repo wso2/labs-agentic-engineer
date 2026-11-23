@@ -116,6 +116,11 @@ What an Issue card says about handing its issue to the coding agent.
 | **Address comments (N)** | send every pending (and reopened) comment to the agent in one turn | Send, Submit review |
 | **✓ Addressed in revision N** | the agent's one-line answer on a comment it acted on | Resolved, Done |
 | **Reopen** | put an addressed comment back in the next batch | Reply, Unresolve |
+| **N assumed** | the Technical decisions row's count of decisions the agent made for the user that nobody has kept or changed yet | unconfirmed, open |
+| **Keep** | confirm an assumed decision as written: its "assumed" comes off, its words stay | Accept, Approve, Confirm |
+| **Change…** | ask the agent for a different decision: a comment on the decision, with the decision quoted | Edit, Remove, Reject |
+| **by you** | the brief mark on a line the user just kept | Saved, Done |
+| **Write what you want instead under the quote.** | the hint under a Change… comment's box; the quote above it can't be edited | — |
 | **v2 is building — open it on Builds** | the Overview's note while a build runs and Build is held; the link opens that build | Build disabled, Busy |
 | **Wait for the agent to finish** | the note while a turn runs in the project's chat and Build is held, so a build does not freeze a half-written design; the picker's Start build says the same | Agent busy, Build locked |
 | **Not ready to build yet — Payroll export: waiting on Xero** | the note while every designed feature is held: each one with the build picker's reasons | Build refused, Blocked |

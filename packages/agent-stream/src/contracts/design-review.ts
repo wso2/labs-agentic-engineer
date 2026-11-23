@@ -34,7 +34,11 @@
  * artifact had when the user ticked it, and the tick shows only while the
  * artifact still hashes to it — a changed artifact unticks itself. The hash is
  * the lowercase hex SHA-256 of the file's text, UTF-8 encoded, exactly as
- * stored (no normalisation). The prototype's is its revision hash, the kit's
+ * stored (no normalisation), except the technical decisions
+ * (`specs/design/decisions.md`): theirs is taken of the file as it reads
+ * once every decision is kept, each decision's closing `*assumed*` tag and
+ * the space before it removed, so confirming a decision leaves the file
+ * checked (ADR-0052, amended). The prototype's is its revision hash, the kit's
  * `prototypeHash(manifest, source)` (`@wso2/prototype-kit/feedback`): the
  * SHA-256 of `prototype.json`'s text, a NUL, then `prototype.tsx`'s — the same
  * hash its full-screen review names a feedback batch by.

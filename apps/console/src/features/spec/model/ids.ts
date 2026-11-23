@@ -93,12 +93,22 @@ function overlaps(a: Span, spans: Span[]): boolean {
   return spans.some((s) => a.start < s.end && s.start < a.end);
 }
 
-/** A tag closing the line: the italic `word` with nothing after it but punctuation. */
-function closingTag(text: string, emphasis: Span[], word: string): Span | null {
+/**
+ * A tag closing the line: the italic `word` with nothing after it that
+ * `trailing` does not allow (by default, punctuation only).
+ */
+export function closingTag(text: string, emphasis: Span[], word: string, trailing: RegExp = TRAILING_PUNCTUATION): Span | null {
   const tag = emphasis
-    .filter((e) => text.slice(e.start, e.end).trim() === word && TRAILING_PUNCTUATION.test(text.slice(e.end)))
+    .filter((e) => text.slice(e.start, e.end).trim() === word && trailing.test(text.slice(e.end)))
     .at(-1);
   return tag ? { start: tag.start, end: tag.end } : null;
+}
+
+/** A tag's span in a line's text, widened over the whitespace before it: removing a tag removes that too. */
+export function tagWithSpace(text: string, tag: Span): Span {
+  let start = tag.start;
+  while (start > 0 && /\s/.test(text[start - 1]!)) start--;
+  return { start, end: tag.end };
 }
 
 /** Split a line into its ID, sources, tags and words. */

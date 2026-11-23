@@ -28,6 +28,8 @@ import {
   editDraft,
   EMPTY_REVIEW,
   isAsking,
+  quotedComment,
+  splitQuote,
   isChecked,
   overviewNote,
   primaryAction,
@@ -260,5 +262,18 @@ describe("the Overview's note beside Build", () => {
 
   it("says nothing of Build while the build offer loads", () => {
     expect(overviewNote({ waiting: 0, primary: { kind: "build" }, hold: { kind: "loading" } })).toEqual([]);
+  });
+});
+
+describe("a comment about one line", () => {
+  it("opens with the line quoted, and reads back as the quote and the words", () => {
+    const text = quotedComment("[data-model] Amounts are kept in cents. (F1)", "Keep them as decimals.");
+    expect(text).toBe("> [data-model] Amounts are kept in cents. (F1)\n\nKeep them as decimals.");
+    expect(splitQuote(text)).toEqual({ quote: "[data-model] Amounts are kept in cents. (F1)", words: "Keep them as decimals." });
+  });
+
+  it("reads a comment that quotes nothing as words alone", () => {
+    expect(splitQuote("Why cents?")).toEqual({ quote: null, words: "Why cents?" });
+    expect(splitQuote("> not a quote without the blank line\nWhy?")).toEqual({ quote: null, words: "> not a quote without the blank line\nWhy?" });
   });
 });

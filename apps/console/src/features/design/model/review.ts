@@ -66,6 +66,31 @@ export function reviewText(review: DesignReview): string {
 }
 
 /** Whether a comment waits for the next Address comments. */
+/**
+ * A comment about one line of a file (a technical decision's Change…) opens
+ * with that line as a markdown quote, then what the user wrote. The quote is
+ * the comment's subject: it is shown apart, and kept as written when the
+ * comment is edited.
+ */
+export function quotedComment(quote: string, words: string): string {
+  return `${quote
+    .split("\n")
+    .map((l) => `> ${l}`)
+    .join("\n")}\n\n${words}`;
+}
+
+/** A comment's quoted line and what was written under it; the quote is null when it quotes nothing. */
+export function splitQuote(text: string): { quote: string | null; words: string } {
+  const m = /^((?:> .*\n)+)\n([\s\S]*)$/.exec(text);
+  if (!m) return { quote: null, words: text };
+  const quote = m[1]!
+    .trimEnd()
+    .split("\n")
+    .map((l) => l.slice(2))
+    .join("\n");
+  return { quote, words: m[2]! };
+}
+
 export function isWaiting(comment: Pick<ReviewComment, "status">): boolean {
   return comment.status === "draft" || comment.status === "reopened";
 }

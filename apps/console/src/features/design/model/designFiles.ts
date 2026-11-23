@@ -28,6 +28,8 @@ import {
   securityRowsOf,
   type SecurityDoc,
 } from "./catalog";
+import { keptMarkdown } from "../decisionsRoom";
+import { DECISIONS_PATH } from "./decisions";
 
 // The Design card's rail (L21, D12): the files Design generates, read from the
 // room, one item per file and in the order Design makes them:
@@ -39,7 +41,8 @@ import {
 //
 // An item shows only once its file exists. Each names the path review.json
 // keys it by (the prototype by its manifest), what its Checked hash is taken
-// of, and which Overview list reviews it: a business reviewer's (prototypes,
+// of (the technical decisions' as they read once every one is kept, ADR-0006), and
+// which Overview list reviews it: a business reviewer's (prototypes,
 // agents, roles and permissions) or a technical one's (architecture, data
 // model, contracts, flows, technical decisions). Only those are checkable;
 // components, dependencies and acceptance tests are for reference.
@@ -56,7 +59,6 @@ const HEADING = /^#\s+(.+)$/m;
 /** The room's prefixes the rail reads. */
 export const DESIGN_FILE_PREFIXES = [DESIGN, "specs/validation/acceptance/"] as const;
 
-export const DECISIONS_PATH = `${DESIGN}decisions.md`;
 
 export type ReviewList = "business" | "technical";
 
@@ -66,6 +68,8 @@ type Source<K extends ArtifactSource["kind"]> = Extract<ArtifactSource, { kind: 
 export type ItemBody =
   | { kind: "architecture"; source: Source<"architecture"> }
   | { kind: "document"; markdown: string }
+  /** The technical decisions: drawn from the room's lines, which Keep edits. */
+  | { kind: "decisions" }
   | { kind: "roles"; roles: Source<"roles">; security: Source<"security"> }
   /** A component's design.json, or a service's with its contract. */
   | { kind: "contract"; source: Source<"contract"> }
@@ -250,7 +254,19 @@ export function designItems(files: Readonly<Record<string, string>>): DesignItem
     out.push(documentItem(`flow-${m[1]}`, path, name, markdown, "technical", { title: `Flow: ${name}`, section: "Flows", nested: true }));
   }
   const decisions = files[DECISIONS_PATH];
-  if (decisions !== undefined) out.push(documentItem("decisions", DECISIONS_PATH, "Technical decisions", decisions, "technical"));
+  if (decisions !== undefined) {
+    out.push(
+      item({
+        key: "decisions",
+        path: DECISIONS_PATH,
+        label: "Technical decisions",
+        title: "Technical decisions",
+        list: "technical",
+        hashOf: { text: keptMarkdown(decisions) },
+        body: { kind: "decisions" },
+      }),
+    );
+  }
 
   for (const path of Object.keys(files).sort()) {
     if (!ACCEPTANCE_RE.test(path)) continue;
@@ -285,8 +301,8 @@ export function reviewLists(items: readonly DesignItem[]): Record<ReviewList, De
 
 /**
  * Each item's hash as review.json's Checked compares it, by path: the
- * lowercase hex SHA-256 of the file's UTF-8 text, or for a prototype the
- * kit's revision hash over its two files.
+ * lowercase hex SHA-256 of the UTF-8 text its `hashOf` names, or for a
+ * prototype the kit's revision hash over its two files.
  */
 export function artifactHashes(items: readonly DesignItem[]): Record<string, string> {
   return Object.fromEntries(
