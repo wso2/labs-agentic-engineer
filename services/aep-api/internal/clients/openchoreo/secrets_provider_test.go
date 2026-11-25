@@ -18,6 +18,7 @@ package openchoreo
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -64,9 +65,18 @@ func newFakeSecretAPI(t *testing.T) (*fakeSecretAPI, *httptest.Server) {
 	return f, srv
 }
 
+// fakeRemoteKey is the store key the fake reports for a stored secret. It is
+// deliberately not aep-api's old vault layout, so a test that sees it proves
+// the key came from OpenChoreo rather than being computed.
+func fakeRemoteKey(ns, name string) string { return "secret/" + ns + "/generic/" + name }
+
 func (f *fakeSecretAPI) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if rest, ok := strings.CutPrefix(r.URL.Path, "/api/v1/namespaces/"); ok {
+		f.serveSecretReference(w, r, rest)
+		return
+	}
 	rest, ok := strings.CutPrefix(r.URL.Path, "/api/v1alpha1/namespaces/")
 	if !ok {
 		replyJSON(w, http.StatusNotFound, map[string]string{"error": "no route " + r.URL.Path})
@@ -130,6 +140,17 @@ func (f *fakeSecretAPI) serve(w http.ResponseWriter, r *http.Request) {
 		existing.Data = body.Data // the API replaces data, it does not merge
 		f.secrets[key] = existing
 		replyJSON(w, http.StatusOK, map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": parts[2], "namespace": ns}})
+	case r.Method == http.MethodGet && len(parts) == 3:
+		s, exists := f.secrets[ns+"/"+parts[2]]
+		if !exists {
+			replyJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		data := make(map[string]string, len(s.Data))
+		for k, v := range s.Data {
+			data[k] = base64.StdEncoding.EncodeToString([]byte(v)) // Kubernetes Secret data
+		}
+		replyJSON(w, http.StatusOK, map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": parts[2], "namespace": ns}, "data": data})
 	case r.Method == http.MethodDelete && len(parts) == 3:
 		key := ns + "/" + parts[2]
 		if _, exists := f.secrets[key]; !exists {
@@ -141,6 +162,34 @@ func (f *fakeSecretAPI) serve(w http.ResponseWriter, r *http.Request) {
 	default:
 		replyJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": r.Method + " " + r.URL.Path})
 	}
+}
+
+// serveSecretReference answers GET /api/v1/namespaces/{ns}/secretreferences/{name}
+// with the SecretReference OpenChoreo creates for a stored secret: one
+// spec.data entry per key, all at the secret's store key, property = key.
+func (f *fakeSecretAPI) serveSecretReference(w http.ResponseWriter, r *http.Request, rest string) {
+	parts := strings.Split(rest, "/")
+	if r.Method != http.MethodGet || len(parts) != 3 || parts[1] != "secretreferences" {
+		replyJSON(w, http.StatusNotFound, map[string]string{"error": "no route " + r.URL.Path})
+		return
+	}
+	ns, name := parts[0], parts[2]
+	s, ok := f.secrets[ns+"/"+name]
+	if !ok {
+		replyJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	data := make([]map[string]any, 0, len(s.Data))
+	for k := range s.Data {
+		data = append(data, map[string]any{
+			"secretKey": k,
+			"remoteRef": map[string]any{"key": fakeRemoteKey(ns, name), "property": k},
+		})
+	}
+	replyJSON(w, http.StatusOK, map[string]any{
+		"metadata": map[string]any{"name": name, "namespace": ns},
+		"spec":     map[string]any{"data": data, "template": map[string]any{"type": "Opaque"}},
+	})
 }
 
 func (f *fakeSecretAPI) count() int {
@@ -293,6 +342,67 @@ func TestSecretsOverOpenChoreo_CreateSecretRef_CancelledHalfwayLeavesNothingBehi
 	}
 	if n := api.orphanCount(); n != 0 {
 		t.Errorf("OpenChoreo holds %d half-written copies, want 0", n)
+	}
+}
+
+func TestSecretsOverOpenChoreo_StoredKey_IsTheKeyOpenChoreoChose(t *testing.T) {
+	_, srv := newFakeSecretAPI(t)
+	client := newSecretClientOverOC(t, srv)
+	ctx := context.Background()
+	name, err := client.CreateSecret(ctx, ampKeyLocation(), map[string]string{"api-key": "k"})
+	if err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	key, err := client.StoredKey(ctx, ampKeyLocation())
+	if err != nil {
+		t.Fatalf("StoredKey: %v", err)
+	}
+	if want := fakeRemoteKey("acme", name); key != want {
+		t.Errorf("StoredKey = %q, want %q", key, want)
+	}
+}
+
+func TestSecretsOverOpenChoreo_StoredKey_MissingSecretIsNotFound(t *testing.T) {
+	_, srv := newFakeSecretAPI(t)
+	client := newSecretClientOverOC(t, srv)
+
+	_, err := client.StoredKey(context.Background(), ampKeyLocation())
+	if !errors.Is(err, secretmanagersvc.ErrSecretNotFound) {
+		t.Fatalf("err = %v, want ErrSecretNotFound", err)
+	}
+}
+
+func TestSecretsOverOpenChoreo_GetSecretWithValue_ReadsTheStoredValues(t *testing.T) {
+	_, srv := newFakeSecretAPI(t)
+	client := newSecretClientOverOC(t, srv)
+	ctx := context.Background()
+	project := secretmanagersvc.SecretLocation{
+		OrgName:               "6f1c2b3a-0000-4000-8000-000000000001",
+		ControlPlaneNamespace: "acme",
+		ProjectName:           "shop",
+		EntityName:            "extres-postgres-dev",
+	}
+	if _, err := client.CreateSecret(ctx, project, map[string]string{"password": "s3cret", "apiToken": "tok_123"}); err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	got, err := client.GetSecretWithValue(ctx, project)
+	if err != nil {
+		t.Fatalf("GetSecretWithValue: %v", err)
+	}
+	if len(got) != 2 || got["password"] != "s3cret" || got["apiToken"] != "tok_123" {
+		t.Errorf("values = %v, want {password: s3cret, apiToken: tok_123}", got)
+	}
+}
+
+func TestSecretsOverOpenChoreo_GetSecretWithValue_MissingSecretIsNotFound(t *testing.T) {
+	_, srv := newFakeSecretAPI(t)
+	client := newSecretClientOverOC(t, srv)
+
+	_, err := client.GetSecretWithValue(context.Background(), ampKeyLocation())
+	if !errors.Is(err, secretmanagersvc.ErrSecretNotFound) {
+		t.Fatalf("err = %v, want ErrSecretNotFound", err)
 	}
 }
 

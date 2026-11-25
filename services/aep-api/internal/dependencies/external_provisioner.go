@@ -287,7 +287,7 @@ func (p *ExternalResourceProvisioner) StageSecrets(
 		if !p.sm.Enabled() {
 			return nil, fmt.Errorf("external resources: SM-API not configured but resource %q has secret values", er.Name)
 		}
-		entity := externalResourceSecretEntity(er.Name, env)
+		entity := ExternalResourceSecretEntity(er.Name, env)
 		path, _, werr := p.sm.WriteExternalResourceSecret(ctx, ocOrgID, projectName, entity, secret)
 		if werr != nil {
 			return nil, fmt.Errorf("external resources: write secret for env %q: %w", env, werr)
@@ -403,10 +403,10 @@ func (p *ExternalResourceProvisioner) secretKeysByName(ctx context.Context, orgH
 
 // ---- pure builders (unit-tested) -------------------------------------------
 
-// externalResourceSecretEntity is the SM-API EntityName for an external
-// resource's per-env secret bundle — one SM-API secret per (project, resource,
-// env).
-func externalResourceSecretEntity(name, env string) string { return "extres-" + name + "-" + env }
+// ExternalResourceSecretEntity is the secret EntityName of an external
+// resource's per-env secret bundle — one secret per (project, resource, env).
+// Promote reads a project's bundle back by it, so it is the one rule both use.
+func ExternalResourceSecretEntity(name, env string) string { return "extres-" + name + "-" + env }
 
 // buildExternalResource references the version-pinned cluster RT name (rtName),
 // not the logical er.ResourceTypeName, so the Resource binds to the freshly

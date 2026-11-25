@@ -161,7 +161,16 @@ func (w *SecretRefWriter) writeAPIKey(ctx context.Context, ocOrgID string, s Org
 		if repoint == nil {
 			return nil
 		}
-		return repoint(SecretRefTriplet{Name: name, KVPath: vaultKeyFor(ouID, name), Property: apiKeyProperty})
+		loc, err := orgSecretLocation(ocOrgID, ouID, s)
+		if err != nil {
+			return err
+		}
+		loc.RefName = name
+		key, err := w.storedKey(ctx, loc)
+		if err != nil {
+			return fmt.Errorf("store key of %s: %w", name, err)
+		}
+		return repoint(SecretRefTriplet{Name: name, KVPath: key, Property: apiKeyProperty})
 	})
 	if err != nil {
 		return OrgSecretWrite{}, fmt.Errorf("secret-ref writer: %s upload: %w", s, err)
@@ -457,7 +466,8 @@ func (w *SecretRefWriter) WriteExternalResourceSecret(ctx context.Context, ocOrg
 	if err != nil {
 		return "", "", fmt.Errorf("secret-ref writer: external-resource secret upload (%s): %w", entityName, err)
 	}
-	vaultKey, err = w.resolveVaultKey(ctx, secretRefName)
+	loc.RefName = secretRefName
+	vaultKey, err = w.storedKey(ctx, loc)
 	if err != nil {
 		return "", secretRefName, fmt.Errorf("secret-ref writer: resolve external-resource vault key (%s): %w", entityName, err)
 	}
@@ -472,23 +482,33 @@ func (w *SecretRefWriter) WriteExternalResourceSecret(ctx context.Context, ocOrg
 // WriteExternalResourceSecret path.
 const orgCatalogProjectName = "org-catalog"
 
-// CopyOrgCatalogSecret reads the secret fields at fromVaultKey — a project's
-// own external-resource secret, whose vault key its per-environment binding
-// carries as secretStorePath — and writes them as an org-catalog entity. The
-// values move vault to vault; nothing is echoed to the caller.
-func (w *SecretRefWriter) CopyOrgCatalogSecret(ctx context.Context, ocOrgID, fromVaultKey, entityName string) (string, error) {
+// CopyOrgCatalogSecret reads the secret fields of a project's own
+// external-resource secret — the one WriteExternalResourceSecret wrote for
+// (fromProject, fromEntity) — and writes them as an org-catalog entity. The
+// values move store to store; nothing is echoed to the caller.
+func (w *SecretRefWriter) CopyOrgCatalogSecret(ctx context.Context, ocOrgID, fromProject, fromEntity, entityName string) (string, error) {
 	if !w.Enabled() {
 		return "", nil
 	}
-	if strings.TrimSpace(fromVaultKey) == "" {
-		return "", errors.New("secret-ref writer: no vault key to copy from")
+	if strings.TrimSpace(fromProject) == "" || strings.TrimSpace(fromEntity) == "" {
+		return "", errors.New("secret-ref writer: no project secret to copy from")
 	}
-	data, err := w.client.GetSecretWithValue(ctx, fromVaultKey)
+	orgUUID, err := orgUUIDForSecretLocation(ctx)
 	if err != nil {
-		return "", fmt.Errorf("secret-ref writer: read %s for the org catalog: %w", fromVaultKey, err)
+		return "", fmt.Errorf("secret-ref writer: org-catalog copy (%s): %w", fromEntity, err)
+	}
+	from := secretmanagersvc.SecretLocation{
+		OrgName:               orgUUID,
+		ControlPlaneNamespace: ocOrgID,
+		ProjectName:           fromProject,
+		EntityName:            fromEntity,
+	}
+	data, err := w.client.GetSecretWithValue(ctx, from)
+	if err != nil {
+		return "", fmt.Errorf("secret-ref writer: read %s for the org catalog: %w", fromEntity, err)
 	}
 	if len(data) == 0 {
-		return "", fmt.Errorf("secret-ref writer: %s holds no secret data", fromVaultKey)
+		return "", fmt.Errorf("secret-ref writer: %s holds no secret data", fromEntity)
 	}
 	return w.WriteOrgCatalogSecret(ctx, ocOrgID, entityName, data)
 }
@@ -501,10 +521,12 @@ func (w *SecretRefWriter) WriteOrgCatalogSecret(ctx context.Context, ocOrgID, en
 	return vaultKey, err
 }
 
-// OrgCatalogVaultKey reconstructs the org-catalog vault path for an already-
-// written Registered External secret (entityName is `<name>-<env>`) without
-// writing. Used after aep-api restart when the process-local value plane is
-// empty but OpenBao still holds the org-catalog record.
+// OrgCatalogVaultKey is the store key of an already-written Registered
+// External secret (entityName is `<name>-<env>`), found without writing.
+// Used after aep-api restart when the process-local value plane is empty but
+// the store still holds the org-catalog record. Org-catalog secrets keep a
+// fixed name, so the reference is found by it; a provider that reports keys
+// answers "" for a secret never written, one that cannot derives the key.
 func (w *SecretRefWriter) OrgCatalogVaultKey(ctx context.Context, ocOrgID, entityName string) (string, error) {
 	if w == nil || !w.Enabled() {
 		return "", nil
@@ -522,7 +544,14 @@ func (w *SecretRefWriter) OrgCatalogVaultKey(ctx context.Context, ocOrgID, entit
 		ProjectName:           orgCatalogProjectName,
 		EntityName:            entityName,
 	}
-	return w.resolveVaultKey(ctx, loc.SecretRefName())
+	key, err := w.storedKey(ctx, loc)
+	if errors.Is(err, secretmanagersvc.ErrSecretNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("secret-ref writer: org-catalog vault key (%s): %w", entityName, err)
+	}
+	return key, nil
 }
 
 // orgUUIDForSecretLocation returns the Thunder ouId that must populate
@@ -541,6 +570,18 @@ func orgUUIDForSecretLocation(ctx context.Context) (string, error) {
 		return id.String(), nil
 	}
 	return claims.OrgID, nil
+}
+
+// storedKey is the store key a consumer reads the secret at loc by. A
+// provider that chooses the key itself (OpenChoreo) reports it; for one that
+// cannot (OpenBao, SM-API) the key is derived as resolveVaultKey does.
+// loc.SecretRefName() must name the written reference.
+func (w *SecretRefWriter) storedKey(ctx context.Context, loc secretmanagersvc.SecretLocation) (string, error) {
+	key, err := w.client.StoredKey(ctx, loc)
+	if errors.Is(err, secretmanagersvc.ErrNotSupported) {
+		return w.resolveVaultKey(ctx, loc.SecretRefName())
+	}
+	return key, err
 }
 
 // resolveVaultKey reconstructs the actual Vault KV key from the

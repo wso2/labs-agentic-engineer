@@ -187,8 +187,9 @@ func TestPromoteExternalResource_MakesTheRecordAndRewritesTheProject(t *testing.
 		t.Fatalf("document not committed to the org docs repo: %+v", f.docs.committed)
 	}
 
-	// Values: development carried over, production typed; the secret moved vault to vault.
-	if len(f.secrets.copied) != 1 || f.secrets.copied[0] != "vault/team-expenses/fx-rates-development -> fx-rates-development" {
+	// Values: development carried over, production typed; the secret moved
+	// store to store, read from the project's own external-resource secret.
+	if len(f.secrets.copied) != 1 || f.secrets.copied[0] != "team-expenses/extres-fx-rates-development -> fx-rates-development" {
 		t.Fatalf("secret copies = %+v, want the development value carried over once", f.secrets.copied)
 	}
 	cells := map[string]EnvCell{}

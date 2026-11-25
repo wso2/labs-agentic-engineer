@@ -144,11 +144,11 @@ type CatalogValuePlane interface {
 // and SecretStorePath then stays empty on the value plane.
 type OrgSecretWriter interface {
 	WriteOrgCatalogSecret(ctx context.Context, orgID, entityName string, data map[string]string) (vaultKey string, err error)
-	// CopyOrgCatalogSecret copies the secret fields a project holds at
-	// fromVaultKey (its own external resource's per-environment secret) into
-	// an org-catalog entity. Promote carries a value over this way so it
-	// never passes through a request.
-	CopyOrgCatalogSecret(ctx context.Context, orgID, fromVaultKey, entityName string) (vaultKey string, err error)
+	// CopyOrgCatalogSecret copies the secret fields a project holds for its
+	// own external resource in one environment — the secret fromEntity of
+	// fromProject — into an org-catalog entity. Promote carries a value over
+	// this way so it never passes through a request.
+	CopyOrgCatalogSecret(ctx context.Context, orgID, fromProject, fromEntity, entityName string) (vaultKey string, err error)
 }
 
 // ProjectResourcePromoter is the project side of Promote: it reads a project's

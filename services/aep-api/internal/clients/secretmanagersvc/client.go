@@ -138,7 +138,12 @@ type SecretManagementClient interface {
 	// derived from location. A reference already gone is success.
 	DeleteSecretRef(ctx context.Context, location SecretLocation, name string) error
 	GetSecret(ctx context.Context, kvPath string) (*SecretInfo, error)
-	GetSecretWithValue(ctx context.Context, kvPath string) (map[string]string, error)
+	GetSecretWithValue(ctx context.Context, location SecretLocation) (map[string]string, error)
+	// StoredKey is the store key a consumer reads the secret at location by,
+	// as the backend chose it. ErrNotSupported when the provider cannot
+	// report it (the caller then derives the key itself); ErrSecretNotFound
+	// when no such secret exists.
+	StoredKey(ctx context.Context, location SecretLocation) (string, error)
 }
 
 type secretManagementClient struct {
@@ -551,20 +556,24 @@ func (c *secretManagementClient) GetSecret(ctx context.Context, kvPath string) (
 	return info, nil
 }
 
-func (c *secretManagementClient) GetSecretWithValue(ctx context.Context, kvPath string) (map[string]string, error) {
-	location, err := ParseKVPath(kvPath)
-	if err != nil {
-		return nil, fmt.Errorf("parse KV path %q: %w", kvPath, err)
-	}
+func (c *secretManagementClient) GetSecretWithValue(ctx context.Context, location SecretLocation) (map[string]string, error) {
 	raw, err := c.lowLevelClient.GetSecretWithValue(ctx, location)
 	if err != nil {
-		return nil, fmt.Errorf("get secret at %q: %w", kvPath, err)
+		return nil, fmt.Errorf("get secret %s: %w", location.SecretRefName(), err)
 	}
 	var out map[string]string
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, fmt.Errorf("unmarshal secret data: %w", err)
 	}
 	return out, nil
+}
+
+func (c *secretManagementClient) StoredKey(ctx context.Context, location SecretLocation) (string, error) {
+	resolver, ok := c.lowLevelClient.(StoredKeyResolver)
+	if !ok {
+		return "", ErrNotSupported
+	}
+	return resolver.StoredKey(ctx, location)
 }
 
 // ManagesSecretReferences reports whether the provider creates and names the

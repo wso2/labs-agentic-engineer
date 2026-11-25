@@ -64,6 +64,15 @@ type SecretPathResolver interface {
 	SecretPath(location SecretLocation) (string, error)
 }
 
+// StoredKeyResolver is an optional interface a SecretsClient implements when
+// the backend chooses where a value is stored. StoredKey returns the store
+// key a consumer reads the secret at location by — the SecretReference's
+// spec.data[].remoteRef.key — so callers never rebuild the backend's layout.
+// It returns ErrSecretNotFound when no such secret exists.
+type StoredKeyResolver interface {
+	StoredKey(ctx context.Context, location SecretLocation) (string, error)
+}
+
 // SecretsClient performs secret operations on a backend.
 // This interface follows the external-secrets SecretsClient pattern.
 // Each provider interprets the SecretLocation according to its storage model:

@@ -161,6 +161,12 @@ func (v *saveVault) CreateSecretRef(_ context.Context, loc secretmanagersvc.Secr
 	return name, nil
 }
 
+// StoredKey answers like a provider that cannot report the store key, so the
+// writer derives it.
+func (v *saveVault) StoredKey(context.Context, secretmanagersvc.SecretLocation) (string, error) {
+	return "", secretmanagersvc.ErrNotSupported
+}
+
 func (v *saveVault) DeleteSecretRef(_ context.Context, _ secretmanagersvc.SecretLocation, name string) error {
 	v.log.add("delete:%s", name)
 	if v.deleteErr != nil {

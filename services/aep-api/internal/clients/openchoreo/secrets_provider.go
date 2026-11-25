@@ -47,6 +47,7 @@ var (
 	_ secretmanagersvc.Provider               = (*secretsProvider)(nil)
 	_ secretmanagersvc.SecretReferenceManager = (*secretsProvider)(nil)
 	_ secretmanagersvc.SecretsClient          = (*secretsClient)(nil)
+	_ secretmanagersvc.StoredKeyResolver      = (*secretsClient)(nil)
 )
 
 // NewSecretsProvider builds the provider over OpenChoreo's Secret API. Panics
@@ -66,7 +67,7 @@ func (p *secretsProvider) NewClient(*secretmanagersvc.StoreConfig) (secretmanage
 func (p *secretsProvider) ValidateConfig(*secretmanagersvc.StoreConfig) error { return nil }
 
 func (p *secretsProvider) Capabilities() secretmanagersvc.StoreCapabilities {
-	return secretmanagersvc.StoreCapabilityWriteOnly
+	return secretmanagersvc.StoreCapabilityReadWrite
 }
 
 func (p *secretsProvider) ManagesSecretReferences() bool { return true }
@@ -226,8 +227,71 @@ func (c *secretsClient) GetSecret(context.Context, secretmanagersvc.SecretLocati
 	return nil, secretmanagersvc.ErrNotSupported
 }
 
-func (c *secretsClient) GetSecretWithValue(context.Context, secretmanagersvc.SecretLocation) ([]byte, error) {
-	return nil, secretmanagersvc.ErrNotSupported
+// GetSecretWithValue reads the values of the secret named
+// location.SecretRefName(), as one JSON object of key → value (the shape
+// PushSecret takes).
+func (c *secretsClient) GetSecretWithValue(ctx context.Context, location secretmanagersvc.SecretLocation) ([]byte, error) {
+	ns, err := location.CPNamespace()
+	if err != nil {
+		return nil, err
+	}
+	name := location.SecretRefName()
+	resp, err := c.oc.GetSecretWithResponse(ctx, ns, name)
+	if err != nil {
+		return nil, fmt.Errorf("openchoreo secrets: read %s/%s: %w", ns, name, err)
+	}
+	if resp.StatusCode() == http.StatusNotFound {
+		return nil, fmt.Errorf("openchoreo secrets: %s/%s: %w", ns, name, secretmanagersvc.ErrSecretNotFound)
+	}
+	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
+		return nil, fmt.Errorf("openchoreo secrets: read %s/%s: %w", ns, name, mapSecretReferenceError(resp.StatusCode(), ErrorResponses{
+			JSON401: resp.JSON401,
+			JSON403: resp.JSON403,
+			JSON500: resp.JSON500,
+		}))
+	}
+	values := map[string]string{}
+	if resp.JSON200.Data != nil {
+		for k, v := range *resp.JSON200.Data {
+			values[k] = string(v)
+		}
+	}
+	raw, err := json.Marshal(values)
+	if err != nil {
+		return nil, fmt.Errorf("openchoreo secrets: marshal %s/%s: %w", ns, name, err)
+	}
+	return raw, nil
+}
+
+// StoredKey reads the store key from the SecretReference OpenChoreo created
+// for the secret at location. Every spec.data entry of a reference OpenChoreo
+// creates points at the same key (one property per data key), so the first
+// entry's key is the secret's.
+func (c *secretsClient) StoredKey(ctx context.Context, location secretmanagersvc.SecretLocation) (string, error) {
+	ns, err := location.CPNamespace()
+	if err != nil {
+		return "", err
+	}
+	name := location.SecretRefName()
+	resp, err := c.oc.GetSecretReferenceWithResponse(ctx, ns, name)
+	if err != nil {
+		return "", fmt.Errorf("openchoreo secrets: read reference %s/%s: %w", ns, name, err)
+	}
+	if resp.StatusCode() == http.StatusNotFound {
+		return "", fmt.Errorf("openchoreo secrets: %s/%s: %w", ns, name, secretmanagersvc.ErrSecretNotFound)
+	}
+	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
+		return "", fmt.Errorf("openchoreo secrets: read reference %s/%s: %w", ns, name, mapSecretReferenceError(resp.StatusCode(), ErrorResponses{
+			JSON401: resp.JSON401,
+			JSON403: resp.JSON403,
+			JSON500: resp.JSON500,
+		}))
+	}
+	ref := secretReferenceToModel(resp.JSON200)
+	if len(ref.Data) == 0 || ref.Data[0].RemoteKey == "" {
+		return "", fmt.Errorf("openchoreo secrets: reference %s/%s names no store key", ns, name)
+	}
+	return ref.Data[0].RemoteKey, nil
 }
 
 func (c *secretsClient) Close(context.Context) error { return nil }

@@ -295,10 +295,10 @@ type orgValuePlaneWrite struct {
 	Keys          []openchoreo.ExternalResourceConfigKey
 	EnvNames      []string
 	ValueByEnvKey map[string]string // envValueKey(env, key) → value
-	// CarriedFrom names, per environment, the project vault key whose secret
-	// fields are copied into the org catalog instead of written from
-	// ValueByEnvKey (Promote's carry-over).
-	CarriedFrom map[string]string
+	// CarriedFrom names, per environment, the project secret whose fields are
+	// copied into the org catalog instead of written from ValueByEnvKey
+	// (Promote's carry-over).
+	CarriedFrom map[string]carriedSecret
 	// ExistingVaultByEnv is the vault key already on the record per
 	// environment (Update): kept when the write lands no new one.
 	ExistingVaultByEnv map[string]string
@@ -331,7 +331,7 @@ func (s *Service) writeOrgValuePlane(ctx context.Context, orgID string, w orgVal
 		for _, env := range w.EnvNames {
 			entity := w.Name + "-" + env
 			if from, ok := w.CarriedFrom[env]; ok {
-				vaultKey, err := s.orgSecrets.CopyOrgCatalogSecret(ctx, orgID, from, entity)
+				vaultKey, err := s.orgSecrets.CopyOrgCatalogSecret(ctx, orgID, from.Project, from.Entity, entity)
 				if err != nil {
 					return nil, fmt.Errorf("provisioning: carry over the %q secret into the org catalog: %w", env, err)
 				}
