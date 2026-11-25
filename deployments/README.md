@@ -148,12 +148,24 @@ the four secret files. The mode:
   four secret files are not needed, and the install runs with
   `--replace-client-secrets`: the applications stay in the organization and
   each new cluster starts with an empty vault. `AE_ASGARDEO_SECRETS_DIR` is
-  then optional and only holds OpenChoreo's publisher secret file. Do not
-  use this on an organization that another install uses;
+  then optional and only holds the secret files of OpenChoreo's publisher
+  and observer clients. Do not use this on an organization that another
+  install uses;
 - leaves out what signs in with a client that exists only in ThunderID:
-  OpenChoreo's portal, the observability plane, Agent Manager, the SRE agent
-  and `dev-seed`. Connect GitHub and the model key in the console's welcome
-  step;
+  OpenChoreo's portal, Agent Manager, the SRE agent and `dev-seed`. Connect
+  GitHub and the model key in the console's welcome step;
+- installs the logs part of the observability plane only if the observer's
+  own client is on the organization too. The observer is the plane's service
+  that answers log queries, and aep-api reads a finished coding run's log
+  from it. Run `ae-asgardeo-apps.sh` with `--with-openchoreo-observer`: it
+  creates `openchoreo-observer-resource-reader-client` and writes
+  `oc-observer-reader` beside the other secret files. The dev-env then makes
+  the observer's Secret from that file, points the plane at the
+  organization, and installs the base chart and the logs module. Tracing and
+  metrics are left out, because nothing in this mode reads them. Without the
+  file the whole plane is left out, and a finished run shows no log. This is
+  for a local cluster only: on a real one that client and the plane are the
+  cluster owner's;
 - makes builds finish only if OpenChoreo's own workload publisher client is
   on the organization too. Run `ae-asgardeo-apps.sh` with
   `--with-openchoreo-publisher`: it creates that client and writes
@@ -163,6 +175,20 @@ the four secret files. The mode:
   on a cluster that is already up). Without it a build stops at its last
   step. This is for a local cluster only: on a real one that client and
   template are the cluster owner's.
+
+The secret of each of OpenChoreo's own clients, the publisher and the
+observer, comes from its file in `AE_ASGARDEO_SECRETS_DIR` and is put where
+OpenChoreo reads it. It does not go through the vault, so a restart of the
+local OpenBao does not touch it. Keep the two files: every `make dev-env`
+reads them.
+
+A user needs one of OpenChoreo's groups to read a finished run's log. The
+observer checks the user's own token, which aep-api passes on, and OpenChoreo
+takes a user's rights from the token's `groups` claim. The groups `admins`,
+`developers`, `platform-engineers` and `sres` each carry the right to read
+logs. Put the user into a group of one of those names in the organization.
+A user in none of them sees "Couldn't load this run's log right now" on a
+finished run.
 
 It is a mode of a new cluster. Do not run it over a Thunder cluster, or the
 reverse: an org's secret paths are derived from the IdP's id for the org, so
@@ -281,6 +307,10 @@ owns: when its `observer-secret` ExternalSecret in
 `aep/idp-clients/oc-observer-reader`, aectl rewrites it to do so, waits for
 ESO to sync it and restarts `deploy/observer`, so expect a short observer
 outage on that run. A plane already pointed there, or no plane, is left alone.
+This holds for `idp.clients: thunder`. On an Asgardeo dev cluster aectl does
+not create that client and does not touch `observer-secret`: the dev-env
+makes that Secret from the secret file of the client that
+`ae-asgardeo-apps.sh --with-openchoreo-observer` created.
 
 Coding-agent runs as an ephemeral OpenChoreo Job Component in the project's
 dataplane (image from `AGENT_RUNNER_IMAGE`); builds use the `dockerfile-builder`

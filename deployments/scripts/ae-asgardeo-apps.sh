@@ -34,7 +34,7 @@
 #
 # <namespace> is the org's OpenChoreo namespace: aep-api names an org's two
 # clients after it. OpenChoreo's own clients are the cluster owner's and are
-# not created here, with one exception for a developer's own cluster:
+# not created here, with two exceptions for a developer's own cluster:
 #
 #   --with-openchoreo-publisher   LOCAL DEV CLUSTER ONLY. Also creates
 #       openchoreo-workload-publisher-client, the client OpenChoreo's build
@@ -43,6 +43,17 @@
 #       vault: deployments/scripts/ae-asgardeo-oc-publisher.sh puts it into the
 #       build template of a local k3d cluster. On a real cluster this client
 #       and that template are the cluster owner's to set up.
+#
+#   --with-openchoreo-observer    LOCAL DEV CLUSTER ONLY. Also creates
+#       openchoreo-observer-resource-reader-client, the client the observer
+#       (the log query service of OpenChoreo's observability plane) signs in
+#       as to read OpenChoreo's API, and writes its secret to the file
+#       oc-observer-reader. That secret is not imported into AE's vault:
+#       `make dev-env AE_DEV_IDP=asgardeo` makes the observer's Secret of a
+#       local k3d cluster from it, and installs the logs part of the plane
+#       only when the file is there
+#       (deployments/scripts/setup-env-for-aectl.sh, step 7). On a real
+#       cluster this client and the plane are the cluster owner's to set up.
 #
 # Prerequisite: an M2M application in the organization, authorized (its "API
 # Authorization" tab) for the Application Management API with the scopes
@@ -55,7 +66,7 @@
 #   ASGARDEO_ADMIN_CLIENT_ID_FILE=<file> ASGARDEO_ADMIN_CLIENT_SECRET_FILE=<file> \
 #   AE_ASGARDEO_OUT_DIR=<directory outside any repository> \
 #   deployments/scripts/ae-asgardeo-apps.sh [--dry-run] [--confirm-tenant <handle>]
-#       [--with-openchoreo-publisher]
+#       [--with-openchoreo-publisher] [--with-openchoreo-observer]
 #
 # Optional: AE_ORG_NAMESPACE (default "default"), ASGARDEO_BASE_URL (default
 # https://api.asgardeo.io).
@@ -73,7 +84,9 @@
 # file per secret (directory 700, files 600). Secrets and the management token
 # reach curl and jq through files and stdin, never argv, and are never
 # printed. The script ends with the `aectl platform secret import` commands
-# for those files; delete the files once imported.
+# for the files AE imports; delete those files once imported. Keep the files
+# of OpenChoreo's two clients: every `make dev-env` of a local cluster reads
+# them.
 set -euo pipefail
 umask 077
 
@@ -91,16 +104,23 @@ die() { echo "❌ $*" >&2; exit 1; }
 # build template and role binding; its secret file is not one AE imports.
 OC_PUBLISHER_CLIENT="openchoreo-workload-publisher-client"
 OC_PUBLISHER_FILE="oc-workload-publisher"
+# OpenChoreo's observer: its client id is fixed by the observability plane's
+# chart and by OpenChoreo's role binding; its secret file is not one AE
+# imports either.
+OC_OBSERVER_CLIENT="openchoreo-observer-resource-reader-client"
+OC_OBSERVER_FILE="oc-observer-reader"
 
 DRY_RUN=0
 CONFIRM_TENANT=""
 WITH_OC_PUBLISHER=0
+WITH_OC_OBSERVER=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --confirm-tenant) shift; CONFIRM_TENANT="${1:-}" ;;
     --with-openchoreo-publisher) WITH_OC_PUBLISHER=1 ;;
-    -h|--help) sed -n '18,76p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --with-openchoreo-observer) WITH_OC_OBSERVER=1 ;;
+    -h|--help) sed -n '18,89p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
   shift
@@ -143,6 +163,10 @@ if [ "$WITH_OC_PUBLISHER" = "1" ]; then
   APPS="${APPS}
 ${OC_PUBLISHER_CLIENT}|m2m|${OC_PUBLISHER_FILE}"
 fi
+if [ "$WITH_OC_OBSERVER" = "1" ]; then
+  APPS="${APPS}
+${OC_OBSERVER_CLIENT}|m2m|${OC_OBSERVER_FILE}"
+fi
 
 echo "Asgardeo organization : ${TENANT} (${BASE_URL})"
 echo "Org namespace         : ${NAMESPACE}"
@@ -154,6 +178,8 @@ printf '%s\n' "$APPS" | while IFS='|' read -r id kind file; do
     echo "  - ${id}  (browser: authorization code + PKCE, JWT access token with ${TOKEN_ATTRIBUTES})"
   elif [ "$id" = "$OC_PUBLISHER_CLIENT" ]; then
     echo "  - ${id}  (M2M: OpenChoreo's build client, for a LOCAL DEV CLUSTER only; secret file ${file})"
+  elif [ "$id" = "$OC_OBSERVER_CLIENT" ]; then
+    echo "  - ${id}  (M2M: OpenChoreo's observer client, for a LOCAL DEV CLUSTER only; secret file ${file})"
   else
     echo "  - ${id}  (M2M: client credentials, JWT access token; secret file ${file})"
   fi
@@ -316,6 +342,7 @@ create_app() {
 failed=0
 imports=""
 oc_publisher_step=""
+oc_observer_file=""
 absent=""
 # The list is read on fd 3, so nothing in the loop can consume it from stdin.
 while IFS='|' read -r id kind file <&3; do
@@ -356,6 +383,9 @@ while IFS='|' read -r id kind file <&3; do
     if [ "$id" = "$OC_PUBLISHER_CLIENT" ]; then
       # Not AE's secret: it goes into the local cluster's build template.
       oc_publisher_step="ASGARDEO_TENANT=${TENANT} ASGARDEO_BASE_URL=${BASE_URL} deployments/scripts/ae-asgardeo-oc-publisher.sh ${quoted_path}"
+    elif [ "$id" = "$OC_OBSERVER_CLIENT" ]; then
+      # Not AE's secret either: the dev cluster's observer signs in with it.
+      oc_observer_file="${quoted_path}"
     else
       imports="${imports}aectl platform secret import --path aep/idp-clients/${file} --value-file ${quoted_path}
 "
@@ -374,6 +404,12 @@ if [ -n "$oc_publisher_step" ]; then
   echo "Local dev cluster only: point its build template at this organization with"
   echo "  ${oc_publisher_step}"
 fi
+if [ -n "$oc_observer_file" ]; then
+  printf -v quoted_dir '%q' "$OUT_DIR"
+  echo "Local dev cluster only: the observer's secret is in ${oc_observer_file}. Keep the file:"
+  echo "  make dev-env AE_DEV_IDP=asgardeo AE_ASGARDEO_SECRETS_DIR=${quoted_dir} ..."
+  echo "  installs the logs part of the observability plane when the file is there."
+fi
 echo "Values for the install:"
 echo "  issuer            ${ISSUER}"
 echo "  organization      ${TENANT}"
@@ -383,11 +419,14 @@ echo "  console client id aep-console-client"
 if [ "$failed" = "1" ]; then
   die "one or more applications need fixing: correct the settings listed above in the Asgardeo console, or delete the application there and run this again"
 fi
-if [ "$WITH_OC_PUBLISHER" = "1" ]; then
-  echo "✅ All five applications and OpenChoreo's publisher client are set up"
-else
-  echo "✅ All five applications are set up"
-fi
+oc_clients=""
+[ "$WITH_OC_PUBLISHER" = "1" ] && oc_clients="publisher"
+[ "$WITH_OC_OBSERVER" = "1" ] && oc_clients="${oc_clients:+${oc_clients} and }observer"
+case "$oc_clients" in
+  "") echo "✅ All five applications are set up" ;;
+  *" and "*) echo "✅ All five applications and OpenChoreo's ${oc_clients} clients are set up" ;;
+  *) echo "✅ All five applications and OpenChoreo's ${oc_clients} client are set up" ;;
+esac
 if [ -n "$absent" ]; then
   # An existing application's secret cannot be read back. Its file being gone
   # is the normal state after an import; it is a problem only if the secret
@@ -397,4 +436,7 @@ if [ -n "$absent" ]; then
   echo "  That is expected once a secret has been imported and its file deleted."
   echo "  A secret that was never imported cannot be read back: delete that"
   echo "  application in the Asgardeo console and run this again to get a new one."
+  echo "  The file of one of OpenChoreo's clients (${OC_PUBLISHER_FILE}, ${OC_OBSERVER_FILE}) is"
+  echo "  never imported: a local dev cluster needs it at every make dev-env. If"
+  echo "  it is gone, delete that application and run this again."
 fi

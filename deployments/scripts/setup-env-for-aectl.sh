@@ -118,9 +118,12 @@
 #                           control plane is pointed at the organization's
 #                           endpoints (read from its OIDC discovery document),
 #                           step 3b (the platform ThunderID) is skipped, and
-#                           OpenChoreo's portal and the observability plane are
-#                           left out, since their clients exist only in
-#                           ThunderID. Needs ASGARDEO_TENANT. Default "thunder".
+#                           OpenChoreo's portal is left out, since its client
+#                           exists only in ThunderID. Of the observability
+#                           plane only the logs part is installed, and only
+#                           when the observer's secret file is at hand (see
+#                           AE_ASGARDEO_SECRETS_DIR). Needs ASGARDEO_TENANT.
+#                           Default "thunder".
 #   ASGARDEO_TENANT         the Asgardeo organization's handle (asgardeo only).
 #                           Its applications are created beforehand with
 #                           ae-asgardeo-apps.sh.
@@ -128,7 +131,12 @@
 #                           files to (asgardeo only, optional). When it holds
 #                           oc-workload-publisher, OpenChoreo's build template
 #                           is pointed at the organization so builds can finish
-#                           (ae-asgardeo-oc-publisher.sh).
+#                           (ae-asgardeo-oc-publisher.sh). When it holds
+#                           oc-observer-reader, the logs part of the
+#                           observability plane is installed and its observer
+#                           signs in at the organization with that secret
+#                           (Step 7), so a finished coding run's log can be
+#                           read back.
 
 set -euo pipefail
 set -o errtrace
@@ -205,11 +213,25 @@ WITH_SKAFFOLD_CLIENT="${WITH_SKAFFOLD_CLIENT:-0}"
 # "thunder" (the default) is the ThunderID this script installs in step 3b.
 # "asgardeo" is an Asgardeo organization: nothing is installed for it, and
 # OpenChoreo's control plane is given the organization's endpoints instead of
-# ThunderID's. OpenChoreo's portal (Backstage) and the observability plane
-# each sign in with a client that this script registers in ThunderID and that
-# an Asgardeo organization does not have, so both are left out there.
+# ThunderID's. OpenChoreo's portal (Backstage) signs in with a client that
+# this script registers in ThunderID and that an Asgardeo organization does
+# not have, so it is left out there.
+#
+# The observability plane's observer signs in with a client of its own too.
+# In an Asgardeo organization that client is created by
+# `ae-asgardeo-apps.sh --with-openchoreo-observer`, which writes its secret
+# to the file oc-observer-reader. With that file in AE_ASGARDEO_SECRETS_DIR
+# the logs part of the plane is installed (Step 7): the base chart, the logs
+# module and its log collector. Tracing and metrics are left out, because
+# what reads them (Agent Manager, the SRE agent) is not installed on an
+# Asgardeo organization. Without the file the whole plane is left out.
 AE_DEV_IDP="${AE_DEV_IDP:-thunder}"
 ASGARDEO_BASE_URL="${ASGARDEO_BASE_URL:-https://api.asgardeo.io}"
+# OC_OBSERVER_SECRET_FILE is the observer client's secret file (asgardeo
+# only). OBS_NEEDS_OBSERVER_SECRET=1 records that the plane was left out for
+# the lack of that file, for the messages below.
+OC_OBSERVER_SECRET_FILE=""
+OBS_NEEDS_OBSERVER_SECRET=0
 case "$AE_DEV_IDP" in
     thunder) ;;
     asgardeo)
@@ -222,7 +244,20 @@ case "$AE_DEV_IDP" in
             exit 1
         fi
         WITH_OC_PORTAL=0
-        WITH_OBSERVABILITY=0
+        OC_OBSERVER_SECRET_FILE="${AE_ASGARDEO_SECRETS_DIR:+${AE_ASGARDEO_SECRETS_DIR}/oc-observer-reader}"
+        if [ "$WITH_OBSERVABILITY" = "1" ]; then
+            if [ -z "$OC_OBSERVER_SECRET_FILE" ] || [ ! -s "$OC_OBSERVER_SECRET_FILE" ]; then
+                WITH_OBSERVABILITY=0
+                OBS_NEEDS_OBSERVER_SECRET=1
+            # The Secret is made from the file as it is, so the file has to
+            # hold the secret alone: a space or a line break in it would be
+            # part of what the observer signs in with. ae-asgardeo-apps.sh
+            # writes it that way. Only byte counts are compared here.
+            elif [ "$(wc -c < "$OC_OBSERVER_SECRET_FILE" | tr -d '[:space:]')" != "$(tr -d '[:space:]' < "$OC_OBSERVER_SECRET_FILE" | wc -c | tr -d '[:space:]')" ]; then
+                echo "❌ ${OC_OBSERVER_SECRET_FILE} must hold the observer client's secret alone, with no space or line break (ae-asgardeo-apps.sh --with-openchoreo-observer writes it that way)" >&2
+                exit 1
+            fi
+        fi
         ;;
     *)
         echo "❌ AE_DEV_IDP must be thunder or asgardeo, not '${AE_DEV_IDP}'" >&2
@@ -1933,7 +1968,9 @@ else
 fi
 
 # ============================================================================
-# Step 7: Observability Plane — optional (official page, Step 7 — unchanged)
+# Step 7: Observability Plane — optional (official page, Step 7). Unchanged on
+# ThunderID. On an Asgardeo organization: the observer's own client and the
+# organization's addresses, and the logs part only (see AE_DEV_IDP above).
 # ============================================================================
 if [ "$WITH_OBSERVABILITY" = "1" ]; then
     echo ""
@@ -1943,7 +1980,6 @@ if [ "$WITH_OBSERVABILITY" = "1" ]; then
     kubectl create configmap cluster-gateway-ca --from-literal=ca.crt="$CA_CRT" \
         -n openchoreo-observability-plane --dry-run=client -o yaml | kubectl apply -f -
 
-    # observer-secret starts on OpenChoreo's default; aectl owns the observer client wiring and repoints it (observer_client_secret.go).
     kubectl apply -f - <<EOF
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
@@ -1966,7 +2002,55 @@ spec:
     remoteRef:
       key: opensearch-password
       property: value
----
+EOF
+
+    # observer-secret holds the secret of the client the observer signs in as.
+    # OBS_PLANE_OIDC_SET is the IdP the plane's chart is told to use.
+    OBS_PLANE_OIDC_SET=()
+    if [ "$AE_DEV_IDP" = "asgardeo" ]; then
+        # On an Asgardeo organization that client is the one
+        # `ae-asgardeo-apps.sh --with-openchoreo-observer` created there, and
+        # the Secret is made straight from its secret file. The rule for
+        # OpenChoreo's own clients in this mode, the build's publisher (Step
+        # 6) and this one alike: the secret comes from a file in
+        # AE_ASGARDEO_SECRETS_DIR and is put where OpenChoreo reads it. It
+        # does not go through the vault: the local OpenBao writes upstream's
+        # ThunderID fixture back into observer-oauth-client-secret at each of
+        # its starts, and an ExternalSecret would carry that into the Secret.
+        # kubectl is given the file's path, so the value is never on a
+        # command line and is never printed.
+        #
+        # Whether an observer already runs here: one that does started with
+        # what the cluster held before, and is restarted below.
+        observer_ran_before="$(kubectl get deployment observer -n openchoreo-observability-plane -o name --ignore-not-found)"
+        # An ExternalSecret from an earlier setup would refill the Secret from
+        # the vault, and the Secret it made is removed with it. Both go
+        # first, so the Secret created here has no owner.
+        kubectl delete externalsecret observer-secret -n openchoreo-observability-plane --ignore-not-found --wait=true
+        kubectl delete secret observer-secret -n openchoreo-observability-plane --ignore-not-found --wait=true
+        kubectl create secret generic observer-secret -n openchoreo-observability-plane \
+            --from-file=UID_RESOLVER_OAUTH_CLIENT_SECRET="$OC_OBSERVER_SECRET_FILE"
+        kubectl wait -n openchoreo-observability-plane --for=condition=Ready \
+            externalsecret/opensearch-admin-credentials --timeout=60s
+
+        # The plane's chart takes its IdP from upstream's values, which name
+        # the in-cluster ThunderID. The organization's replace them, as its
+        # discovery document names them:
+        #   issuer             the `iss` the observer requires of a caller's token
+        #   jwksUrl            the keys it checks that token's signature with
+        #   tokenUrl           where its own client signs in
+        #   authServerBaseUrl  the authorization server it names to a client
+        #                      that asks how to sign in: the issuer
+        OBS_PLANE_OIDC_SET=(--set-string "security.oidc.issuer=${OIDC_ISSUER}"
+            --set-string "security.oidc.jwksUrl=${OIDC_JWKS_URL}"
+            --set-string "security.oidc.tokenUrl=${OIDC_TOKEN_URL}"
+            --set-string "security.oidc.authServerBaseUrl=${OIDC_ISSUER}")
+        echo "   🔐 The observer trusts the Asgardeo organization ${ASGARDEO_TENANT} and signs in there as its own client"
+    else
+        # On ThunderID observer-secret starts on OpenChoreo's default, from the
+        # vault; aectl owns the observer client wiring there and repoints it
+        # (observer_client_secret.go).
+        kubectl apply -f - <<EOF
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
@@ -1985,15 +2069,26 @@ spec:
       key: observer-oauth-client-secret
       property: value
 EOF
-    kubectl wait -n openchoreo-observability-plane --for=condition=Ready \
-        externalsecret/opensearch-admin-credentials externalsecret/observer-secret --timeout=60s
+        kubectl wait -n openchoreo-observability-plane --for=condition=Ready \
+            externalsecret/opensearch-admin-credentials externalsecret/observer-secret --timeout=60s
+    fi
 
     docker exec "k3d-${CLUSTER_NAME}-server-0" sh -c \
         "cat /proc/sys/kernel/random/uuid | tr -d '-' > /etc/machine-id"
 
     helm upgrade --install openchoreo-observability-plane oci://ghcr.io/openchoreo/helm-charts/openchoreo-observability-plane \
       --version "${OC_VERSION}" --namespace openchoreo-observability-plane \
-      --values "$(oc_values single-cluster/values-op.yaml)" --timeout 25m
+      --values "$(oc_values single-cluster/values-op.yaml)" \
+      ${OBS_PLANE_OIDC_SET[@]+"${OBS_PLANE_OIDC_SET[@]}"} --timeout 25m
+
+    # The observer reads its client secret and its IdP addresses at start. One
+    # that ran before this run is restarted, so it holds what this run set. It
+    # is restarted whether or not either changed: a second run of this script
+    # over one cluster is rare, and the restart takes seconds.
+    if [ "$AE_DEV_IDP" = "asgardeo" ] && [ -n "${observer_ran_before:-}" ]; then
+        kubectl rollout restart deployment/observer -n openchoreo-observability-plane
+        kubectl rollout status deployment/observer -n openchoreo-observability-plane --timeout=180s
+    fi
 
     helm upgrade --install observability-logs-opensearch \
       oci://ghcr.io/openchoreo/helm-charts/observability-logs-opensearch \
@@ -2001,28 +2096,35 @@ EOF
       --set openSearchSetup.openSearchSecretName="opensearch-admin-credentials" \
       --set adapter.openSearchSecretName="opensearch-admin-credentials"
 
-    helm upgrade --install observability-traces-opensearch \
-      oci://ghcr.io/openchoreo/helm-charts/observability-tracing-opensearch \
-      --create-namespace --namespace openchoreo-observability-plane --version 0.6.0 \
-      --set openSearch.enabled=false \
-      --set openSearchSetup.openSearchSecretName="opensearch-admin-credentials"
+    # The tracing and metrics modules are left out on an Asgardeo
+    # organization, where nothing reads them (see AE_DEV_IDP above). The logs
+    # module stays.
+    if [ "$AE_DEV_IDP" != "asgardeo" ]; then
+        helm upgrade --install observability-traces-opensearch \
+          oci://ghcr.io/openchoreo/helm-charts/observability-tracing-opensearch \
+          --create-namespace --namespace openchoreo-observability-plane --version 0.6.0 \
+          --set openSearch.enabled=false \
+          --set openSearchSetup.openSearchSecretName="opensearch-admin-credentials"
 
-    # The chart ships prometheus-operator at 40m CPU / 60Mi, which is under what
-    # it needs to reach a steady state on a cold cluster. It starts while the
-    # rest of the install is still loading the node, gets throttled to
-    # GOMAXPROCS=1, and its alertmanager ConfigMap informer misses the cache-sync
-    # deadline — the operator exits 1 about 19s in with "failed to sync cache for
-    # ConfigMap informer". Nothing then creates the Prometheus StatefulSet, so
-    # metrics-adapter crash-loops too on connection-refused, pointing at a
-    # Prometheus that was never built. Both look like distinct failures and
-    # neither names the limit.
-    helm upgrade --install observability-metrics-prometheus \
-      oci://ghcr.io/openchoreo/helm-charts/observability-metrics-prometheus \
-      --create-namespace --namespace openchoreo-observability-plane --version 0.6.1 \
-      --set kube-prometheus-stack.prometheusOperator.resources.requests.cpu=100m \
-      --set kube-prometheus-stack.prometheusOperator.resources.requests.memory=128Mi \
-      --set kube-prometheus-stack.prometheusOperator.resources.limits.cpu=500m \
-      --set kube-prometheus-stack.prometheusOperator.resources.limits.memory=256Mi
+        # The chart ships prometheus-operator at 40m CPU / 60Mi, which is under what
+        # it needs to reach a steady state on a cold cluster. It starts while the
+        # rest of the install is still loading the node, gets throttled to
+        # GOMAXPROCS=1, and its alertmanager ConfigMap informer misses the cache-sync
+        # deadline — the operator exits 1 about 19s in with "failed to sync cache for
+        # ConfigMap informer". Nothing then creates the Prometheus StatefulSet, so
+        # metrics-adapter crash-loops too on connection-refused, pointing at a
+        # Prometheus that was never built. Both look like distinct failures and
+        # neither names the limit.
+        helm upgrade --install observability-metrics-prometheus \
+          oci://ghcr.io/openchoreo/helm-charts/observability-metrics-prometheus \
+          --create-namespace --namespace openchoreo-observability-plane --version 0.6.1 \
+          --set kube-prometheus-stack.prometheusOperator.resources.requests.cpu=100m \
+          --set kube-prometheus-stack.prometheusOperator.resources.requests.memory=128Mi \
+          --set kube-prometheus-stack.prometheusOperator.resources.limits.cpu=500m \
+          --set kube-prometheus-stack.prometheusOperator.resources.limits.memory=256Mi
+    else
+        echo "   ⏭️  Tracing and metrics modules not installed (AE_DEV_IDP=${AE_DEV_IDP}: logs only)"
+    fi
 
     helm upgrade observability-logs-opensearch \
       oci://ghcr.io/openchoreo/helm-charts/observability-logs-opensearch \
@@ -2052,6 +2154,11 @@ EOF
             -p '{"spec":{"observabilityPlaneRef":{"kind":"ClusterObservabilityPlane","name":"default"}}}'
     fi
     echo "✅ Observability Plane ready"
+elif [ "$OBS_NEEDS_OBSERVER_SECRET" = "1" ]; then
+    echo "⏭️  Skipping Observability Plane: no oc-observer-reader secret file, or an empty one (AE_ASGARDEO_SECRETS_DIR)."
+    echo "   A finished coding run's log cannot be read back without the plane's logs part."
+    echo "   Create OpenChoreo's observer client with ae-asgardeo-apps.sh --with-openchoreo-observer,"
+    echo "   then run make dev-env again with AE_ASGARDEO_SECRETS_DIR set to the directory it wrote to."
 else
     echo "⏭️  Skipping Observability Plane (WITH_OBSERVABILITY=0)"
 fi
@@ -2074,7 +2181,12 @@ fi
 if [ "$AE_DEV_IDP" = "asgardeo" ]; then
     printf "    %-16s%-50s%s\n" "Platform IdP" "${OIDC_ISSUER}" "Asgardeo organization ${ASGARDEO_TENANT}"
     echo ""
-    echo "  Left out on Asgardeo: OpenChoreo's portal, the observability plane, Agent Manager, the SRE agent"
+    if [ "$WITH_OBSERVABILITY" = "1" ]; then
+        echo "  Left out on Asgardeo: OpenChoreo's portal, tracing and metrics, Agent Manager, the SRE agent"
+        echo "  The logs part of the observability plane is installed: a finished coding run's log can be read back"
+    else
+        echo "  Left out on Asgardeo: OpenChoreo's portal, the observability plane, Agent Manager, the SRE agent"
+    fi
     echo ""
     echo "  Still to install — \`make dev-env\` runs this next"
     printf "    %-16s%-50s%s\n" "AEP" "${SCHEME}://console.${AE_CONSOLE_DOMAIN}:${CP_PORT}" "aectl platform install"
