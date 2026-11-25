@@ -383,9 +383,10 @@ func mintRefName(cpNS, entity string) (string, error) {
 // reference's value is never overwritten. If the value write fails, the new
 // reference is deleted by its name.
 //
-// Cloud (provider manages references): the provider creates the
-// reference itself and its returned name is the result; the minted name
-// is passed only as a hint.
+// Provider manages references (OpenChoreo's Secret API, Cloud's SM-API):
+// the provider creates the reference itself and its returned name is the
+// result. A minted name already in use is retried once with a new one
+// (pushUnderNewName).
 func (c *secretManagementClient) CreateSecretRef(ctx context.Context, location SecretLocation, data map[string]string) (string, error) {
 	if len(data) == 0 {
 		return "", fmt.Errorf("secret data is required")
@@ -404,17 +405,7 @@ func (c *secretManagementClient) CreateSecretRef(ctx context.Context, location S
 	metadata := &SecretMetadata{ManagedBy: c.managedBy}
 
 	if c.managesRefs() {
-		if location.RefName, err = c.mintName(cpNS, location.EntityName); err != nil {
-			return "", err
-		}
-		name, err := c.lowLevelClient.PushSecret(ctx, location, raw, metadata)
-		if err != nil {
-			return "", fmt.Errorf("write secret: %w", err)
-		}
-		if name == "" {
-			return "", fmt.Errorf("write secret: provider returned no reference name")
-		}
-		return name, nil
+		return c.pushUnderNewName(ctx, cpNS, location, raw, metadata)
 	}
 
 	if err := c.requireOCClient(); err != nil {
@@ -445,6 +436,31 @@ func (c *secretManagementClient) CreateSecretRef(ctx context.Context, location S
 // refNameAttempts bounds how many minted names CreateSecretRef tries
 // before reporting a name clash: the first plus one re-mint.
 const refNameAttempts = 2
+
+// pushUnderNewName writes raw through a provider that creates the
+// SecretReference itself, under a freshly minted name. A provider reports a
+// name already in use as ErrConflict; that is retried once with a new name
+// and otherwise returned, so an existing reference is never overwritten.
+func (c *secretManagementClient) pushUnderNewName(ctx context.Context, cpNS string, location SecretLocation, raw []byte, metadata *SecretMetadata) (string, error) {
+	var err error
+	for attempt := 0; attempt < refNameAttempts; attempt++ {
+		if location.RefName, err = c.mintName(cpNS, location.EntityName); err != nil {
+			return "", err
+		}
+		var name string
+		name, err = c.lowLevelClient.PushSecret(ctx, location, raw, metadata)
+		if err == nil {
+			if name == "" {
+				return "", fmt.Errorf("write secret: provider returned no reference name")
+			}
+			return name, nil
+		}
+		if !errors.Is(err, ErrConflict) {
+			break
+		}
+	}
+	return "", fmt.Errorf("write secret: %w", err)
+}
 
 // reserveSecretReference mints a name and creates its SecretReference,
 // pointing at the vault path the value will be written to. It returns the
