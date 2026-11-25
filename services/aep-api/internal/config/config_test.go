@@ -166,6 +166,29 @@ func TestLoad_CodingAgentSettleGrace(t *testing.T) {
 	}
 }
 
+// OpenChoreo stores secret values on the ClusterDataPlane "default" (the plane
+// the install creates) unless SECRET_TARGET_PLANE_* names another.
+func TestLoad_SecretTargetPlane(t *testing.T) {
+	setMinimalEnv(t)
+	t.Setenv("SECRET_TARGET_PLANE_KIND", "")
+	t.Setenv("SECRET_TARGET_PLANE_NAME", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.SecretTargetPlane != (SecretTargetPlaneConfig{Kind: "ClusterDataPlane", Name: "default"}) {
+		t.Fatalf("default SecretTargetPlane = %+v, want ClusterDataPlane/default", cfg.SecretTargetPlane)
+	}
+	t.Setenv("SECRET_TARGET_PLANE_KIND", "DataPlane")
+	t.Setenv("SECRET_TARGET_PLANE_NAME", "edge")
+	if cfg, err = Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.SecretTargetPlane != (SecretTargetPlaneConfig{Kind: "DataPlane", Name: "edge"}) {
+		t.Fatalf("SecretTargetPlane = %+v, want DataPlane/edge", cfg.SecretTargetPlane)
+	}
+}
+
 // U1: a finished coding-agent Job is kept 600s unless CODING_AGENT_JOB_TTL says
 // otherwise.
 func TestLoad_CodingAgentJobTTL(t *testing.T) {

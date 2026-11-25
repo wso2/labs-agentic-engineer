@@ -93,18 +93,15 @@ addition.
 AEP selects one secrets provider per process (no fallback chain):
 - **Cloud / overlay:** SM-API HTTP client (`ManagesSecretReferences()=true`) —
   the server owns `SecretReference` CR creation.
-- **Local / OSS:** in-process OpenBao-direct provider when `OPENBAO_ADDR` is
-  set; it logs in by Kubernetes auth (role `aep-api`, write-only policy
-  `aep-api-writer`, no static token). The provider writes KV only
-  (`ManagesSecretReferences()=false`); the high-level client authors
-  `SecretReference` CRs via OpenChoreo into the Workload control-plane
-  namespace (not the vault `wc-…` segment). See
+- **Local / OSS:** OpenChoreo's Secret API (`ManagesSecretReferences()=true`)
+  — OpenChoreo writes the value to the target plane's secret store and creates
+  the `SecretReference` in the Workload control-plane namespace. See
   `services/aep-api/design/composition-seam.md`.
 
 ### `OpenBao`
-HashiCorp Vault fork. Local/OSS secret KV backend behind the
-`secretsprovider` / `secretmanagersvc` abstraction (OpenBao-direct provider).
-Cloud overlay may use a different backend via SM-API.
+HashiCorp Vault fork. The local/OSS secret store behind OpenChoreo's planes
+(their `ClusterSecretStore`); aep-api stores secrets through OpenChoreo, not in
+OpenBao directly. Cloud overlay may use a different backend via SM-API.
 
 ### `effective-key` — retired
 The git-service endpoint that returned the org's Anthropic key for the spec

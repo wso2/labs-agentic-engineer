@@ -314,6 +314,15 @@ openbao:
   # Address of OpenChoreo's built-in OpenBao service.
   addr: "http://openbao.openbao.svc.cluster.local:8200"
 
+secretStore:
+  # The plane OpenChoreo's Secret API stores aep-api's secrets on: OpenChoreo
+  # writes each value to that plane's secret store. Every plane of an install
+  # reads the same store, so the default plane serves builds and apps alike.
+  # OpenChoreo's control-plane chart must set features.secretManagement.enabled.
+  targetPlane:
+    kind: ClusterDataPlane
+    name: default
+
 postgres:
   version: "16"
   database: aep

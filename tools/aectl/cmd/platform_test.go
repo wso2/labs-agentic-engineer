@@ -89,6 +89,28 @@ func TestPollAlterPostgresRolePassword_TimesOutOnPersistentFailure(t *testing.T)
 	}
 }
 
+// The secret store's target plane reaches the chart only when config names
+// it; unset leaves the chart default (ClusterDataPlane/default).
+func TestSecretStoreOverrides(t *testing.T) {
+	for name, tc := range map[string]struct {
+		kind, plane string
+		want        []string
+	}{
+		"neither set": {"", "", nil},
+		"both set": {"DataPlane", "edge", []string{
+			"--set", "secretStore.targetPlane.kind=DataPlane",
+			"--set", "secretStore.targetPlane.name=edge",
+		}},
+		"only the name": {"", "edge", []string{"--set", "secretStore.targetPlane.name=edge"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := secretStoreOverrides(tc.kind, tc.plane); !slices.Equal(got, tc.want) {
+				t.Fatalf("secretStoreOverrides(%q, %q) = %v, want %v", tc.kind, tc.plane, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestAEStudioOverrides(t *testing.T) {
 	t.Cleanup(viper.Reset)
 	viper.Set("tls.enabled", false)

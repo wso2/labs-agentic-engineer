@@ -335,12 +335,17 @@ spec:
               value: {{ . | quote }}
             {{- end }}
             {{- end }}
-            # OpenBao-direct secrets delivery (local-only). Cloud injects a
-            # different SecretsProvider via the overlay; OPENBAO_* must be
-            # absent there. No static token: aep-api logs in by Kubernetes
-            # auth as its own service account (the projected token this pod
-            # mounts), and the role binds it to the write-only aep-api-writer
-            # policy (deployments/scripts/openbao-aep-api-auth.sh).
+            # Secrets are stored through OpenChoreo's Secret API, on this plane.
+            - name: SECRET_TARGET_PLANE_KIND
+              value: {{ .Values.secretStore.targetPlane.kind | quote }}
+            - name: SECRET_TARGET_PLANE_NAME
+              value: {{ .Values.secretStore.targetPlane.name | quote }}
+            # OpenBao (local-only): aep-api reads the environment Thunder
+            # binding credential from it. Cloud injects its own SecretsProvider
+            # via the overlay; OPENBAO_* must be absent there. No static token:
+            # aep-api logs in by Kubernetes auth as its own service account (the
+            # projected token this pod mounts) under role aep-api
+            # (deployments/scripts/openbao-aep-api-auth.sh).
             {{- if .Values.codingAgentDispatch.openBaoDirect.enabled }}
             - name: OPENBAO_ADDR
               value: {{ .Values.openbao.addr | quote }}

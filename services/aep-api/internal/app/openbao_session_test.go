@@ -17,75 +17,14 @@
 package app
 
 import (
-	"context"
-	"net/http"
-	"net/http/httptest"
-	"os"
-	"path/filepath"
-	"strings"
-	"sync"
 	"testing"
 
-	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
-	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc/providers/openbao"
 	"github.com/wso2/aep/aep-api/internal/config"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
-// One OpenBao session per process. The OpenBao-direct provider and the
-// environment Thunder binding reader are built with the same VaultAuth, so a
-// write and a read log in once between them.
-func TestEnvironmentThunderCredentials_SharesTheProcessSession(t *testing.T) {
-	var mu sync.Mutex
-	logins := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
-		switch {
-		case r.URL.Path == "/v1/auth/kubernetes/login":
-			logins++
-			_, _ = w.Write([]byte(`{"auth":{"client_token":"tok","lease_duration":3600}}`))
-		case strings.HasPrefix(r.URL.Path, "/v1/secret/data/aep/thunder/"):
-			_, _ = w.Write([]byte(`{"data":{"data":{"clientId":"aep-system-client"}}}`))
-		default:
-			_, _ = w.Write([]byte(`{"data":{}}`))
-		}
-	}))
-	t.Cleanup(srv.Close)
-	tokenFile := filepath.Join(t.TempDir(), "sa-token")
-	if err := os.WriteFile(tokenFile, []byte("sa-token"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	auth := secrets.NewKubernetesAuth("aep-api", "kubernetes", tokenFile)
-	cfg := config.Config{OpenBaoAddr: srv.URL}
-
-	provider, err := openbao.NewProvider(deliveryOpenBaoConfigFromAppConfig(cfg), auth)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reader, err := environmentThunderCredentials(cfg, auth)
-	if err != nil || reader == nil {
-		t.Fatalf("reader = %v, err = %v; want a reader", reader, err)
-	}
-	client, err := provider.NewClient(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.PushSecret(context.Background(), secretmanagersvc.SecretLocation{OrgName: "ou-1", EntityName: "anthropic"}, []byte(`{"api-key":"v"}`), nil); err != nil {
-		t.Fatalf("PushSecret: %v", err)
-	}
-	if _, err := reader.ReadBindingCredential(context.Background(), "secret/aep/thunder/acme/default"); err != nil {
-		t.Fatalf("ReadBindingCredential: %v", err)
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if logins != 1 {
-		t.Fatalf("logins = %d for one write and one read; want one shared session", logins)
-	}
-}
-
-// No session, no reader: the binding reader exists only beside the
-// OpenBao-direct provider NewOSSOptions builds.
+// No session, no reader: the binding reader exists only with the OpenBao
+// session NewOSSOptions opens when OPENBAO_ADDR is set.
 func TestEnvironmentThunderCredentials_NoSessionNoReader(t *testing.T) {
 	for name, tc := range map[string]struct {
 		addr string

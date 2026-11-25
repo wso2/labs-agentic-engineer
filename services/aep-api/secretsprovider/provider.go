@@ -43,25 +43,13 @@ type Provider interface {
 	Capabilities() StoreCapabilities
 }
 
-// SecretReferenceManager is an optional interface a Provider can implement to
-// signal that it manages SecretReference CRDs internally (e.g., the Secret
-// Manager API). When a provider implements this and ManagesSecretReferences()
-// returns true, the high-level secret management client will NOT attempt to
-// create/update/delete SecretReferences via the OpenChoreo client.
+// SecretReferenceManager is the interface a Provider implements to declare
+// that it creates the SecretReference for every value it stores (OpenChoreo's
+// Secret API, the Secret Manager API). The high-level secret management client
+// never authors SecretReferences itself, so it accepts only a provider whose
+// ManagesSecretReferences() returns true.
 type SecretReferenceManager interface {
 	ManagesSecretReferences() bool
-}
-
-// SecretPathResolver is an optional interface a SecretsClient implements when
-// the path PushSecret stores a location under is a pure function of the
-// location. It lets the high-level client author the SecretReference that
-// points at a value before writing the value (the reference reserves a fresh
-// name, so a name clash never overwrites another reference's value).
-// SecretPath must return exactly the path PushSecret returns for the same
-// location. Required of every client whose provider does not manage
-// SecretReferences.
-type SecretPathResolver interface {
-	SecretPath(location SecretLocation) (string, error)
 }
 
 // StoredKeyResolver is an optional interface a SecretsClient implements when

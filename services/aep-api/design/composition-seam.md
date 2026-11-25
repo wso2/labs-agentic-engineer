@@ -46,24 +46,29 @@ assertions keep seam implementations honest.
 
 One seam, two providers, no stub:
 
-- **OSS / local** — `NewOSSOptions` constructs the in-process OpenBao-direct
-  provider when `OPENBAO_ADDR` is set. It logs in by Kubernetes auth
-  (`OPENBAO_AUTH_*`, role `aep-api`; no static token) through one lazy session
-  per process, which `NewOSSOptions` also hands to `Run` in an unexported
-  `Options` field so the environment Thunder binding reader shares it; an
-  overlay cannot set it and gets no reader. The provider writes
-  KV; the high-level client authors `SecretReference` CRs via OpenChoreo when
-  `ManagesSecretReferences()` is false. Those CRs go in the Workload's
-  control-plane namespace (not the vault `wc-…` path segment). Disconnect
-  also best-effort deletes a leftover CR of the same name from `wc-…`
-  (pre-fix authoring); NotFound is ignored.
+- **OSS / local** — `NewOSSOptions` asks for OpenChoreo's Secret API through
+  an unexported `Options` field. `Assemble` builds that provider
+  (`openchoreo.NewSecretsProvider`) from the OpenChoreo client config it
+  derives, on `SECRET_TARGET_PLANE_*` (default `ClusterDataPlane/default`).
+  OpenChoreo writes each value to that plane's secret store and creates the
+  `SecretReference` in the Workload's control-plane namespace; aep-api reads
+  the store key back from the reference (`StoredKey`) instead of building it.
+  OpenChoreo's control-plane chart must set `features.secretManagement.enabled`.
 - **Overlay / cloud** — overlay `main` injects its own provider (sm-api HTTP
-  client) through `Options.SecretsProvider`. That client lives outside the
-  public module; OSS CI does not exercise it. Coverage is the overlay's unit
-  tests plus cloud dev — accepted trade-off (the public tree never had sm-api
-  tests either).
+  client) through `Options.SecretsProvider`, which takes precedence. That
+  client lives outside the public module; OSS CI does not exercise it.
+  Coverage is the overlay's unit tests plus cloud dev — accepted trade-off
+  (the public tree never had sm-api tests either). A provider that cannot
+  report store keys gets the derived key.
 
-One provider per process, chosen at construction. No fallback chain.
+One provider per process, chosen at construction. No fallback chain. Every
+provider creates the `SecretReference` for what it stores: the high-level
+client refuses one that does not.
+
+The environment Thunder binding reader still reads OpenBao directly: when
+`OPENBAO_ADDR` is set, `NewOSSOptions` opens one lazy Kubernetes-auth session
+(`OPENBAO_AUTH_*`, role `aep-api`; no static token) and hands it to `Run` in
+an unexported `Options` field. An overlay cannot set it and gets no reader.
 
 ## OpenChoreo transport
 
@@ -90,7 +95,7 @@ Agent Manager solves the same gap the same way.
 - M2M `AuthProvider` when service-auth env is configured (else nil)
 - `app.DirectOCStrategy{}` — always `AuthModeServiceM2M`
 - `ImpersonateOrgResolver: nil` — no impersonation header
-- `SecretsProvider` — OpenBao-direct when `OPENBAO_ADDR` is set (else nil)
+- `SecretsProvider: nil`, with secrets stored through OpenChoreo's Secret API
 - `ResourceLabels: nil` — direct OpenChoreo reads no platform labels
 
 `PLATFORM_API_SERVICE_BASE_URL` points at OpenChoreo API directly.

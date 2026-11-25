@@ -92,9 +92,9 @@ type SecretLocation struct {
 	// SecretReference CR must be authored — the same namespace as the
 	// Workload/ReleaseBinding that will secretKeyRef it (locally the OC
 	// org handle, e.g. "default"). Distinct from OrgBaseNamespace, which
-	// is only the vault path segment. Required whenever aep-api authors
-	// SecretReferences through OpenChoreo: the OpenBao-direct path creates
-	// them itself, and the OpenChoreo Secret API is called per namespace.
+	// is only the vault path segment. Required on every write: the provider
+	// creates the SecretReference there (OpenChoreo's Secret API is called
+	// per namespace).
 	ControlPlaneNamespace string
 
 	// ProjectName is the OC Project handle. Optional — empty for

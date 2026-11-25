@@ -157,6 +157,22 @@ func tryItOverrides(publicURL, gatewayHostname string) []string {
 	return args
 }
 
+// secretStoreOverrides returns the helm pairs for the plane OpenChoreo's
+// Secret API stores aep-api's secrets on (secretStore.targetPlane.*), from
+// oc.secret_target_plane.{kind,name}. Each value is passed only when set;
+// unset leaves the chart default, the ClusterDataPlane "default" every aectl
+// install creates.
+func secretStoreOverrides(kind, name string) []string {
+	var args []string
+	if kind != "" {
+		args = append(args, "--set", "secretStore.targetPlane.kind="+kind)
+	}
+	if name != "" {
+		args = append(args, "--set", "secretStore.targetPlane.name="+name)
+	}
+	return args
+}
+
 // aeStudioOverrides returns the helm pairs for the chart's aeStudio.* values
 // from aectl config. Everything is derived: the public scheme, listener and
 // port come from tls.enabled alone (the dataplane gateway listens on 19080
@@ -334,6 +350,10 @@ func init() {
 	_ = viper.BindPFlag("oc.observability_api_url", initCmd.Flags().Lookup("oc-observability-api-url"))
 	initCmd.Flags().Bool("data-plane-gateway-tls", false, "Whether the data-plane gateway terminates TLS (overrides config; false is correct for aectl's own plain-HTTP gateway setup, set true only against a gateway that genuinely fronts TLS)")
 	_ = viper.BindPFlag("oc.data_plane_gateway_tls", initCmd.Flags().Lookup("data-plane-gateway-tls"))
+	initCmd.Flags().String("secret-target-plane-kind", "", "Kind of the OpenChoreo plane aep-api's secrets are stored on (overrides config; empty leaves the chart default, ClusterDataPlane)")
+	_ = viper.BindPFlag("oc.secret_target_plane.kind", initCmd.Flags().Lookup("secret-target-plane-kind"))
+	initCmd.Flags().String("secret-target-plane-name", "", "Name of the OpenChoreo plane aep-api's secrets are stored on (overrides config; empty leaves the chart default, default)")
+	_ = viper.BindPFlag("oc.secret_target_plane.name", initCmd.Flags().Lookup("secret-target-plane-name"))
 	initCmd.Flags().BoolVar(&initOpenBaoDirect, "openbao-direct", false, "Enable OpenBao-direct secrets delivery — injects OPENBAO_ADDR/TOKEN into aep-api (required for local/OSS installs)")
 	_ = viper.BindPFlag("codingagent.openbao_direct.enabled", initCmd.Flags().Lookup("openbao-direct"))
 	initCmd.Flags().String("openbao-addr", "", "In-cluster URL of the OpenBao service (overrides config)")
@@ -520,6 +540,8 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	if u := viper.GetString("oc.observability_api_url"); u != "" {
 		helmArgs = append(helmArgs, "--set", "observer.baseURL="+u)
 	}
+	helmArgs = append(helmArgs, secretStoreOverrides(
+		viper.GetString("oc.secret_target_plane.kind"), viper.GetString("oc.secret_target_plane.name"))...)
 	helmArgs = append(helmArgs, "--set",
 		fmt.Sprintf("codingAgentDispatch.openBaoDirect.enabled=%t", openBaoDirect))
 	if openBaoDirect {

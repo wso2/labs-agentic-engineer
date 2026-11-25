@@ -41,9 +41,9 @@ func setOSSEnv(t *testing.T) {
 	t.Setenv("PLATFORM_IDP_ORG_STUDIO_SECRET", "s")
 }
 
-// With OPENBAO_ADDR set, NewOSSOptions builds the OpenBao-direct provider and
-// the one session it shares with Assemble's binding reader, and talks to
-// OpenBao not at all: aep-api boots with OpenBao down or its role missing.
+// With OPENBAO_ADDR set, NewOSSOptions builds the session Assemble's binding
+// reader uses, and talks to OpenBao not at all: aep-api boots with OpenBao
+// down or its role missing. Secrets go through OpenChoreo either way.
 func TestNewOSSOptions_OpenBaoSessionIsBuiltLazily(t *testing.T) {
 	setOSSEnv(t)
 	var hits atomic.Int32
@@ -59,22 +59,28 @@ func TestNewOSSOptions_OpenBaoSessionIsBuiltLazily(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewOSSOptions: %v", err)
 	}
-	if opts.SecretsProvider == nil || opts.openBaoAuth == nil {
-		t.Fatalf("provider = %v, session = %v; want both", opts.SecretsProvider, opts.openBaoAuth)
+	if opts.openBaoAuth == nil {
+		t.Fatal("want an OpenBao session for the binding reader")
+	}
+	if opts.SecretsProvider != nil || !opts.openChoreoSecrets {
+		t.Fatalf("injected = %v, openChoreoSecrets = %v; want secrets through OpenChoreo", opts.SecretsProvider, opts.openChoreoSecrets)
 	}
 	if n := hits.Load(); n != 0 {
 		t.Fatalf("OpenBao was called %d times at boot; want 0", n)
 	}
 }
 
-func TestNewOSSOptions_NoOpenBaoAddrNoProviderNoSession(t *testing.T) {
+func TestNewOSSOptions_NoOpenBaoAddrNoSessionSecretsStillDelivered(t *testing.T) {
 	setOSSEnv(t)
 	t.Setenv("OPENBAO_ADDR", "")
 	opts, err := NewOSSOptions()
 	if err != nil {
 		t.Fatalf("NewOSSOptions: %v", err)
 	}
-	if opts.SecretsProvider != nil || opts.openBaoAuth != nil {
-		t.Fatalf("provider = %v, session = %v; want neither", opts.SecretsProvider, opts.openBaoAuth)
+	if opts.openBaoAuth != nil {
+		t.Fatalf("session = %v; want none", opts.openBaoAuth)
+	}
+	if opts.SecretsProvider != nil || !opts.openChoreoSecrets {
+		t.Fatalf("injected = %v, openChoreoSecrets = %v; want secrets through OpenChoreo", opts.SecretsProvider, opts.openChoreoSecrets)
 	}
 }
