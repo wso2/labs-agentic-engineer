@@ -1144,6 +1144,7 @@ var generatedThunderClientNames = []string{
 	"local-dev-seeder",
 	"openchoreo-rca-agent",
 	"ae-studio-internal",
+	"aectl-openchoreo",
 	// The org's two clients (orgClients).
 	"org-publisher",
 	"org-studio",

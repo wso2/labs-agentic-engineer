@@ -81,6 +81,8 @@ var aepThunderClients = []idpClientDef{
 	{clientID: "local-dev-seeder", clientType: "confidential", vaultName: "local-dev-seeder", secretKey: "LOCAL_DEV_SEEDER_SECRET"},
 	{clientID: "openchoreo-rca-agent", clientType: "confidential", vaultName: "openchoreo-rca-agent", secretKey: "OC_RCA_AGENT_SECRET"},
 	{clientID: "ae-studio-internal-client", clientType: "confidential", secretKey: "AE_STUDIO_INTERNAL_CLIENT_SECRET", secretName: aeStudioInternalSecretsName, noUserAttributes: true, optional: true, vaultName: "ae-studio-internal"},
+	// aectl's own client: it calls OpenChoreo's Secret API with it
+	{clientID: aectlOpenChoreoClientID, clientType: "confidential", secretKey: "AECTL_OPENCHOREO_CLIENT_SECRET", secretName: aectlClientSecretsName, noUserAttributes: true, vaultName: "aectl-openchoreo"},
 	// Public PKCE clients — redirect URIs are filled in by doThunderSetup.
 	{clientID: "aep-console-client", clientType: "public"},
 	{clientID: "aep-cli-client", clientType: "public", redirectURIs: []string{"http://localhost", "http://127.0.0.1"}},
@@ -173,6 +175,13 @@ const (
 	// orgClientSecretsName holds the secrets of the org's two clients, which
 	// aep-api reads (the chart's ExternalSecret of the same name).
 	orgClientSecretsName = "aep-org-client-secrets"
+	// aectlClientSecretsName holds only aectl's own client secret, so no pod
+	// that reads a shared client Secret gets aectl's credential.
+	aectlClientSecretsName = "aep-aectl-client-secrets"
+
+	// aectlOpenChoreoClientID is aectl's own client on the platform IdP. The
+	// platform chart's aectl.openchoreoClient.clientId names the same ID.
+	aectlOpenChoreoClientID = "aectl-openchoreo-client"
 )
 
 // doThunderSetup registers all AEP OAuth clients in Thunder. It port-forwards

@@ -70,6 +70,13 @@ tokens reads by them.
   `AE_STUDIO_INTERNAL_CLIENT_SECRET`) carries no org claims
   (`noUserAttributes`), and is `optional` (its own Secret, `aep-ae-studio-internal-secrets`; a
   missing Secret skips the client with a warning).
+  `aectl-openchoreo-client` (`aectlOpenChoreoClientID`, vault name
+  `aectl-openchoreo`, env `AECTL_OPENCHOREO_CLIENT_SECRET`) is aectl's own
+  client: aectl calls OpenChoreo's Secret API with it. Its secret is in its
+  own Secret, `aep-aectl-client-secrets`, which no pod reads. The platform
+  chart grants the ID in `aectl.openchoreoClient.clientId` only
+  `secret:create` and `secret:update` (`templates/aectl/authz.yaml`). The two
+  IDs must be the same (`TestAectlOpenChoreoClient_MatchesTheChartsBinding`).
 - `orgClients` (`cmd/thunder_cli.go`) adds the two clients of the org:
   `aep-publisher-<org>` and `ae-studio-<org>`. `aectl` registers them under
   the organization unit that `idp.org_handle` names (`OrgOUHandle`,
