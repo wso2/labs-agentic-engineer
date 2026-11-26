@@ -79,22 +79,6 @@ oc:
     kind: "ClusterDataPlane"
     name: "default"
 
-codingagent:
-  openbao_direct:
-    # Injects OPENBAO_ADDR into aep-api so it can read each environment's
-    # Thunder admin credential from OpenBao. aep-api logs in by Kubernetes auth
-    # (no token). It no longer writes secrets there: those go through
-    # OpenChoreo's Secret API (see oc.secret_target_plane). Required for
-    # local/OSS installs. Production overlays inject a managed SecretsProvider
-    # instead and must leave this false.
-    enabled: true
-
-openbao:
-  # In-cluster URL of the OpenBao service — used when openbao_direct.enabled=true.
-  # Override if OpenBao is deployed under a different namespace or service name.
-  addr: "http://openbao.openbao.svc.cluster.local:8200"
-  # No token: aep-api logs in by Kubernetes auth (deployments/scripts/openbao-aep-api-auth.sh).
-
 gateway:
   # External hostname used for component HTTP endpoints (HTTPRoute hosts).
   # When set, aectl platform install configures ClusterDataPlane and

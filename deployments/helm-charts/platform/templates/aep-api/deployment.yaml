@@ -340,18 +340,6 @@ spec:
               value: {{ .Values.secretStore.targetPlane.kind | quote }}
             - name: SECRET_TARGET_PLANE_NAME
               value: {{ .Values.secretStore.targetPlane.name | quote }}
-            # OpenBao (local-only): aep-api reads the environment Thunder
-            # binding credential from it. Cloud injects its own SecretsProvider
-            # via the overlay; OPENBAO_* must be absent there. No static token:
-            # aep-api logs in by Kubernetes auth as its own service account (the
-            # projected token this pod mounts) under role aep-api
-            # (deployments/scripts/openbao-aep-api-auth.sh).
-            {{- if .Values.codingAgentDispatch.openBaoDirect.enabled }}
-            - name: OPENBAO_ADDR
-              value: {{ .Values.openbao.addr | quote }}
-            - name: OPENBAO_AUTH_ROLE
-              value: aep-api
-            {{- end }}
             # secrets — all values sourced from ESO-synced K8s Secrets (written by aep init)
             - name: POSTGRES_PASSWORD
               valueFrom:

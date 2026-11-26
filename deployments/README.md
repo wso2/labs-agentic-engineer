@@ -936,23 +936,13 @@ Never `bao kv get` a multi-field document without `-field=<name>` piped to
    their cards; the org's repository hooks are re-keyed with the new secret
    by aep-api's hook repair once the pod rolls). Do not delete `org_secrets`
    rows by hand.
-5. **aep-api's OpenBao access.** The wipe also took aep-api's write-only
-   policy `aep-api-writer` and its Kubernetes-auth role `aep-api`; until they
-   are back every secret write aep-api makes fails (log event
-   `openbao.login_failed`). Re-apply both (idempotent; `make dev-update` runs
-   the same script before its upgrade):
-
-   ```bash
-   bash deployments/scripts/openbao-aep-api-auth.sh
-   kubectl -n openbao exec openbao-0 -- bao read auth/kubernetes/role/aep-api
-   ```
-6. **`host.k3d.internal`.** A colima or Docker restart that did not go through
+5. **`host.k3d.internal`.** A colima or Docker restart that did not go through
    `k3d cluster start` also drops `host.k3d.internal` from the node's
    `/etc/hosts` and from CoreDNS `NodeHosts`. Run
    `bash deployments/scripts/restore-host-k3d-internal.sh check`; on a finding,
    run it without `check` ([After a host restart](#after-a-host-restart)). Do
    not stop and start the cluster to fix it: that wipes OpenBao again.
-7. **Sync.** Run `aectl platform sync-clients`: it force-syncs the platform
+6. **Sync.** Run `aectl platform sync-clients`: it force-syncs the platform
    ExternalSecrets, then sets the Postgres role and the Thunder clients from
    them. On an install with `idp.clients: asgardeo` the command needs the
    admin credential and stops without it:
@@ -965,9 +955,7 @@ Never `bao kv get` a multi-field document without `-field=<name>` piped to
 ## Upgrading to write-only secrets
 
 From this release aep-api only writes secrets: no org secret value lives in
-Postgres, and aep-api reads none back. It logs in to OpenBao by Kubernetes auth
-(role `aep-api`, policy `aep-api-writer`, see
-`deployments/scripts/openbao-aep-api-auth.sh`) instead of a static token. The
+Postgres, and aep-api reads none back. The
 chart no longer renders the objects below. Helm removes the ones it rendered
 itself (the `aep-openbao-secrets` ExternalSecret, and with it its Secret), so
 their deletes below are no-ops after the upgrade, kept for installs that drifted
@@ -994,13 +982,8 @@ kubectl -n wso2-aep scale deploy/aep-api --replicas=0
 
 Drop from any overlay or `.env`; they are no longer read:
 `OPENBAO_TOKEN`, `TEST_MODE`, `LOCAL_OPENBAO_REPAIR`, `GITHUB_APP_ID`,
-`GITHUB_APP_PRIVATE_KEY_PATH`.
-
-Added (all optional, with defaults): `OPENBAO_AUTH_ROLE` (default `aep-api`),
-`OPENBAO_AUTH_MOUNT` (default `kubernetes`), `OPENBAO_AUTH_TOKEN_PATH` (default
-`/var/run/secrets/kubernetes.io/serviceaccount/token`). Cloud needs the
-OpenBao `aep-api` role and `aep-api-writer` policy created by SRE before the
-rollout.
+`GITHUB_APP_PRIVATE_KEY_PATH`, `OPENBAO_ADDR`, `OPENBAO_AUTH_ROLE`,
+`OPENBAO_AUTH_MOUNT`, `OPENBAO_AUTH_TOKEN_PATH`.
 
 ### Legacy objects to delete
 

@@ -76,7 +76,6 @@ var (
 	initRegistryService     string
 	initOCNamespace         string
 	initSkipOCVersionCheck  bool
-	initOpenBaoDirect       bool
 	initReuseSecrets        bool
 	initAddons              string
 	initImageTag            string
@@ -354,10 +353,6 @@ func init() {
 	_ = viper.BindPFlag("oc.secret_target_plane.kind", initCmd.Flags().Lookup("secret-target-plane-kind"))
 	initCmd.Flags().String("secret-target-plane-name", "", "Name of the OpenChoreo plane aep-api's secrets are stored on (overrides config; empty leaves the chart default, default)")
 	_ = viper.BindPFlag("oc.secret_target_plane.name", initCmd.Flags().Lookup("secret-target-plane-name"))
-	initCmd.Flags().BoolVar(&initOpenBaoDirect, "openbao-direct", false, "Enable OpenBao-direct secrets delivery — injects OPENBAO_ADDR/TOKEN into aep-api (required for local/OSS installs)")
-	_ = viper.BindPFlag("codingagent.openbao_direct.enabled", initCmd.Flags().Lookup("openbao-direct"))
-	initCmd.Flags().String("openbao-addr", "", "In-cluster URL of the OpenBao service (overrides config)")
-	_ = viper.BindPFlag("openbao.addr", initCmd.Flags().Lookup("openbao-addr"))
 	initCmd.Flags().BoolVar(&initReuseSecrets, "reuse-secrets", false, "Skip secret prompts and reuse secrets already seeded in OpenBao (for reinstall or upgrade)")
 	initCmd.Flags().StringVar(&initAddons, "addons", "", `Comma-separated addon IDs to install without prompting (e.g. "thunder-app,postgres-cnpg"). Use "none" to skip addons, "all" to install everything. Omit for interactive selection.`)
 	initCmd.Flags().StringVar(&initAEStudioImageDesignAgent, "ae-studio-image-design-agent", "", "Full image ref of the ae-studio pod's design-agent container (aeStudio.images.designAgent)")
@@ -435,8 +430,6 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	if err := checkOrConfigureGatewayIngress(ctx, k8sClient); err != nil {
 		return err
 	}
-
-	openBaoDirect := viper.GetBool("codingagent.openbao_direct.enabled")
 
 	if initReuseSecrets {
 		fmt.Println()
@@ -542,13 +535,6 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	}
 	helmArgs = append(helmArgs, secretStoreOverrides(
 		viper.GetString("oc.secret_target_plane.kind"), viper.GetString("oc.secret_target_plane.name"))...)
-	helmArgs = append(helmArgs, "--set",
-		fmt.Sprintf("codingAgentDispatch.openBaoDirect.enabled=%t", openBaoDirect))
-	if openBaoDirect {
-		// No token: aep-api logs in to OpenBao by Kubernetes auth as its own
-		// service account (role aep-api, deployments/scripts/openbao-aep-api-auth.sh).
-		helmArgs = append(helmArgs, "--set", "openbao.addr="+viper.GetString("openbao.addr"))
-	}
 	helmArgs = append(helmArgs, "--set",
 		fmt.Sprintf("localOrgProvisioning.enabled=%t", viper.GetBool("oc.local_org_provisioning.enabled")),
 		"--set", "localOrgProvisioning.orgNamespace="+ocOrgNamespace())
