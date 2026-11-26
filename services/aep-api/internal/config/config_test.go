@@ -233,37 +233,18 @@ func TestLoad_CodingAgentJobTTLApplyCapCoupling(t *testing.T) {
 	}
 }
 
-// Aep-api holds no static OpenBao token. OPENBAO_TOKEN is read by
-// nothing, and the Kubernetes-auth login defaults to role aep-api on mount
-// kubernetes with the pod's projected service-account token.
-func TestConfig_NoOpenBaoTokenEnv(t *testing.T) {
+func TestConfig_ReadsNoOpenBaoEnv(t *testing.T) {
 	setMinimalEnv(t)
-	const sentinel = "static-openbao-token-sentinel"
-	t.Setenv("OPENBAO_TOKEN", sentinel)
-	for _, k := range []string{"OPENBAO_AUTH_ROLE", "OPENBAO_AUTH_MOUNT", "OPENBAO_AUTH_TOKEN_PATH"} {
-		t.Setenv(k, "")
+	const sentinel = "openbao-sentinel"
+	for _, k := range []string{"OPENBAO_ADDR", "OPENBAO_TOKEN", "OPENBAO_AUTH_ROLE", "OPENBAO_AUTH_MOUNT", "OPENBAO_AUTH_TOKEN_PATH"} {
+		t.Setenv(k, sentinel)
 	}
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if strings.Contains(fmt.Sprintf("%+v", cfg), sentinel) {
-		t.Fatal("OPENBAO_TOKEN reached the config; aep-api must hold no static OpenBao token")
-	}
-	want := OpenBaoAuthConfig{Role: "aep-api", Mount: "kubernetes", TokenPath: "/var/run/secrets/kubernetes.io/serviceaccount/token"}
-	if cfg.OpenBaoAuth != want {
-		t.Fatalf("OpenBaoAuth = %+v; want %+v", cfg.OpenBaoAuth, want)
-	}
-
-	t.Setenv("OPENBAO_AUTH_ROLE", "other-role")
-	t.Setenv("OPENBAO_AUTH_MOUNT", "k8s")
-	t.Setenv("OPENBAO_AUTH_TOKEN_PATH", "/tmp/aep-api.token")
-	if cfg, err = Load(); err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	want = OpenBaoAuthConfig{Role: "other-role", Mount: "k8s", TokenPath: "/tmp/aep-api.token"}
-	if cfg.OpenBaoAuth != want {
-		t.Fatalf("OpenBaoAuth = %+v; want the env overrides %+v", cfg.OpenBaoAuth, want)
+		t.Fatal("an OPENBAO_* value reached the config; aep-api talks to no OpenBao")
 	}
 }
 

@@ -60,19 +60,14 @@ type EnvironmentInfo struct {
 	Validation   string
 }
 
-// Thunder binding annotations, written onto the Environment by
-// deployments/scripts/setup-environment-thunder.sh. They are the NON-SECRET half
-// of the binding record; the credential itself lives in the secret store at
-// SecretPath, and a third copy of both lives in-cluster for the operator.
-//
-// aep-api runs outside the cluster, so the OpenChoreo API is the only one of the
-// binding's three projections it can read — which is exactly why the script
-// writes this one.
+// Thunder binding annotations, written onto the Environment by aectl. They are
+// the non-secret half of the binding record; the credential is the OpenChoreo
+// secret SecretRef names.
 const (
 	annThunderIssuer                   = "aep.wso2.com/thunder-issuer"
 	annThunderAdminURL                 = "aep.wso2.com/thunder-admin-url"
 	annThunderSystemResourceIdentifier = "aep.wso2.com/thunder-system-resource-identifier"
-	annThunderSecretPath               = "aep.wso2.com/thunder-secret-path"
+	annThunderSecretRef                = "aep.wso2.com/thunder-secret-ref"
 	annThunderBinding                  = "aep.wso2.com/thunder-binding"
 )
 
@@ -110,9 +105,9 @@ type ThunderBinding struct {
 	// SystemResourceIdentifier is the `resource` indicator every scope=system
 	// mint against this instance must carry.
 	SystemResourceIdentifier string
-	// SecretPath is where the admin client's credential lives in the secret
-	// store, keyed by (org, environment).
-	SecretPath string
+	// SecretRef names the OpenChoreo secret, in the org's namespace, holding the
+	// admin client's credential.
+	SecretRef string
 	// Name is the binding record's own name, for logs and diagnostics.
 	Name string
 	// OTelEndpoint is where this environment ingests traces — the OTLP base an
@@ -311,7 +306,7 @@ func thunderBindingFromAnnotations(orgID, environment string, annotations map[st
 		Issuer:                   strings.TrimSpace(annotations[annThunderIssuer]),
 		AdminURL:                 strings.TrimSpace(annotations[annThunderAdminURL]),
 		SystemResourceIdentifier: strings.TrimSpace(annotations[annThunderSystemResourceIdentifier]),
-		SecretPath:               strings.TrimSpace(annotations[annThunderSecretPath]),
+		SecretRef:                strings.TrimSpace(annotations[annThunderSecretRef]),
 		Name:                     strings.TrimSpace(annotations[annThunderBinding]),
 	}
 	var missing []string
@@ -320,7 +315,7 @@ func thunderBindingFromAnnotations(orgID, environment string, annotations map[st
 	}{
 		{annThunderIssuer, binding.Issuer},
 		{annThunderSystemResourceIdentifier, binding.SystemResourceIdentifier},
-		{annThunderSecretPath, binding.SecretPath},
+		{annThunderSecretRef, binding.SecretRef},
 	} {
 		if required.value == "" {
 			missing = append(missing, required.key)

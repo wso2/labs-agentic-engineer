@@ -46,12 +46,10 @@ type fenceRule struct {
 var rules = []fenceRule{
 	{
 		name:                 "openbao-sdk",
-		allowedPrefix:        filepath.Join("internal", "platform", "secrets") + string(filepath.Separator),
+		allowedPrefix:        "",
 		bannedImportPrefixes: []string{`"github.com/openbao/`, `"github.com/hashicorp/vault`},
-		reason: "OpenBao/Vault SDK access is confined to internal/platform/secrets/ (the DeliveryKV " +
-			"wrapper). Per-org isolation rests on no other package being able to talk to OpenBao " +
-			"directly; this module is the ONE home for every " +
-			"secret backend — the fence is what stops a business domain reaching a backend directly.",
+		reason: "aep-api stores and reads secrets through OpenChoreo's Secret API (or an injected " +
+			"provider); no package talks to OpenBao or Vault directly.",
 	},
 	{
 		name:                 "openchoreo-gen-direct",

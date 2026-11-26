@@ -254,7 +254,7 @@ func TestEnvironmentClient_GetThunderBinding_ReadsTheAnnotations(t *testing.T) {
 					"aep.wso2.com/thunder-issuer":                     "http://default-idp.amp.localhost:8080",
 					"aep.wso2.com/thunder-admin-url":                  "http://thunder-acme-default-service.thunder-acme-default.svc.cluster.local:8090",
 					"aep.wso2.com/thunder-system-resource-identifier": "http://default-idp.amp.localhost:8080/mcp",
-					"aep.wso2.com/thunder-secret-path":                "secret/aep/thunder/acme/default",
+					"aep.wso2.com/thunder-secret-ref":                 "thunder-binding-acme-default",
 					"aep.wso2.com/thunder-binding":                    "thunder-binding-acme-default",
 					"openchoreo.dev/description":                      "an unrelated annotation",
 				},
@@ -275,7 +275,7 @@ func TestEnvironmentClient_GetThunderBinding_ReadsTheAnnotations(t *testing.T) {
 		Issuer:                   "http://default-idp.amp.localhost:8080",
 		AdminURL:                 "http://thunder-acme-default-service.thunder-acme-default.svc.cluster.local:8090",
 		SystemResourceIdentifier: "http://default-idp.amp.localhost:8080/mcp",
-		SecretPath:               "secret/aep/thunder/acme/default",
+		SecretRef:                "thunder-binding-acme-default",
 		Name:                     "thunder-binding-acme-default",
 	}
 	if got != want {
@@ -310,16 +310,17 @@ func TestEnvironmentClient_GetThunderBinding_UnboundEnvironment(t *testing.T) {
 func TestEnvironmentClient_GetThunderBinding_PartialBindingIsAbsent(t *testing.T) {
 	for name, annotations := range map[string]map[string]string{
 		"no resource indicator": {
-			"aep.wso2.com/thunder-issuer":      "http://default-idp.amp.localhost:8080",
-			"aep.wso2.com/thunder-secret-path": "secret/aep/thunder/acme/default",
+			"aep.wso2.com/thunder-issuer":     "http://default-idp.amp.localhost:8080",
+			"aep.wso2.com/thunder-secret-ref": "thunder-binding-acme-default",
 		},
-		"no credential path": {
+		"no credential reference": {
 			"aep.wso2.com/thunder-issuer":                     "http://default-idp.amp.localhost:8080",
 			"aep.wso2.com/thunder-system-resource-identifier": "http://default-idp.amp.localhost:8080/mcp",
+			"aep.wso2.com/thunder-secret-path":                "secret/aep/thunder/acme/default",
 		},
 		"no issuer": {
 			"aep.wso2.com/thunder-system-resource-identifier": "http://default-idp.amp.localhost:8080/mcp",
-			"aep.wso2.com/thunder-secret-path":                "secret/aep/thunder/acme/default",
+			"aep.wso2.com/thunder-secret-ref":                 "thunder-binding-acme-default",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -338,7 +339,7 @@ func TestEnvironmentClient_GetThunderBinding_AdminURLIsOptional(t *testing.T) {
 	got, err := thunderBindingFromAnnotations("acme", "default", map[string]string{
 		"aep.wso2.com/thunder-issuer":                     "http://default-idp.amp.localhost:8080",
 		"aep.wso2.com/thunder-system-resource-identifier": "http://default-idp.amp.localhost:8080/mcp",
-		"aep.wso2.com/thunder-secret-path":                "secret/aep/thunder/acme/default",
+		"aep.wso2.com/thunder-secret-ref":                 "thunder-binding-acme-default",
 	})
 	if err != nil {
 		t.Fatalf("a binding with no admin URL must still be usable: %v", err)

@@ -574,7 +574,7 @@ func orgUUIDForSecretLocation(ctx context.Context) (string, error) {
 
 // storedKey is the store key a consumer reads the secret at loc by. A
 // provider that chooses the key itself (OpenChoreo) reports it; for one that
-// cannot (OpenBao, SM-API) the key is derived as resolveVaultKey does.
+// cannot (SM-API) the key is derived as resolveVaultKey does.
 // loc.SecretRefName() must name the written reference.
 func (w *SecretRefWriter) storedKey(ctx context.Context, loc secretmanagersvc.SecretLocation) (string, error) {
 	key, err := w.client.StoredKey(ctx, loc)

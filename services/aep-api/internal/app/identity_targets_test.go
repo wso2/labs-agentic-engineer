@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
+	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
 	"github.com/wso2/aep/aep-api/internal/identity"
 )
 
@@ -54,12 +55,12 @@ type fakeCredentials struct {
 	fields map[string]string
 	err    error
 	calls  int
-	paths  []string
+	refs   []string // "namespace/name" per read
 }
 
-func (f *fakeCredentials) ReadBindingCredential(_ context.Context, secretPath string) (map[string]string, error) {
+func (f *fakeCredentials) ReadBindingCredential(_ context.Context, namespace, name string) (map[string]string, error) {
 	f.calls++
-	f.paths = append(f.paths, secretPath)
+	f.refs = append(f.refs, namespace+"/"+name)
 	return f.fields, f.err
 }
 
@@ -91,7 +92,7 @@ func newTestResolver(t *testing.T, route string) (*identityTargetResolver, *fake
 		Issuer:                   targetIssuer,
 		AdminURL:                 targetAdminURL,
 		SystemResourceIdentifier: targetIssuer + "/mcp",
-		SecretPath:               "secret/aep/thunder/acme/default",
+		SecretRef:                "thunder-binding-acme-default",
 		Name:                     "thunder-binding-acme-default",
 	}}
 	credentials := &fakeCredentials{fields: map[string]string{
@@ -122,11 +123,8 @@ func TestIdentityTargetResolver_ResolvesFromTheBindingAndTheSecretStore(t *testi
 	if bindings.calls != 1 || credentials.calls != 1 {
 		t.Fatalf("bindings=%d credentials=%d, want one read each", bindings.calls, credentials.calls)
 	}
-	// The credential is read at the path the BINDING names, verbatim — the
-	// resolver never derives one, so a moved secret is followed rather than
-	// guessed at.
-	if credentials.paths[0] != "secret/aep/thunder/acme/default" {
-		t.Fatalf("credential path = %q", credentials.paths[0])
+	if credentials.refs[0] != "acme/thunder-binding-acme-default" {
+		t.Fatalf("credential read at %q, want the binding's secret in the org's namespace", credentials.refs[0])
 	}
 }
 
@@ -273,14 +271,14 @@ func TestIdentityTargetResolver_UnboundEnvironmentNamesTheFix(t *testing.T) {
 // identity provider as an anonymous client and fail four requests later.
 func TestIdentityTargetResolver_MissingCredentialIsNotAUsableTarget(t *testing.T) {
 	for name, credentials := range map[string]*fakeCredentials{
-		"nothing at the path": {fields: nil},
-		"no client secret":    {fields: map[string]string{"clientId": "aep-system-client"}},
-		"read failed":         {err: errors.New("openbao: connection refused")},
+		"nothing in the secret": {fields: nil},
+		"no client secret":      {fields: map[string]string{"clientId": "aep-system-client"}},
+		"read failed":           {err: errors.New("openchoreo: connection refused")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			bindings := &fakeBindings{binding: openchoreo.ThunderBinding{
 				Issuer: targetIssuer, SystemResourceIdentifier: targetIssuer + "/mcp",
-				SecretPath: "secret/aep/thunder/acme/default",
+				SecretRef: "thunder-binding-acme-default",
 			}}
 			resolver := newIdentityTargetResolver(bindings, credentials, &fakeScopeTargets{}, adminRouteIssuer)
 			if _, err := resolver.Resolve(context.Background(), acmeDefault); err == nil {
@@ -378,13 +376,32 @@ func (r *recordingBindings) GetThunderBinding(ctx context.Context, orgID, enviro
 	return r.fakeBindings.GetThunderBinding(ctx, orgID, environment)
 }
 
-// The binding records its secret path WITH the KV mount, because that is what an
-// operator types; the reader is mount-relative like every other caller, so the
-// prefix comes off exactly once. A path under a different mount is refused
-// rather than guessed at — guessing reads some other secret entirely.
-func TestOpenBaoBindingCredentials_RefusesAPathOutsideTheMount(t *testing.T) {
-	reader := openBaoBindingCredentials{mount: "secret"}
-	if _, err := reader.ReadBindingCredential(context.Background(), "other/aep/thunder/acme/default"); err == nil {
-		t.Fatal("a path under another mount was accepted")
+type fakeSecretValues struct {
+	secretmanagersvc.SecretManagementClient
+	values map[string]map[string]string // "namespace/name" -> data
+	read   []secretmanagersvc.SecretLocation
+}
+
+func (f *fakeSecretValues) GetSecretWithValue(_ context.Context, loc secretmanagersvc.SecretLocation) (map[string]string, error) {
+	f.read = append(f.read, loc)
+	v, ok := f.values[loc.ControlPlaneNamespace+"/"+loc.SecretRefName()]
+	if !ok {
+		return nil, secretmanagersvc.ErrSecretNotFound
+	}
+	return v, nil
+}
+
+func TestOpenChoreoBindingCredentials_ReadsTheNamedSecret(t *testing.T) {
+	store := &fakeSecretValues{values: map[string]map[string]string{
+		"acme/thunder-binding-acme-default": {"clientId": "aep-system-client", "clientSecret": "s3cret"},
+	}}
+	got, err := openChoreoBindingCredentials{secrets: store}.ReadBindingCredential(context.Background(), "acme", "thunder-binding-acme-default")
+	if err != nil || got["clientSecret"] != "s3cret" {
+		t.Fatalf("ReadBindingCredential = (%v, %v)", got, err)
+	}
+
+	_, err = openChoreoBindingCredentials{secrets: store}.ReadBindingCredential(context.Background(), "acme", "thunder-binding-acme-staging")
+	if !errors.Is(err, secretmanagersvc.ErrSecretNotFound) {
+		t.Fatalf("missing secret: err = %v, want ErrSecretNotFound", err)
 	}
 }

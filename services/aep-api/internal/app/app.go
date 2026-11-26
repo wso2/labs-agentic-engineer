@@ -19,8 +19,7 @@
 // injectable Seam values, doing NO I/O of its own — deterministic and
 // millisecond-fast, so an assembly test can build the same real graph with a
 // faked Infra (app.Assemble(cfg, app.Fake(), Seam{})). Resolve (infra.go)
-// performs every boot side effect — DB open + migrations, the OpenBao key
-// loads, the dev seed, k8s in-cluster init, the workspace fsck — and hands
+// performs every boot side effect — DB open + migrations, the dev seed, k8s in-cluster init, the workspace fsck — and hands
 // Assemble the results. Public app.Run owns Resolve → Assemble → serve.
 package app
 
@@ -87,7 +86,7 @@ type Watcher interface {
 }
 
 // App is the assembled service graph: the HTTP handler plus the background
-// watchers to launch. Boot side effects (migrations, OpenBao, seed) already ran
+// watchers to launch. Boot side effects (migrations, seed) already ran
 // in Resolve; App holds only what main needs to serve and to shut down, plus the
 // degradation report of which optional capabilities are off.
 type App struct {
@@ -121,10 +120,6 @@ type Seam struct {
 	// config.SecretTargetPlane when no SecretsProvider is injected. With
 	// neither, delivery is off (no secret writes, no external-secret cleanup).
 	OpenChoreoSecrets bool
-
-	// OpenBaoAuth is the process's one OpenBao session. The environment
-	// Thunder binding reader uses it. Nil (or OPENBAO_ADDR unset) = no reader.
-	OpenBaoAuth secrets.VaultAuth
 
 	// ResourceLabels are stamped on every OpenChoreo resource AEP writes
 	// (openchoreo.Config.ResourceLabels). Nil = none.
@@ -264,7 +259,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	}
 
 	// Credentials services and controllers. The PAT lives only in vault
-	// (written through secretRefWriter); Assemble does no OpenBao/network I/O.
+	// (written through secretRefWriter); Assemble does no network I/O.
 	credService := organization.NewCredentialService(orgCredRepo)
 	// Builds clone with the org's github-pat SecretReference, read from its
 	// org_secrets row: aep-api passes the reference name, never the value.
@@ -529,7 +524,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// (org, environment) from the binding record on the OpenChoreo Environment
 	// plus the admin credential in the secret store (identity_targets.go).
 	//
-	// The resolver is optional — without OpenBao there is no credential to read,
+	// The resolver is optional — with secrets delivery off there is no credential to read,
 	// so `rolesEnsure` reports Enabled()==false and the build skips the roles
 	// gate entirely rather than failing every build. The store is wired
 	// regardless: reading an empty table is a correct "no test user".
@@ -541,16 +536,13 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// than "does not exist", and its mutations refuse — there is nothing to
 	// write to.
 	var identityTargets identity.TargetResolver
-	if bindingKV, kvErr := environmentThunderCredentials(cfg, seam.OpenBaoAuth); kvErr != nil {
-		slog.Warn("roles ensure disabled — the environment Thunder credential store is unreachable",
-			"error", kvErr)
-	} else if bindingKV == nil {
-		slog.Warn("roles ensure disabled — OPENBAO_ADDR is not set, so no environment's Thunder admin credential can be read; " +
+	if smClient == nil {
+		slog.Warn("roles ensure disabled — secrets delivery is off, so no environment's Thunder admin credential can be read; " +
 			"builds will not provision roles or test users")
 	} else {
 		// A build's roles belong to the identity provider of the environment its
 		// project writes into, resolved per project from its write target.
-		resolver := newIdentityTargetResolver(environmentClient, bindingKV,
+		resolver := newIdentityTargetResolver(environmentClient, openChoreoBindingCredentials{secrets: smClient},
 			writeTargets, cfg.ThunderEnvAdminRoute)
 		identityTargets = resolver
 		rolesEnsure = identity.NewEnsureService(resolver, identityStore, artifactSvcGit)
@@ -1668,29 +1660,6 @@ func (a buildSecretStagerAdapter) StageBuildSecret(ctx context.Context, ocOrgID,
 	}
 	return res.SecretRef, nil
 }
-
-// environmentThunderCredentials opens the secret store the environment-tier
-// Thunder binding's admin credential is read from.
-//
-// (nil, nil) when OPENBAO_ADDR is unset or there is no OpenBao session: a
-// stack with no secret store cannot reach any environment's identity provider,
-// and the caller skips the whole feature rather than wiring a resolver that
-// fails every call. It performs no I/O — Assemble stays pure; the first read
-// (and, if the session has none yet, the login) happens when a build asks.
-func environmentThunderCredentials(cfg config.Config, auth secrets.VaultAuth) (bindingCredentialReader, error) {
-	if cfg.OpenBaoAddr == "" || auth == nil {
-		return nil, nil
-	}
-	kv, err := secrets.NewDeliveryKV(cfg.OpenBaoAddr, thunderBindingKVMount, auth)
-	if err != nil {
-		return nil, err
-	}
-	return openBaoBindingCredentials{kv: kv, mount: thunderBindingKVMount}, nil
-}
-
-// thunderBindingKVMount is the KV mount aectl writes the binding credential
-// under, and the one the binding's recorded path is prefixed with.
-const thunderBindingKVMount = "secret"
 
 // runnableAgentRuntimes are the coding-agent runtimes this installation can run,
 // and so the only ones an organization may choose. Claude Code is the platform

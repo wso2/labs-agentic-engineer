@@ -45,9 +45,9 @@ import (
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
+	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
 	"github.com/wso2/aep/aep-api/internal/clients/thundersvc"
 	"github.com/wso2/aep/aep-api/internal/identity"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
 // identityTargetTTL bounds how long a resolved client is reused.
@@ -80,11 +80,9 @@ type environmentBindingReader interface {
 	GetThunderBinding(ctx context.Context, orgID, environment string) (openchoreo.ThunderBinding, error)
 }
 
-// bindingCredentialReader reads the admin credential the binding points at. The
-// path arrives from the binding INCLUDING its mount, exactly as the script
-// recorded it, so the implementation — not this adapter — owns the mount.
+// bindingCredentialReader reads the admin credential the binding names.
 type bindingCredentialReader interface {
-	ReadBindingCredential(ctx context.Context, secretPath string) (map[string]string, error)
+	ReadBindingCredential(ctx context.Context, namespace, name string) (map[string]string, error)
 }
 
 // writeTargetReader names the environment a project writes into, narrowed from
@@ -181,7 +179,7 @@ func (r *identityTargetResolver) Resolve(ctx context.Context, scope identity.Sco
 		return identity.Target{}, fmt.Errorf("read the Thunder binding of %s: %w", scope, err)
 	}
 
-	fields, err := r.credentials.ReadBindingCredential(ctx, binding.SecretPath)
+	fields, err := r.credentials.ReadBindingCredential(ctx, scope.OrgID, binding.SecretRef)
 	if err != nil {
 		return identity.Target{}, fmt.Errorf("read the admin credential of %s: %w", scope, err)
 	}
@@ -437,28 +435,12 @@ func (d invalidatingDirectory) ListRoleAssignments(ctx context.Context, role ide
 	return principals, d.check(err)
 }
 
-// openBaoBindingCredentials reads the binding's admin credential out of the
-// local secret store.
-//
-// The read goes through platform/secrets, which is the ONE package permitted to
-// speak to OpenBao — the import fence in that package's tests is what keeps
-// per-org isolation resting on a single door rather than on every domain's good
-// behaviour.
-type openBaoBindingCredentials struct {
-	kv *secrets.DeliveryKV
-	// mount is the KV mount the paths in the binding record are written under.
-	// The binding names the path WITH its mount ("secret/aep/thunder/<org>/<env>")
-	// because that is what an operator types at the CLI; DeliveryKV is
-	// mount-relative like every other caller, so the prefix comes off here.
-	mount string
+// openChoreoBindingCredentials reads the binding's credential through the
+// secret client (OpenChoreo's Secret API).
+type openChoreoBindingCredentials struct {
+	secrets secretmanagersvc.SecretManagementClient
 }
 
-func (r openBaoBindingCredentials) ReadBindingCredential(ctx context.Context, secretPath string) (map[string]string, error) {
-	prefix := r.mount + "/"
-	if !strings.HasPrefix(secretPath, prefix) {
-		// A path under a different mount is a binding this process cannot read,
-		// and guessing would read some other secret entirely.
-		return nil, fmt.Errorf("binding credential path %q is not under the configured KV mount %q", secretPath, r.mount)
-	}
-	return r.kv.Get(ctx, strings.TrimPrefix(secretPath, prefix))
+func (r openChoreoBindingCredentials) ReadBindingCredential(ctx context.Context, namespace, name string) (map[string]string, error) {
+	return r.secrets.GetSecretWithValue(ctx, secretmanagersvc.SecretLocation{ControlPlaneNamespace: namespace, RefName: name})
 }

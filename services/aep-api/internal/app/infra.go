@@ -32,7 +32,7 @@ import (
 
 // Infra is every external dependency Assemble needs already resolved — the
 // results of all boot-time I/O. Resolve produces the real bundle (network, disk,
-// OpenBao, the dev seed); Fake produces a zero-I/O bundle for assembly tests.
+// the dev seed); Fake produces a zero-I/O bundle for assembly tests.
 // Assemble reads it and does no I/O of its own, so the whole service graph
 // assembles deterministically in milliseconds.
 type Infra struct {
@@ -47,7 +47,7 @@ type Infra struct {
 // Resolve performs every boot side effect and returns the resolved Infra: it
 // opens the database and runs first-boot migrations (Bootstrap), builds the
 // column cipher. This is the ONLY place in the graph that
-// touches the network, the clock, OpenBao, or the filesystem at boot — Assemble
+// touches the network, the clock, or the filesystem at boot — Assemble
 // is pure. Required infra errors; optional infra warns.
 func Resolve(ctx context.Context, cfg config.Config) (Infra, error) {
 	// Credential encryption key — the column cipher's (test_users'
