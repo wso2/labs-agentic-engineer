@@ -98,14 +98,14 @@ actually reach. None of them can read the others.
 | `ConfigMap thunder-binding-<org>-<env>` | the T2 namespace | `thunder-app` (by label, cluster-wide watch), `setup-environment-gateway.sh`, `verify-convergence.sh`, `seed-test-users.sh` |
 | `Secret <release>-aep-system-client` | the T2 namespace | the record of what the instance was given; what a re-run reuses instead of rotating |
 | `Secret thunder-binding-<org>-<env>` | `thunder-app-operator-system` | `thunder-app` — its Secret informer and RBAC are restricted to its own namespace, deliberately, so the credential has to be delivered there |
-| OpenBao `secret/aep/thunder/<org>/<env>` | OpenBao | `aep-api`, which runs in-cluster with no Kubernetes access to these Secrets and logs in to OpenBao by Kubernetes auth (role `aep-api`, read on `secret/data/aep/thunder/*` only) |
-| OpenChoreo secret `thunder-binding-<org>-<env>` (`clientId`, `clientSecret`) | the org's namespace, through OpenChoreo's Secret API | stored by `aectl` as its own client, `aectl-openchoreo-client`; the `Environment`'s `aep.wso2.com/thunder-secret-ref` names it |
-| `aep.wso2.com/thunder-*` annotations | the OpenChoreo `Environment` | `aep-api` again — it sees the OpenChoreo API and OpenBao, and nothing else |
+| OpenBao `secret/aep/thunder/<org>/<env>` | OpenBao | nothing; a leftover copy that the next change stops writing |
+| OpenChoreo secret `thunder-binding-<org>-<env>` (`clientId`, `clientSecret`) | the org's namespace, through OpenChoreo's Secret API | `aep-api`, through OpenChoreo's Secret API (its access also allows reading other secrets' values). Stored by `aectl` as its own client, `aectl-openchoreo-client`; the `Environment`'s `aep.wso2.com/thunder-secret-ref` names it |
+| `aep.wso2.com/thunder-*` annotations | the OpenChoreo `Environment` | `aep-api` again — it sees the OpenChoreo API and nothing else |
 
 The ConfigMap is the authority: it names the release, the issuer, the in-cluster
 admin URL, the System resource-server identifier, the trusted-issuer triple, and
 **where the other projections live** (`secretName` / `secretNamespace` for the
-operator, `secretPath` for `aep-api`). The labels are the contract, not the
+operator, `secretPath` for the OpenBao copy). The labels are the contract, not the
 names — `aep.wso2.com/kind=thunder-binding` plus `/org` and `/env` — because the
 namespace is derived by Agent Manager's naming library and can be truncated.
 
