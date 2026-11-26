@@ -21,17 +21,15 @@
 //  1. SecretLocation is keyed by `{org, project, task, entity, secretKey}`.
 //     A coding-agent task is the smallest ownership unit; aep has
 //     no agent or env-set concept at the secret layer, and per-env scoping
-//     happens at the OC SecretReference level, not in the KV path.
+//     happens at the OC SecretReference level, not in the store key.
 //
-//  2. OpenChoreoSecretReferenceClient is a minimal local interface rather
-//     than the full OC client — it covers only the SecretReference surface
-//     the replace-in-place writes (CreateSecret / PatchSecret / DeleteSecret)
-//     and the new-reference-per-write pair (CreateSecretRef /
-//     DeleteSecretRef) need.
+//  2. The provider owns the SecretReference: it stores the value and creates
+//     the reference that points at it (OpenChoreo's Secret API locally,
+//     Cloud's SM-API). This client never authors a SecretReference itself.
 //
-// Per ADR-0002 this package does NOT ship an openbao provider — local is
-// served by the SM-API binary backed by local OpenBao, cloud is served by
-// the cloud SM-API.
+// OpenChoreoSecretReferenceClient is a minimal local interface over OC's
+// SecretReference API, for the callers that read references or author their
+// own alias of one (the ai-agent model-access reference).
 package secretmanagersvc
 
 import (
@@ -41,17 +39,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 
-	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 	"github.com/wso2/aep/aep-api/secretsprovider"
 )
 
 const (
 	// DefaultManagedBy is the default ownership tag stamped onto every
 	// secret written through this client. Cloud SM-API uses it to refuse
-	// cross-tenant deletes; OpenBao providers use it for the same reason.
+	// cross-tenant deletes.
 	DefaultManagedBy = "aep-aep"
 
 	// SecretKeyAPIKey is the conventional key name for single-value
@@ -62,19 +58,19 @@ const (
 
 // ErrNotFound is returned by OpenChoreoSecretReferenceClient lookups when
 // no SecretReference exists for (cpNS, name). Distinct from
-// ErrSecretNotFound (which is about the KV value itself).
+// ErrSecretNotFound (which is about the stored value itself).
 var ErrNotFound = errors.New("not found")
 
-// ErrConflict is returned by Create when a SecretReference with the same
+// ErrConflict is returned when a secret or SecretReference with the same
 // (cpNS, name) already exists, signalling a race with another writer.
 var ErrConflict = errors.New("conflict")
 
-// OpenChoreoSecretReferenceClient is the small slice of the OC client
-// that this package needs. It covers SecretReference CRUD only; the
-// GitSecret CRUD lives elsewhere. Implementations are expected to map
-// ErrNotFound / ErrConflict on the namespaced errors they return.
-// cpNS is the Workload/ReleaseBinding control-plane namespace, not the
-// vault OrgBaseNamespace.
+// OpenChoreoSecretReferenceClient is the small slice of the OC client that
+// reads SecretReferences or authors one aliasing an existing store key. It
+// covers SecretReference CRUD only; the GitSecret CRUD lives elsewhere.
+// Implementations are expected to map ErrNotFound / ErrConflict on the
+// namespaced errors they return. cpNS is the Workload/ReleaseBinding
+// control-plane namespace.
 type OpenChoreoSecretReferenceClient interface {
 	GetSecretReference(ctx context.Context, cpNS, name string) (*SecretReference, error)
 	CreateSecretReference(ctx context.Context, cpNS string, req CreateSecretReferenceRequest) (*SecretReference, error)
@@ -106,7 +102,7 @@ type SecretReference struct {
 }
 
 // SecretReferenceData is one spec.data[] entry of a SecretReference: the
-// Kubernetes Secret key it fills and the vault entry (RemoteKey) and
+// Kubernetes Secret key it fills and the store entry (RemoteKey) and
 // property it reads.
 type SecretReferenceData struct {
 	SecretKey string
@@ -130,40 +126,41 @@ type SecretManagementClient interface {
 	// property per data key, and one spec.data entry per key whose
 	// property is the key itself (no aliasing). It never updates an
 	// existing reference: a name clash is ErrConflict. On error nothing
-	// new is left behind, except after ErrConflict (see the method doc).
-	// location.ControlPlaneNamespace is required on both installs.
+	// new is left behind. location.ControlPlaneNamespace is required.
 	CreateSecretRef(ctx context.Context, location SecretLocation, data map[string]string) (string, error)
 	// DeleteSecretRef removes the SecretReference called name and its
 	// stored value. name is the one CreateSecretRef returned; it is never
 	// derived from location. A reference already gone is success.
 	DeleteSecretRef(ctx context.Context, location SecretLocation, name string) error
 	GetSecret(ctx context.Context, kvPath string) (*SecretInfo, error)
-	GetSecretWithValue(ctx context.Context, kvPath string) (map[string]string, error)
+	// GetSecretWithValue reads the values of the secret at location.
+	GetSecretWithValue(ctx context.Context, location SecretLocation) (map[string]string, error)
+	// StoredKey is the store key a consumer reads the secret at location by,
+	// as the backend chose it. ErrNotSupported when the provider cannot
+	// report it (the caller then derives the key itself); ErrSecretNotFound
+	// when no such secret exists.
+	StoredKey(ctx context.Context, location SecretLocation) (string, error)
 }
 
 type secretManagementClient struct {
-	provider        Provider
-	lowLevelClient  SecretsClient
-	managedBy       string
-	ocClient        OpenChoreoSecretReferenceClient
-	refreshInterval string
+	lowLevelClient SecretsClient
+	managedBy      string
 	// mintName mints new SecretReference names (mintRefName; a seam so
 	// tests can force a name clash).
 	mintName func(cpNS, entity string) (string, error)
 }
 
 // SecretManagementClientConfig configures NewSecretManagementClientWithConfig.
-// OCClient nil → the underlying Provider must implement
-// SecretReferenceManager and ManagesSecretReferences()==true (Secret
-// Manager API does); otherwise SecretReferences are upserted via OCClient.
 type SecretManagementClientConfig struct {
-	StoreConfig     *StoreConfig
-	Provider        Provider
-	OCClient        OpenChoreoSecretReferenceClient
-	RefreshInterval string
+	StoreConfig *StoreConfig
+	// Provider must create the SecretReference for every value it stores
+	// (SecretReferenceManager with ManagesSecretReferences() true).
+	Provider Provider
 }
 
-// NewSecretManagementClientWithConfig is the full-control constructor.
+// NewSecretManagementClientWithConfig is the full-control constructor. It
+// refuses a provider that does not create SecretReferences: this client
+// never authors one, so such a provider would store values nothing points at.
 func NewSecretManagementClientWithConfig(cfg SecretManagementClientConfig) (SecretManagementClient, error) {
 	if cfg.StoreConfig == nil {
 		return nil, fmt.Errorf("config is required")
@@ -171,112 +168,33 @@ func NewSecretManagementClientWithConfig(cfg SecretManagementClientConfig) (Secr
 	if cfg.Provider == nil {
 		return nil, fmt.Errorf("provider is required")
 	}
+	if m, ok := cfg.Provider.(SecretReferenceManager); !ok || !m.ManagesSecretReferences() {
+		return nil, fmt.Errorf("provider must create SecretReferences (SecretReferenceManager)")
+	}
 	lowLevelClient, err := cfg.Provider.NewClient(cfg.StoreConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create secrets client: %w", err)
 	}
 	return &secretManagementClient{
-		provider:        cfg.Provider,
-		lowLevelClient:  lowLevelClient,
-		managedBy:       DefaultManagedBy,
-		ocClient:        cfg.OCClient,
-		refreshInterval: cfg.RefreshInterval,
-		mintName:        mintRefName,
+		lowLevelClient: lowLevelClient,
+		managedBy:      DefaultManagedBy,
+		mintName:       mintRefName,
 	}, nil
 }
 
-// managesRefs reports whether the underlying provider owns SecretReference
-// CRUD (e.g. SM-API). When true the high-level client must not call OC.
-func (c *secretManagementClient) managesRefs() bool {
-	if m, ok := c.provider.(SecretReferenceManager); ok && m.ManagesSecretReferences() {
-		return true
-	}
-	return false
-}
-
-func (c *secretManagementClient) requireOCClient() error {
-	if c.ocClient == nil {
-		return fmt.Errorf("OCClient required when provider does not manage SecretReferences")
-	}
-	return nil
-}
-
-func (c *secretManagementClient) upsertSecretReference(ctx context.Context, location SecretLocation, kvPath string, secretKeys []string) (string, error) {
-	cpNS, err := location.CPNamespace()
-	if err != nil {
-		return "", err
-	}
-	name := location.SecretRefName()
-	req := CreateSecretReferenceRequest{
-		Namespace:       cpNS,
-		Name:            name,
-		ProjectName:     location.ProjectName,
-		ComponentName:   location.EntityName,
-		KVPath:          kvPath,
-		SecretKeys:      secretKeys,
-		RefreshInterval: c.refreshInterval,
-	}
-	_, getErr := c.ocClient.GetSecretReference(ctx, cpNS, name)
-	if getErr != nil {
-		if !errors.Is(getErr, ErrNotFound) {
-			return "", fmt.Errorf("check SecretReference: %w", getErr)
-		}
-		if _, createErr := c.ocClient.CreateSecretReference(ctx, cpNS, req); createErr != nil {
-			if errors.Is(createErr, ErrConflict) {
-				if _, updateErr := c.ocClient.UpdateSecretReference(ctx, cpNS, name, req); updateErr != nil {
-					return "", fmt.Errorf("update after create conflict: %w", updateErr)
-				}
-			} else {
-				return "", fmt.Errorf("create SecretReference: %w", createErr)
-			}
-		}
-	} else {
-		if _, updateErr := c.ocClient.UpdateSecretReference(ctx, cpNS, name, req); updateErr != nil {
-			return "", fmt.Errorf("update SecretReference: %w", updateErr)
-		}
-	}
-	return name, nil
-}
-
-func (c *secretManagementClient) requireOpenBaoDirectRefs(location SecretLocation) error {
-	if err := c.requireOCClient(); err != nil {
-		return err
-	}
-	_, err := location.CPNamespace()
-	return err
-}
-
 func (c *secretManagementClient) CreateSecret(ctx context.Context, location SecretLocation, data map[string]string) (string, error) {
-	if !c.managesRefs() {
-		if err := c.requireOpenBaoDirectRefs(location); err != nil {
-			return "", err
-		}
-	}
 	raw, err := json.Marshal(data)
 	if err != nil {
 		return "", fmt.Errorf("marshal secret data: %w", err)
 	}
-	metadata := &SecretMetadata{ManagedBy: c.managedBy}
-	secretRef, err := c.lowLevelClient.PushSecret(ctx, location, raw, metadata)
+	secretRef, err := c.lowLevelClient.PushSecret(ctx, location, raw, &SecretMetadata{ManagedBy: c.managedBy})
 	if err != nil {
 		return "", fmt.Errorf("upsert secret: %w", err)
 	}
-	if c.managesRefs() {
-		return secretRef, nil
-	}
-	keys := make([]string, 0, len(data))
-	for k := range data {
-		keys = append(keys, k)
-	}
-	return c.upsertSecretReference(ctx, location, secretRef, keys)
+	return secretRef, nil
 }
 
 func (c *secretManagementClient) PatchSecret(ctx context.Context, location SecretLocation, data map[string]string, keysToDelete []string) (string, error) {
-	if !c.managesRefs() {
-		if err := c.requireOpenBaoDirectRefs(location); err != nil {
-			return "", err
-		}
-	}
 	patch := make(map[string]any, len(data)+len(keysToDelete))
 	for k, v := range data {
 		patch[k] = v
@@ -288,46 +206,16 @@ func (c *secretManagementClient) PatchSecret(ctx context.Context, location Secre
 	if err != nil {
 		return "", fmt.Errorf("marshal patch data: %w", err)
 	}
-	metadata := &SecretMetadata{ManagedBy: c.managedBy}
-	secretRef, err := c.lowLevelClient.PatchSecret(ctx, location, raw, metadata)
+	secretRef, err := c.lowLevelClient.PatchSecret(ctx, location, raw, &SecretMetadata{ManagedBy: c.managedBy})
 	if err != nil {
 		return "", fmt.Errorf("patch secret: %w", err)
 	}
-	if c.managesRefs() {
-		return secretRef, nil
-	}
-	info, err := c.lowLevelClient.GetSecret(ctx, location)
-	if err != nil {
-		return "", fmt.Errorf("get secret keys after patch: %w", err)
-	}
-	return c.upsertSecretReference(ctx, location, secretRef, info.Keys)
+	return secretRef, nil
 }
 
-func (c *secretManagementClient) DeleteSecret(ctx context.Context, location SecretLocation, secretRefName string) error {
-	if !c.managesRefs() {
-		if err := c.requireOpenBaoDirectRefs(location); err != nil {
-			return err
-		}
-	}
-	metadata := &SecretMetadata{ManagedBy: c.managedBy}
-	if err := c.lowLevelClient.DeleteSecret(ctx, location, metadata); err != nil {
+func (c *secretManagementClient) DeleteSecret(ctx context.Context, location SecretLocation, _ string) error {
+	if err := c.lowLevelClient.DeleteSecret(ctx, location, &SecretMetadata{ManagedBy: c.managedBy}); err != nil {
 		return fmt.Errorf("delete secret: %w", err)
-	}
-	if !c.managesRefs() {
-		cpNS, err := location.CPNamespace()
-		if err != nil {
-			return err
-		}
-		if err := c.deleteSecretReference(ctx, cpNS, secretRefName); err != nil {
-			return fmt.Errorf("delete SecretReference: %w", err)
-		}
-		// Pre-fix OpenBao-direct authored CRs into OrgBaseNamespace.
-		// Best-effort sweep so disconnect does not leave an inert CR.
-		if oldNS := tenant.OrgBaseNamespace(location.OrgName); oldNS != "" && oldNS != cpNS {
-			if err := c.deleteSecretReference(ctx, oldNS, secretRefName); err != nil {
-				return fmt.Errorf("delete leftover SecretReference: %w", err)
-			}
-		}
 	}
 	return nil
 }
@@ -370,22 +258,10 @@ func mintRefName(cpNS, entity string) (string, error) {
 	return prefix + "-" + suffix, nil
 }
 
-// CreateSecretRef stores data under a freshly minted reference name.
-//
-// Local (provider does not manage references): the SecretReference is
-// created through OC first, pointing at the vault path the provider will
-// use for the minted name (SecretPathResolver), and only then is the value
-// written. Creating the reference reserves the name, and OC does not read
-// the vault when a reference is created, so a not-yet-written value is
-// harmless: nothing consumes the reference until the caller repoints to
-// it. A name clash (ErrConflict, a 1-in-2^32 event) is retried once with a
-// new name and otherwise returned with nothing written, so an existing
-// reference's value is never overwritten. If the value write fails, the new
-// reference is deleted by its name.
-//
-// Cloud (provider manages references): the provider creates the
-// reference itself and its returned name is the result; the minted name
-// is passed only as a hint.
+// CreateSecretRef stores data under a freshly minted reference name. The
+// provider creates the reference itself and its returned name is the
+// result. A minted name already in use is retried once with a new one
+// (pushUnderNewName).
 func (c *secretManagementClient) CreateSecretRef(ctx context.Context, location SecretLocation, data map[string]string) (string, error) {
 	if len(data) == 0 {
 		return "", fmt.Errorf("secret data is required")
@@ -401,124 +277,48 @@ func (c *secretManagementClient) CreateSecretRef(ctx context.Context, location S
 	if err != nil {
 		return "", fmt.Errorf("marshal secret data: %w", err)
 	}
-	metadata := &SecretMetadata{ManagedBy: c.managedBy}
-
-	if c.managesRefs() {
-		if location.RefName, err = c.mintName(cpNS, location.EntityName); err != nil {
-			return "", err
-		}
-		name, err := c.lowLevelClient.PushSecret(ctx, location, raw, metadata)
-		if err != nil {
-			return "", fmt.Errorf("write secret: %w", err)
-		}
-		if name == "" {
-			return "", fmt.Errorf("write secret: provider returned no reference name")
-		}
-		return name, nil
-	}
-
-	if err := c.requireOCClient(); err != nil {
-		return "", err
-	}
-	resolver, ok := c.lowLevelClient.(SecretPathResolver)
-	if !ok {
-		return "", fmt.Errorf("provider must resolve secret paths (SecretPathResolver) when it does not manage SecretReferences")
-	}
-	location, kvPath, err := c.reserveSecretReference(ctx, cpNS, location, resolver, data)
-	if err != nil {
-		return "", err
-	}
-	stored, err := c.lowLevelClient.PushSecret(ctx, location, raw, metadata)
-	if err == nil && stored != kvPath {
-		err = fmt.Errorf("provider stored the value at a different path than it resolved")
-		_ = c.lowLevelClient.DeleteSecret(ctx, location, metadata)
-	}
-	if err != nil {
-		if delErr := c.deleteSecretReference(ctx, cpNS, location.RefName); delErr != nil {
-			return "", fmt.Errorf("write secret for SecretReference %s: %w (deleting the new reference also failed: %v)", location.RefName, err, delErr)
-		}
-		return "", fmt.Errorf("write secret for SecretReference %s: %w", location.RefName, err)
-	}
-	return location.RefName, nil
+	return c.pushUnderNewName(ctx, cpNS, location, raw, &SecretMetadata{ManagedBy: c.managedBy})
 }
 
 // refNameAttempts bounds how many minted names CreateSecretRef tries
 // before reporting a name clash: the first plus one re-mint.
 const refNameAttempts = 2
 
-// reserveSecretReference mints a name and creates its SecretReference,
-// pointing at the vault path the value will be written to. It returns the
-// location carrying the reserved RefName and that path. Nothing is written
-// to the vault here.
-func (c *secretManagementClient) reserveSecretReference(ctx context.Context, cpNS string, location SecretLocation, resolver SecretPathResolver, data map[string]string) (SecretLocation, string, error) {
-	keys := make([]string, 0, len(data))
-	for k := range data {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
+// pushUnderNewName writes raw under a freshly minted name. Each attempt
+// mints a fresh name at the top of the loop; a provider reports a name
+// already in use as ErrConflict, and only that is retried (once, under the
+// next minted name). Any other error, or a second clash, is returned, so an
+// existing reference is never overwritten.
+func (c *secretManagementClient) pushUnderNewName(ctx context.Context, cpNS string, location SecretLocation, raw []byte, metadata *SecretMetadata) (string, error) {
 	var err error
 	for attempt := 0; attempt < refNameAttempts; attempt++ {
 		if location.RefName, err = c.mintName(cpNS, location.EntityName); err != nil {
-			return location, "", err
+			return "", err
 		}
-		kvPath, pathErr := resolver.SecretPath(location)
-		if pathErr != nil {
-			return location, "", fmt.Errorf("resolve secret path: %w", pathErr)
-		}
-		_, err = c.ocClient.CreateSecretReference(ctx, cpNS, CreateSecretReferenceRequest{
-			Namespace:       cpNS,
-			Name:            location.RefName,
-			ProjectName:     location.ProjectName,
-			ComponentName:   location.EntityName,
-			KVPath:          kvPath,
-			SecretKeys:      keys,
-			RefreshInterval: c.refreshInterval,
-		})
+		var name string
+		name, err = c.lowLevelClient.PushSecret(ctx, location, raw, metadata)
 		if err == nil {
-			return location, kvPath, nil
+			if name == "" {
+				return "", fmt.Errorf("write secret: provider returned no reference name")
+			}
+			return name, nil
 		}
 		if !errors.Is(err, ErrConflict) {
 			break
 		}
 	}
-	return location, "", fmt.Errorf("create SecretReference %s: %w", location.RefName, err)
+	return "", fmt.Errorf("write secret: %w", err)
 }
 
-// DeleteSecretRef removes the stored value and the SecretReference called
-// name. The value goes first: a retry after a partial failure still finds
-// the reference by its name and finishes the job. The vault path is
-// derived from location.OrgName and name, so location must carry the same
-// OrgName the reference was created with.
+// DeleteSecretRef removes the SecretReference called name and its stored
+// value; the provider deletes both.
 func (c *secretManagementClient) DeleteSecretRef(ctx context.Context, location SecretLocation, name string) error {
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("SecretReference name is required")
 	}
-	managed := c.managesRefs()
-	if !managed {
-		if err := c.requireOpenBaoDirectRefs(location); err != nil {
-			return err
-		}
-	}
 	location.RefName = name
 	if err := c.lowLevelClient.DeleteSecret(ctx, location, &SecretMetadata{ManagedBy: c.managedBy}); err != nil {
 		return fmt.Errorf("delete secret %s: %w", name, err)
-	}
-	if managed {
-		return nil
-	}
-	cpNS, err := location.CPNamespace()
-	if err != nil {
-		return err
-	}
-	if err := c.deleteSecretReference(ctx, cpNS, name); err != nil {
-		return fmt.Errorf("delete SecretReference %s: %w", name, err)
-	}
-	return nil
-}
-
-func (c *secretManagementClient) deleteSecretReference(ctx context.Context, ns, name string) error {
-	if err := c.ocClient.DeleteSecretReference(ctx, ns, name); err != nil && !errors.Is(err, ErrNotFound) {
-		return err
 	}
 	return nil
 }
@@ -535,14 +335,10 @@ func (c *secretManagementClient) GetSecret(ctx context.Context, kvPath string) (
 	return info, nil
 }
 
-func (c *secretManagementClient) GetSecretWithValue(ctx context.Context, kvPath string) (map[string]string, error) {
-	location, err := ParseKVPath(kvPath)
-	if err != nil {
-		return nil, fmt.Errorf("parse KV path %q: %w", kvPath, err)
-	}
+func (c *secretManagementClient) GetSecretWithValue(ctx context.Context, location SecretLocation) (map[string]string, error) {
 	raw, err := c.lowLevelClient.GetSecretWithValue(ctx, location)
 	if err != nil {
-		return nil, fmt.Errorf("get secret at %q: %w", kvPath, err)
+		return nil, fmt.Errorf("get secret %s: %w", location.SecretRefName(), err)
 	}
 	var out map[string]string
 	if err := json.Unmarshal(raw, &out); err != nil {
@@ -551,9 +347,10 @@ func (c *secretManagementClient) GetSecretWithValue(ctx context.Context, kvPath 
 	return out, nil
 }
 
-// ManagesSecretReferences reports whether the provider creates and names the
-// SecretReferences itself (Cloud's Secret Manager API), so a write cannot
-// keep a caller-chosen reference name.
-func (c *secretManagementClient) ManagesSecretReferences() bool {
-	return c.managesRefs()
+func (c *secretManagementClient) StoredKey(ctx context.Context, location SecretLocation) (string, error) {
+	resolver, ok := c.lowLevelClient.(StoredKeyResolver)
+	if !ok {
+		return "", ErrNotSupported
+	}
+	return resolver.StoredKey(ctx, location)
 }

@@ -113,13 +113,17 @@ type Seam struct {
 	// Nil = no impersonation header.
 	ImpersonateOrgResolver func(ctx context.Context, namespace string) (string, error)
 
-	// SecretsProvider is the write-only secrets delivery channel.
-	// Nil = delivery off (no secret writes, no external-secret cleanup).
+	// SecretsProvider is an injected secrets delivery channel (an overlay's).
+	// It takes precedence over OpenChoreoSecrets.
 	SecretsProvider secretmanagersvc.Provider
 
-	// OpenBaoAuth is the process's one OpenBao session, the same one the
-	// OpenBao-direct SecretsProvider was built with. The environment Thunder
-	// binding reader shares it. Nil (or OPENBAO_ADDR unset) = no reader.
+	// OpenChoreoSecrets stores secrets through OpenChoreo's Secret API on
+	// config.SecretTargetPlane when no SecretsProvider is injected. With
+	// neither, delivery is off (no secret writes, no external-secret cleanup).
+	OpenChoreoSecrets bool
+
+	// OpenBaoAuth is the process's one OpenBao session. The environment
+	// Thunder binding reader uses it. Nil (or OPENBAO_ADDR unset) = no reader.
 	OpenBaoAuth secrets.VaultAuth
 
 	// ResourceLabels are stamped on every OpenChoreo resource AEP writes
@@ -224,32 +228,18 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		slog.Info("Observability API", "baseURL", cfg.Observability.BaseURL)
 	}
 
-	// Secrets delivery client. Built only when seam.SecretsProvider is set
-	// (OSS OpenBao-direct or overlay-injected provider). Nil provider =
-	// delivery off — no construction from URL, no plaintext substitute.
+	// Secrets delivery client, over the provider secretsProvider picks. Nil
+	// provider = delivery off — no plaintext substitute.
 	var smClient secretmanagersvc.SecretManagementClient
-	if provider := seam.SecretsProvider; provider != nil {
-		cfgStore := &secretmanagersvc.StoreConfig{Provider: "injected"}
-		if ob := deliveryOpenBaoConfigFromAppConfig(cfg); ob != nil {
-			cfgStore.OpenBao = ob
-		}
-		var ocSR secretmanagersvc.OpenChoreoSecretReferenceClient
-		managesRefs := false
-		if m, ok := provider.(secretmanagersvc.SecretReferenceManager); ok {
-			managesRefs = m.ManagesSecretReferences()
-		}
-		if !managesRefs {
-			ocSR = openchoreo.NewSecretReferenceClient(ocConfig)
-		}
+	if provider := secretsProvider(cfg, seam, ocConfig); provider != nil {
 		smClient, err = secretmanagersvc.NewSecretManagementClientWithConfig(secretmanagersvc.SecretManagementClientConfig{
-			StoreConfig: cfgStore,
+			StoreConfig: &secretmanagersvc.StoreConfig{Provider: "injected"},
 			Provider:    provider,
-			OCClient:    ocSR,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("secrets provider client init: %w", err)
 		}
-		slog.Info("secrets client", "provider", "injected", "managesRefs", managesRefs)
+		slog.Info("secrets client", "injected", seam.SecretsProvider != nil)
 	} else {
 		slog.Warn("secrets provider not injected — secrets delivery disabled")
 	}
@@ -1644,7 +1634,7 @@ func computeDegradations(cfg config.Config, secretsDelivery bool) []Degradation 
 		off("cycle-log-archive", "OBSERVER_URL not set — a finished cycle's agent log cannot be read back")
 	}
 	if !secretsDelivery {
-		off("secrets-delivery", "SecretsProvider not injected — secret writes + external-secret cleanup disabled")
+		off("secrets-delivery", "no secrets provider (none injected, OpenChoreo secrets off) — secret writes + external-secret cleanup disabled")
 	}
 	// Working dispatch is the OpenChoreo component path: the BFF creates the run
 	// cycle's Component through platform-api-service and OC renders the Job. It
@@ -1698,23 +1688,9 @@ func environmentThunderCredentials(cfg config.Config, auth secrets.VaultAuth) (b
 	return openBaoBindingCredentials{kv: kv, mount: thunderBindingKVMount}, nil
 }
 
-// thunderBindingKVMount is the KV mount setup-environment-thunder.sh writes the
-// binding credential under, and the one the binding's recorded path is prefixed
-// with. It matches the mount every other local secret is delivered through
-// (deliveryOpenBaoConfigFromAppConfig).
+// thunderBindingKVMount is the KV mount aectl writes the binding credential
+// under, and the one the binding's recorded path is prefixed with.
 const thunderBindingKVMount = "secret"
-
-// deliveryOpenBaoConfigFromAppConfig maps local OPENBAO_* config onto the
-// provider-neutral StoreConfig.OpenBao shape. Nil when addr is unset.
-func deliveryOpenBaoConfigFromAppConfig(cfg config.Config) *secretmanagersvc.OpenBaoConfig {
-	if cfg.OpenBaoAddr == "" {
-		return nil
-	}
-	return &secretmanagersvc.OpenBaoConfig{
-		Server: cfg.OpenBaoAddr,
-		Path:   "secret",
-	}
-}
 
 // runnableAgentRuntimes are the coding-agent runtimes this installation can run,
 // and so the only ones an organization may choose. Claude Code is the platform
@@ -1727,6 +1703,24 @@ func runnableAgentRuntimes(cfg config.Config) []orgconfig.AgentRuntime {
 		runtimes = append(runtimes, orgconfig.AgentRuntimeOpenCode)
 	}
 	return runtimes
+}
+
+// secretsProvider is the provider secret writes go through: the one injected
+// through the seam (an overlay's) when there is one, else OpenChoreo's Secret
+// API on cfg.SecretTargetPlane when the seam asks for it, else nil (delivery
+// off). The OpenChoreo provider is built here rather than by the entry point
+// because it needs oc, the OpenChoreo client config Assemble derives.
+func secretsProvider(cfg config.Config, seam Seam, oc openchoreo.Config) secretmanagersvc.Provider {
+	if seam.SecretsProvider != nil {
+		return seam.SecretsProvider
+	}
+	if !seam.OpenChoreoSecrets {
+		return nil
+	}
+	return openchoreo.NewSecretsProvider(oc, openchoreo.SecretTargetPlane{
+		Kind: cfg.SecretTargetPlane.Kind,
+		Name: cfg.SecretTargetPlane.Name,
+	})
 }
 
 // ocClientConfig maps aep-api config and the auth seam onto the OpenChoreo client config.

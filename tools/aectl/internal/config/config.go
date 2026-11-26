@@ -75,6 +75,8 @@ var ConfigMapKeys = []string{
 	"oc.pipeline_source_environment",
 	"oc.local_org_provisioning.enabled",
 	"oc.data_plane_gateway_tls",
+	"oc.secret_target_plane.kind",
+	"oc.secret_target_plane.name",
 	"codingagent.openbao_direct.enabled",
 	"openbao.addr",
 	"ae_studio.webhook_relay.enabled",
@@ -196,7 +198,13 @@ var keyRegistry = map[string]configKeyMeta{
 	// hold every web component at "converging" forever probing a URL that can
 	// never answer. Set true only when aectl is installing against a gateway
 	// that genuinely fronts TLS.
-	"oc.data_plane_gateway_tls":          {required: false, kind: kindBool},
+	"oc.data_plane_gateway_tls": {required: false, kind: kindBool},
+	// The OpenChoreo plane aep-api's secrets are stored on, through
+	// OpenChoreo's Secret API: passed as secretStore.targetPlane.{kind,name}
+	// on install, each only when set. Absent leaves the chart default, the
+	// ClusterDataPlane "default" every aectl install creates.
+	"oc.secret_target_plane.kind":        {required: false, kind: kindString},
+	"oc.secret_target_plane.name":        {required: false, kind: kindString},
 	"codingagent.openbao_direct.enabled": {required: false, kind: kindBool},
 	"openbao.addr":                       {required: false, kind: kindURL},
 	// The per-org AE Studio webhook relay (smee.io channel per org) for a

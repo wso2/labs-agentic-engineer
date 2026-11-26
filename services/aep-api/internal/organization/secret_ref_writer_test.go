@@ -58,9 +58,16 @@ type fakeSMClient struct {
 	createErr error
 	deleteErr error
 
-	readPaths []string          // GetSecretWithValue calls, by vault key
-	readData  map[string]string // what GetSecretWithValue hands back
-	readErr   error
+	readLocs []secretmanagersvc.SecretLocation // GetSecretWithValue calls
+	readData map[string]string                 // what GetSecretWithValue hands back
+	readErr  error
+
+	// storedKeys, when set, makes StoredKey answer like a provider that
+	// chooses the store key (OpenChoreo): by the location's reference name.
+	// A name missing from the map is ErrSecretNotFound. Nil: the provider
+	// cannot report keys (ErrNotSupported).
+	storedKeys    map[string]string
+	storedKeyLocs []secretmanagersvc.SecretLocation
 }
 
 type smCreateCall struct {
@@ -116,8 +123,20 @@ func (f *fakeSMClient) GetSecret(context.Context, string) (*secretmanagersvc.Sec
 	panic("fakeSMClient: GetSecret is not on SecretRefWriter's path")
 }
 
-func (f *fakeSMClient) GetSecretWithValue(_ context.Context, kvPath string) (map[string]string, error) {
-	f.readPaths = append(f.readPaths, kvPath)
+func (f *fakeSMClient) StoredKey(_ context.Context, loc secretmanagersvc.SecretLocation) (string, error) {
+	if f.storedKeys == nil {
+		return "", secretmanagersvc.ErrNotSupported
+	}
+	f.storedKeyLocs = append(f.storedKeyLocs, loc)
+	key, ok := f.storedKeys[loc.SecretRefName()]
+	if !ok {
+		return "", secretmanagersvc.ErrSecretNotFound
+	}
+	return key, nil
+}
+
+func (f *fakeSMClient) GetSecretWithValue(_ context.Context, loc secretmanagersvc.SecretLocation) (map[string]string, error) {
+	f.readLocs = append(f.readLocs, loc)
 	if f.readErr != nil {
 		return nil, f.readErr
 	}
@@ -196,6 +215,23 @@ func TestSecretRefWriter_WriteModelKey(t *testing.T) {
 		written.Retire(context.Background())
 		if len(fake.deleteCalls) != 0 {
 			t.Fatalf("Retire deleted %+v with no previous reference", fake.deleteCalls)
+		}
+	})
+
+	t.Run("hands the repoint the store's key when the provider reports it", func(t *testing.T) {
+		t.Parallel()
+		fake := &fakeSMClient{
+			createRef:  "acme-default-key-0000aaaa",
+			storedKeys: map[string]string{"acme-default-key-0000aaaa": "secret/acme/generic/acme-default-key-0000aaaa"},
+		}
+		w := withOrgSecrets(organization.NewSecretRefWriter(fake, nil), fake)
+		var got organization.SecretRefTriplet
+		if _, err := w.WriteModelKey(claimsCtx("ou-acme-uuid"), "acme", "sk-ant-key",
+			func(ref organization.SecretRefTriplet) error { got = ref; return nil }); err != nil {
+			t.Fatalf("WriteModelKey: %v", err)
+		}
+		if got.KVPath != "secret/acme/generic/acme-default-key-0000aaaa" {
+			t.Fatalf("repoint got KVPath %q, want the store's key", got.KVPath)
 		}
 	})
 
@@ -302,6 +338,23 @@ func TestSecretRefWriter_WriteExternalResourceSecret(t *testing.T) {
 		}
 	})
 
+	t.Run("returns the key the store chose when the provider reports it", func(t *testing.T) {
+		t.Parallel()
+		fake := &fakeSMClient{
+			createRef:  "extres-openweather-default-secrets",
+			storedKeys: map[string]string{"extres-openweather-default-secrets": "secret/acme/generic/extres-openweather-default-secrets"},
+		}
+		w := organization.NewSecretRefWriter(fake, nil)
+		vaultKey, _, err := w.WriteExternalResourceSecret(claimsCtx("ou-acme-uuid"), "acme", "weatherproj", "extres-openweather-default",
+			map[string]string{"OPENWEATHER_API_KEY": "k123"})
+		if err != nil {
+			t.Fatalf("WriteExternalResourceSecret: %v", err)
+		}
+		if vaultKey != "secret/acme/generic/extres-openweather-default-secrets" {
+			t.Fatalf("vaultKey = %q, want the store's own key", vaultKey)
+		}
+	})
+
 	t.Run("CreateSecret error is wrapped and returned", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeSMClient{createErr: errors.New("sm-api: 503")}
@@ -334,19 +387,20 @@ func TestSecretRefWriter_WriteOrgCatalogSecret(t *testing.T) {
 	}
 }
 
-// Promote carries a project's own secret into the org catalog vault to
-// vault: read by the binding's vault key, written as an org-catalog entity,
-// the bytes never leaving the writer.
+// Promote carries a project's own secret into the org catalog store to
+// store: read at the project's external-resource location (project + entity),
+// written as an org-catalog entity, the bytes never leaving the writer.
 func TestSecretRefWriter_CopyOrgCatalogSecret(t *testing.T) {
 	t.Parallel()
 	fake := &fakeSMClient{readData: map[string]string{"OPENEXCHANGERATES_APP_ID": "dev-app-id"}}
 	w := organization.NewSecretRefWriter(fake, nil)
-	key, err := w.CopyOrgCatalogSecret(claimsCtx("ou-acme-uuid"), "acme", "secret/data/org-x/extres-fx-rates-development", "fx-rates-development")
+	key, err := w.CopyOrgCatalogSecret(claimsCtx("ou-acme-uuid"), "acme", "fxproj", "extres-fx-rates-development", "fx-rates-development")
 	if err != nil {
 		t.Fatalf("CopyOrgCatalogSecret: %v", err)
 	}
-	if len(fake.readPaths) != 1 || fake.readPaths[0] != "secret/data/org-x/extres-fx-rates-development" {
-		t.Fatalf("read paths = %v", fake.readPaths)
+	wantFrom := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", ControlPlaneNamespace: "acme", ProjectName: "fxproj", EntityName: "extres-fx-rates-development"}
+	if len(fake.readLocs) != 1 || fake.readLocs[0] != wantFrom {
+		t.Fatalf("read at %+v, want %+v", fake.readLocs, wantFrom)
 	}
 	if len(fake.createCalls) != 1 || fake.createCalls[0].loc.ProjectName != "org-catalog" || fake.createCalls[0].loc.EntityName != "fx-rates-development" || fake.createCalls[0].data["OPENEXCHANGERATES_APP_ID"] != "dev-app-id" {
 		t.Fatalf("create calls = %+v, want the same bytes under the org-catalog entity", fake.createCalls)
@@ -356,7 +410,7 @@ func TestSecretRefWriter_CopyOrgCatalogSecret(t *testing.T) {
 	}
 
 	empty := &fakeSMClient{readData: map[string]string{}}
-	if _, err := organization.NewSecretRefWriter(empty, nil).CopyOrgCatalogSecret(claimsCtx("ou-acme-uuid"), "acme", "secret/data/x", "e"); err == nil || len(empty.createCalls) != 0 {
+	if _, err := organization.NewSecretRefWriter(empty, nil).CopyOrgCatalogSecret(claimsCtx("ou-acme-uuid"), "acme", "fxproj", "extres-x-dev", "e"); err == nil || len(empty.createCalls) != 0 {
 		t.Fatalf("an empty source must be refused before anything is written: err=%v creates=%d", err, len(empty.createCalls))
 	}
 }
@@ -371,6 +425,27 @@ func TestSecretRefWriter_OrgCatalogVaultKey(t *testing.T) {
 	if !strings.HasPrefix(got, "user-app-secrets/") || !strings.HasSuffix(got, "/github-default-secrets") {
 		t.Fatalf("OrgCatalogVaultKey = %q, want user-app-secrets/<ns>/github-default-secrets", got)
 	}
+
+	t.Run("the store's key when the provider reports it", func(t *testing.T) {
+		t.Parallel()
+		fake := &fakeSMClient{storedKeys: map[string]string{"github-default-secrets": "secret/acme/generic/github-default-secrets"}}
+		got, err := organization.NewSecretRefWriter(fake, nil).OrgCatalogVaultKey(claimsCtx("ou-acme-uuid"), "acme", "github-default")
+		if err != nil || got != "secret/acme/generic/github-default-secrets" {
+			t.Fatalf("OrgCatalogVaultKey = (%q, %v), want the store's key", got, err)
+		}
+		if loc := fake.storedKeyLocs[0]; loc.ControlPlaneNamespace != "acme" || loc.ProjectName != "org-catalog" || loc.EntityName != "github-default" {
+			t.Fatalf("asked for %+v, want the org-catalog location of github-default in acme", loc)
+		}
+	})
+
+	t.Run("no key for a secret never written", func(t *testing.T) {
+		t.Parallel()
+		fake := &fakeSMClient{storedKeys: map[string]string{}}
+		got, err := organization.NewSecretRefWriter(fake, nil).OrgCatalogVaultKey(claimsCtx("ou-acme-uuid"), "acme", "github-default")
+		if err != nil || got != "" {
+			t.Fatalf("OrgCatalogVaultKey = (%q, %v), want (\"\", nil)", got, err)
+		}
+	})
 }
 
 // --- WriteGitHubPAT --------------------------------------------------------------

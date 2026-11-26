@@ -95,9 +95,9 @@ re-minted freely and must be replaced before it lapses. So:
 * the tracing token reconciles on **expiry** — is the one this process minted
   inside the refresh window.
 
-Expiry is held in memory on the `Governor` because the secret store is **write-only** (the
-OpenBao provider implements no value read), so nothing can ask what token an
-agent holds or when it lapses. The mint is the only moment the expiry is
+Expiry is held in memory on the `Governor` because it **never reads a secret value
+back** from the store, so nothing asks what token an agent holds or when it
+lapses. The mint is the only moment the expiry is
 knowable. A restart costs one extra mint per agent, which for a stateless JWT
 costs nothing at all.
 

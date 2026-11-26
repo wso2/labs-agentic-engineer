@@ -47,10 +47,11 @@ type Options struct {
 	// infra. Ignored when ImpersonateOrgResolver is already set.
 	ImpersonateOrgResolverBuilder func(db *gorm.DB) func(context.Context, string) (string, error)
 
-	// SecretsProvider is the write-only secrets delivery channel
-	// (KV → SecretReference → ESO). OSS NewOSSOptions injects OpenBao-direct
-	// when OPENBAO_ADDR is set; an overlay may inject its own provider.
-	// Nil = secrets delivery off (degrade cleanly; no plaintext substitute).
+	// SecretsProvider is an injected secrets delivery channel
+	// (store → SecretReference → ESO): an overlay's own provider. It takes
+	// precedence over the OpenChoreo Secret API NewOSSOptions selects. Nil
+	// with neither = secrets delivery off (degrade cleanly; no plaintext
+	// substitute).
 	SecretsProvider secretsprovider.Provider
 
 	// ResourceLabels are stamped on every OpenChoreo resource AEP writes, for
@@ -62,9 +63,12 @@ type Options struct {
 	// (an invalid key or value fails startup). Nil = none (local, direct OC).
 	ResourceLabels map[string]string
 
-	// openBaoAuth is the process's one OpenBao session (Kubernetes auth),
-	// shared by the OpenBao-direct provider above and the environment Thunder
-	// binding reader Assemble builds. Unexported: only NewOSSOptions sets it,
-	// with the provider it authenticates. Nil = neither exists.
+	// openChoreoSecrets stores secrets through OpenChoreo's Secret API when no
+	// SecretsProvider is injected. Unexported: only NewOSSOptions sets it.
+	openChoreoSecrets bool
+
+	// openBaoAuth is the process's one OpenBao session (Kubernetes auth), used
+	// by the environment Thunder binding reader Assemble builds. Unexported:
+	// only NewOSSOptions sets it. Nil = no reader.
 	openBaoAuth secrets.VaultAuth
 }

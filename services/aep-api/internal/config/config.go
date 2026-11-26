@@ -181,9 +181,14 @@ type Config struct {
 	// the column cipher, which seals test_users.password_sealed at rest.
 	CredentialEncryptionKey string
 
-	// OpenBaoAddr — local-only OpenBao address for the in-process
-	// OpenBao-direct secrets provider (NewOSSOptions). Empty leaves
-	// SecretsProvider nil (delivery off). Never set in cloud.
+	// SecretTargetPlane is the plane OpenChoreo's Secret API stores secret
+	// values on (SECRET_TARGET_PLANE_*): its secret store is where they land.
+	// Every plane of an install reads the same store, so one plane serves all.
+	SecretTargetPlane SecretTargetPlaneConfig
+
+	// OpenBaoAddr — local-only OpenBao address. aep-api reads the environment
+	// Thunder binding credential from it; empty leaves that feature off. Never
+	// set in cloud.
 	OpenBaoAddr string
 	// OpenBaoAuth is how aep-api logs in to OpenBao: Kubernetes auth with its
 	// service-account token. There is no static token.
@@ -484,6 +489,12 @@ type ServiceAuthConfig struct {
 // authorizes the person who asked.
 type ObservabilityConfig struct {
 	BaseURL string
+}
+
+// SecretTargetPlaneConfig names an OpenChoreo plane by kind and name.
+type SecretTargetPlaneConfig struct {
+	Kind string // SECRET_TARGET_PLANE_KIND, default ClusterDataPlane
+	Name string // SECRET_TARGET_PLANE_NAME, default default
 }
 
 // OpenBaoAuthConfig is aep-api's Kubernetes-auth login to OpenBao

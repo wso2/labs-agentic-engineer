@@ -121,7 +121,11 @@ func Load() (Config, error) {
 		// existing local .env files / release-bindings keep working.
 		GitHubRepoVisibility:    r.readOptionalString("GITHUB_REPO_VISIBILITY", "public"),
 		CredentialEncryptionKey: r.readOptionalString("CREDENTIAL_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
-		OpenBaoAddr:             r.readOptionalString("OPENBAO_ADDR", ""),
+		SecretTargetPlane: SecretTargetPlaneConfig{
+			Kind: r.readOptionalString("SECRET_TARGET_PLANE_KIND", "ClusterDataPlane"),
+			Name: r.readOptionalString("SECRET_TARGET_PLANE_NAME", "default"),
+		},
+		OpenBaoAddr: r.readOptionalString("OPENBAO_ADDR", ""),
 		OpenBaoAuth: OpenBaoAuthConfig{
 			Role:      r.readOptionalString("OPENBAO_AUTH_ROLE", "aep-api"),
 			Mount:     r.readOptionalString("OPENBAO_AUTH_MOUNT", "kubernetes"),

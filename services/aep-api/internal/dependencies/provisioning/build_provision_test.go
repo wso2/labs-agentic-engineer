@@ -526,7 +526,7 @@ func TestProvisionForBuild_ProjectResourceIgnoresOrgCellsOfTheSameName(t *testin
 // without talking to SM-API. Tests assert the key is forwarded, not its format.
 type fakeOrgSecrets struct {
 	key    string
-	copied []string // "fromVaultKey -> entity" per carried-over environment
+	copied []string // "fromProject/fromEntity -> entity" per carried-over environment
 }
 
 func (f *fakeOrgSecrets) WriteOrgCatalogSecret(context.Context, string, string, map[string]string) (string, error) {
@@ -537,8 +537,8 @@ func (f *fakeOrgSecrets) OrgCatalogVaultKey(context.Context, string, string) (st
 	return f.key, nil
 }
 
-func (f *fakeOrgSecrets) CopyOrgCatalogSecret(_ context.Context, _, fromVaultKey, entityName string) (string, error) {
-	f.copied = append(f.copied, fromVaultKey+" -> "+entityName)
+func (f *fakeOrgSecrets) CopyOrgCatalogSecret(_ context.Context, _, fromProject, fromEntity, entityName string) (string, error) {
+	f.copied = append(f.copied, fromProject+"/"+fromEntity+" -> "+entityName)
 	return f.key, nil
 }
 

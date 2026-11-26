@@ -69,12 +69,24 @@ oc:
   # fronts TLS.
   data_plane_gateway_tls: false
 
+  # The OpenChoreo plane aep-api's secrets are stored on. aep-api hands every
+  # secret to OpenChoreo's Secret API, which writes it to this plane's secret
+  # store (OpenBao here). Every plane of the install reads the same store, so
+  # the one plane serves builds and apps alike. Leave empty to use the chart
+  # default (ClusterDataPlane "default", which aectl's setup creates).
+  # OpenChoreo's control-plane chart must set features.secretManagement.enabled.
+  secret_target_plane:
+    kind: "ClusterDataPlane"
+    name: "default"
+
 codingagent:
   openbao_direct:
-    # Injects OPENBAO_ADDR into aep-api (Kubernetes auth, no token) so it can write user secrets
-    # (e.g. Anthropic API keys) directly into OpenBao. Required for local/OSS
-    # installs. Production overlays inject a managed SecretsProvider instead
-    # and must leave this false.
+    # Injects OPENBAO_ADDR into aep-api so it can read each environment's
+    # Thunder admin credential from OpenBao. aep-api logs in by Kubernetes auth
+    # (no token). It no longer writes secrets there: those go through
+    # OpenChoreo's Secret API (see oc.secret_target_plane). Required for
+    # local/OSS installs. Production overlays inject a managed SecretsProvider
+    # instead and must leave this false.
     enabled: true
 
 openbao:

@@ -62,6 +62,7 @@ func Run(opts Options) error {
 		RequestAuthStrategy:    opts.RequestAuthStrategy,
 		ImpersonateOrgResolver: resolver,
 		SecretsProvider:        secretsProvider,
+		OpenChoreoSecrets:      opts.openChoreoSecrets,
 		OpenBaoAuth:            opts.openBaoAuth,
 		ResourceLabels:         opts.ResourceLabels,
 	}

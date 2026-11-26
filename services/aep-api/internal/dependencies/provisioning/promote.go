@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
+	"github.com/wso2/aep/aep-api/internal/dependencies"
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
 	"github.com/wso2/aep/aep-api/internal/platform/ocname"
@@ -186,7 +187,14 @@ func (s *Service) PromoteExternalResource(ctx context.Context, orgID, projectID,
 // over from the project's own binding — plain keys from its values, the secret
 // keys by copying its vault key (returned in carried) — and an environment with
 // neither is a 400 naming the first missing key.
-func (s *Service) promotedValues(ctx context.Context, orgID, projectID, name string, keys []openchoreo.ExternalResourceConfigKey, envNames []string, rows []gen.EnvValueWriteDTO) (valueByEnvKey map[string]string, carried map[string]string, err error) {
+// carriedSecret is a project's own external-resource secret for one
+// environment, which Promote copies into the org catalog.
+type carriedSecret struct {
+	Project string // the project's OpenChoreo name
+	Entity  string // dependencies.ExternalResourceSecretEntity(resource, env)
+}
+
+func (s *Service) promotedValues(ctx context.Context, orgID, projectID, name string, keys []openchoreo.ExternalResourceConfigKey, envNames []string, rows []gen.EnvValueWriteDTO) (valueByEnvKey map[string]string, carried map[string]carriedSecret, err error) {
 	valueByEnvKey = make(map[string]string, len(rows))
 	for _, row := range rows {
 		env, key := strings.TrimSpace(row.Environment), strings.TrimSpace(row.Key)
@@ -195,7 +203,7 @@ func (s *Service) promotedValues(ctx context.Context, orgID, projectID, name str
 		}
 		valueByEnvKey[envValueKey(env, key)] = row.Value
 	}
-	carried = map[string]string{}
+	carried = map[string]carriedSecret{}
 	for _, env := range envNames {
 		var missingPlain, missingSecret []openchoreo.ExternalResourceConfigKey
 		for _, k := range keys {
@@ -222,8 +230,9 @@ func (s *Service) promotedValues(ctx context.Context, orgID, projectID, name str
 		if len(missingSecret) == 0 {
 			continue
 		}
-		vaultKey := bound[openchoreo.SecretStorePathField]
-		if vaultKey == "" {
+		// The binding names a store key only once the project has written its
+		// secret: that is what makes the environment's secrets carriable.
+		if bound[openchoreo.SecretStorePathField] == "" {
 			return nil, nil, apierr.BadRequest(fmt.Sprintf("missing env value for key %q in environment %q", missingSecret[0].Key, env))
 		}
 		for _, k := range keys {
@@ -234,7 +243,7 @@ func (s *Service) promotedValues(ctx context.Context, orgID, projectID, name str
 				return nil, nil, apierr.BadRequest(fmt.Sprintf("environment %q: give every secret value, or leave them all to be carried over from the project", env))
 			}
 		}
-		carried[env] = vaultKey
+		carried[env] = carriedSecret{Project: projectID, Entity: dependencies.ExternalResourceSecretEntity(name, env)}
 	}
 	return valueByEnvKey, carried, nil
 }

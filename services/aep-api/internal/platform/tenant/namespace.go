@@ -31,10 +31,9 @@ import (
 //
 // Used only as the middle segment of
 // `<vaultPathPrefix>/<orgNS>/<secretRefName>` (ExternalSecret remoteRef.key).
-// It is not the OpenChoreo SecretReference CR namespace on the OpenBao-direct
-// path — those CRs must live in the Workload/ReleaseBinding control-plane
-// namespace (`SecretLocation.ControlPlaneNamespace`). Cloud SM-API overlay
-// may still author CRs into this name; OSS must not.
+// It is never the OpenChoreo SecretReference CR namespace — those CRs live in
+// the Workload/ReleaseBinding control-plane namespace
+// (`SecretLocation.ControlPlaneNamespace`).
 //
 // Home rationale (§4.0/§6.10c): this `wc-` derivation is a pure, gorm-free
 // tenancy primitive consumed by the credentials domain (vault-path builders). It

@@ -20,163 +20,25 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
-	"sync"
 	"testing"
-
-	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc/providers/openbao"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
-	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 )
 
 // ---- fakes -----------------------------------------------------------------
 
-// fakeKV is an in-memory KV-v2 server behind the real OpenBao provider, so the
-// vault path under test is the one production computes.
-type fakeKV struct {
-	mu         sync.Mutex
-	data       map[string]map[string]string // key: path under the mount
-	writes     int
-	failWrites bool
-	srv        *httptest.Server
-}
-
-const fakeKVDataPrefix = "/v1/secret/data/"
-const fakeKVMetaPrefix = "/v1/secret/metadata/"
-
-func newFakeKV(t *testing.T) *fakeKV {
-	t.Helper()
-	kv := &fakeKV{data: map[string]map[string]string{}}
-	kv.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		kv.mu.Lock()
-		defer kv.mu.Unlock()
-		switch {
-		case r.URL.Path == "/v1/auth/kubernetes/login":
-			_, _ = w.Write([]byte(`{"auth":{"client_token":"test-token","lease_duration":3600}}`))
-		case (r.Method == http.MethodPut || r.Method == http.MethodPost) && strings.HasPrefix(r.URL.Path, fakeKVDataPrefix):
-			if kv.failWrites {
-				// 403, not 5xx: the vault client retries 5xx with backoff.
-				w.WriteHeader(http.StatusForbidden)
-				return
-			}
-			var body struct {
-				Data map[string]string `json:"data"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			kv.writes++
-			kv.data[strings.TrimPrefix(r.URL.Path, fakeKVDataPrefix)] = body.Data
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"data":{}}`))
-		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, fakeKVMetaPrefix):
-			p := strings.TrimPrefix(r.URL.Path, fakeKVMetaPrefix)
-			if _, ok := kv.data[p]; !ok {
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			delete(kv.data, p)
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			w.WriteHeader(http.StatusMethodNotAllowed)
-		}
-	}))
-	t.Cleanup(kv.srv.Close)
-	return kv
-}
-
-func (kv *fakeKV) provider(t *testing.T) Provider {
-	t.Helper()
-	tokenFile := filepath.Join(t.TempDir(), "sa-token")
-	if err := os.WriteFile(tokenFile, []byte("sa-token"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	p, err := openbao.NewProvider(&OpenBaoConfig{
-		Server: kv.srv.URL,
-		Path:   "secret",
-	}, secrets.NewKubernetesAuth("aep-api", "kubernetes", tokenFile))
-	if err != nil {
-		t.Fatalf("openbao.NewProvider: %v", err)
-	}
-	return p
-}
-
-// has reports whether the vault holds a value for the reference name.
-func (kv *fakeKV) has(refName string) bool {
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
-	for p := range kv.data {
-		if strings.HasSuffix(p, "/"+refName) {
-			return true
-		}
-	}
-	return false
-}
-
-func (kv *fakeKV) at(path string) map[string]string {
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
-	return kv.data[path]
-}
-
-// fakeOC is an in-memory OC SecretReference store: Create refuses an existing
-// name, Delete of a missing name is ErrNotFound.
-type fakeOC struct {
-	created   map[string]CreateSecretReferenceRequest
-	updates   int
-	createErr error
-}
-
-func newFakeOC() *fakeOC { return &fakeOC{created: map[string]CreateSecretReferenceRequest{}} }
-
-func (f *fakeOC) exists(name string) bool { _, ok := f.created[name]; return ok }
-
-func (f *fakeOC) GetSecretReference(_ context.Context, cpNS, name string) (*SecretReference, error) {
-	if !f.exists(name) {
-		return nil, ErrNotFound
-	}
-	return &SecretReference{Namespace: cpNS, Name: name}, nil
-}
-
-func (f *fakeOC) CreateSecretReference(_ context.Context, cpNS string, req CreateSecretReferenceRequest) (*SecretReference, error) {
-	if f.createErr != nil {
-		return nil, f.createErr
-	}
-	if f.exists(req.Name) {
-		return nil, ErrConflict
-	}
-	f.created[req.Name] = req
-	return &SecretReference{Namespace: cpNS, Name: req.Name}, nil
-}
-
-func (f *fakeOC) UpdateSecretReference(_ context.Context, cpNS, name string, _ CreateSecretReferenceRequest) (*SecretReference, error) {
-	f.updates++
-	return &SecretReference{Namespace: cpNS, Name: name}, nil
-}
-
-func (f *fakeOC) DeleteSecretReference(_ context.Context, _, name string) error {
-	if !f.exists(name) {
-		return ErrNotFound
-	}
-	delete(f.created, name)
-	return nil
-}
-
-// fakeSMProvider stands in for the Cloud overlay's SM API v1 provider: it
-// names references itself (`cred-<secret>-<hex>`) and records the locations it
-// is handed.
+// fakeSMProvider stands in for a provider that creates the SecretReference
+// itself (OpenChoreo's Secret API, Cloud's SM API): it names references
+// `cred-<entity>-<hex>` and records the locations it is handed.
 type fakeSMProvider struct {
 	lastPush      SecretLocation
 	lastPushValue map[string]string
 	lastDelete    SecretLocation
 	pushes        int
+	// takenNames answers that many pushes with ErrConflict, as if each
+	// minted name were already in use.
+	takenNames int
 }
 
 func newFakeSMProvider() *fakeSMProvider { return &fakeSMProvider{} }
@@ -187,8 +49,12 @@ func (p *fakeSMProvider) Capabilities() StoreCapabilities               { return
 func (p *fakeSMProvider) ManagesSecretReferences() bool                 { return true }
 
 func (p *fakeSMProvider) PushSecret(_ context.Context, loc SecretLocation, value []byte, _ *SecretMetadata) (string, error) {
-	p.pushes++
 	p.lastPush = loc
+	if p.takenNames > 0 {
+		p.takenNames--
+		return "", ErrConflict
+	}
+	p.pushes++
 	p.lastPushValue = nil
 	if err := json.Unmarshal(value, &p.lastPushValue); err != nil {
 		return "", err
@@ -210,13 +76,14 @@ func (p *fakeSMProvider) GetSecretWithValue(context.Context, SecretLocation) ([]
 }
 func (p *fakeSMProvider) Close(context.Context) error { return nil }
 
-func newRefsClient(t *testing.T, p Provider, oc *fakeOC) SecretManagementClient {
+// unmanagedProvider stores values but creates no SecretReference.
+type unmanagedProvider struct{ *fakeSMProvider }
+
+func (unmanagedProvider) ManagesSecretReferences() bool { return false }
+
+func newRefsClient(t *testing.T, p Provider) SecretManagementClient {
 	t.Helper()
-	cfg := SecretManagementClientConfig{StoreConfig: &StoreConfig{Provider: "test"}, Provider: p, RefreshInterval: "1h"}
-	if oc != nil {
-		cfg.OCClient = oc
-	}
-	c, err := NewSecretManagementClientWithConfig(cfg)
+	c, err := NewSecretManagementClientWithConfig(SecretManagementClientConfig{StoreConfig: &StoreConfig{Provider: "test"}, Provider: p})
 	if err != nil {
 		t.Fatalf("NewSecretManagementClientWithConfig: %v", err)
 	}
@@ -227,75 +94,53 @@ func githubPatLocation() SecretLocation {
 	return SecretLocation{OrgName: "ou-1", ControlPlaneNamespace: "default", EntityName: "github-pat"}
 }
 
-// ---- local install (OpenBao + OC-authored references) ----------------------
+// ---- construction ----------------------------------------------------------
 
-func TestCreateSecretRef_OpenBaoMintsANewNameEachTime(t *testing.T) {
-	ctx := context.Background()
-	kv, oc := newFakeKV(t), newFakeOC()
-	c := newRefsClient(t, kv.provider(t), oc)
-	loc := githubPatLocation()
-
-	a, err := c.CreateSecretRef(ctx, loc, map[string]string{"token": "v1"})
-	b, err2 := c.CreateSecretRef(ctx, loc, map[string]string{"token": "v2"})
-	if err != nil || err2 != nil || a == b {
-		t.Fatalf("a=%q b=%q err=%v/%v", a, b, err, err2)
-	}
-	if !regexp.MustCompile(`^default-github-pat-[0-9a-f]{8}$`).MatchString(a) {
-		t.Fatalf("name %q", a)
-	}
-	wantPath := "user-app-secrets/" + tenant.OrgBaseNamespace("ou-1") + "/" + a
-	if got := oc.created[a].KVPath; got != wantPath {
-		t.Fatalf("kv path %q, want %q", got, wantPath)
-	}
-	if got := kv.at(wantPath); got["token"] != "v1" {
-		t.Fatal("the value must be written at the minted reference's vault path")
-	}
-	if oc.updates != 0 {
-		t.Fatal("a write must never update an existing reference")
+func TestNewClient_RefusesAProviderThatCreatesNoReferences(t *testing.T) {
+	_, err := NewSecretManagementClientWithConfig(SecretManagementClientConfig{
+		StoreConfig: &StoreConfig{Provider: "test"},
+		Provider:    unmanagedProvider{newFakeSMProvider()},
+	})
+	if err == nil {
+		t.Fatal("want an error: nothing would point at the values such a provider stores")
 	}
 }
 
-func TestCreateSecretRef_GithubPatCarriesTokenAndPassword(t *testing.T) {
-	ctx := context.Background()
-	kv, oc := newFakeKV(t), newFakeOC()
-	c := newRefsClient(t, kv.provider(t), oc)
+// ---- new reference per write -----------------------------------------------
 
-	name, err := c.CreateSecretRef(ctx, githubPatLocation(), map[string]string{"token": "v", "password": "v"})
+func TestCreateSecretRef_ReturnsTheProvidersNameAndPassesAMintedOne(t *testing.T) {
+	ctx := context.Background()
+	sm := newFakeSMProvider()
+	c := newRefsClient(t, sm)
+	loc := githubPatLocation()
+
+	name, err := c.CreateSecretRef(ctx, loc, map[string]string{"token": "v"})
 	if err != nil {
 		t.Fatalf("CreateSecretRef: %v", err)
 	}
-	if kv.writes != 1 {
-		t.Fatalf("both keys must land in one write, got %d writes", kv.writes)
+	if name != "cred-github-pat-0a1b2c" {
+		t.Fatalf("name %q, want the provider's", name)
 	}
-	req := oc.created[name]
-	stored := kv.at(req.KVPath)
-	if len(stored) != 2 || stored["token"] != "v" || stored["password"] != "v" {
-		t.Fatalf("vault entry must hold token and password with the same value, got keys %d", len(stored))
-	}
-	if want := []string{"password", "token"}; !reflect.DeepEqual(req.SecretKeys, want) {
-		t.Fatalf("SecretKeys = %v, want %v (sorted; each property = its key)", req.SecretKeys, want)
+	if !regexp.MustCompile(`^default-github-pat-[0-9a-f]{8}$`).MatchString(sm.lastPush.RefName) {
+		t.Fatalf("minted name %q, want default-github-pat-<8 hex>", sm.lastPush.RefName)
 	}
 }
 
-func TestCreateSecretRef_ConflictIsAnErrorNeverAnUpdate(t *testing.T) {
-	kv, oc := newFakeKV(t), newFakeOC()
-	oc.createErr = ErrConflict
-	c := newRefsClient(t, kv.provider(t), oc)
+func TestCreateSecretRef_GithubPatKeysArePushedTogether(t *testing.T) {
+	sm := newFakeSMProvider()
+	c := newRefsClient(t, sm)
+	data := map[string]string{"token": "v", "password": "v"}
 
-	_, err := c.CreateSecretRef(context.Background(), githubPatLocation(), map[string]string{"token": "v"})
-	if !errors.Is(err, ErrConflict) {
-		t.Fatalf("err = %v, want ErrConflict", err)
+	if _, err := c.CreateSecretRef(context.Background(), githubPatLocation(), data); err != nil {
+		t.Fatalf("CreateSecretRef: %v", err)
 	}
-	if oc.updates != 0 {
-		t.Fatal("a conflict must never fall back to an update")
-	}
-	if kv.writes != 0 {
-		t.Fatalf("a conflict must write nothing to the vault, got %d writes", kv.writes)
+	if sm.pushes != 1 || !reflect.DeepEqual(sm.lastPushValue, data) {
+		t.Fatalf("the two-key map must be pushed as-is in one call (pushes=%d)", sm.pushes)
 	}
 }
 
 // fixedNames makes the client mint the given names in order (then the last
-// one forever), so a test can force a name clash.
+// one forever), so a test can see which name each attempt used.
 func fixedNames(t *testing.T, c SecretManagementClient, names ...string) {
 	t.Helper()
 	i := 0
@@ -306,94 +151,49 @@ func fixedNames(t *testing.T, c SecretManagementClient, names ...string) {
 	}
 }
 
-func TestCreateSecretRef_ClashNeverTouchesTheExistingValue(t *testing.T) {
-	ctx := context.Background()
-	kv, oc := newFakeKV(t), newFakeOC()
-	c := newRefsClient(t, kv.provider(t), oc)
-	loc := githubPatLocation()
+func TestCreateSecretRef_ClashIsRetriedOnceWithANewName(t *testing.T) {
+	sm := newFakeSMProvider()
+	sm.takenNames = 1
+	c := newRefsClient(t, sm)
+	fixedNames(t, c, "default-github-pat-00000001", "default-github-pat-00000002")
 
-	existing, err := c.CreateSecretRef(ctx, loc, map[string]string{"token": "old"})
-	if err != nil {
+	if _, err := c.CreateSecretRef(context.Background(), githubPatLocation(), map[string]string{"token": "v"}); err != nil {
 		t.Fatalf("CreateSecretRef: %v", err)
 	}
-	path := oc.created[existing].KVPath
-	writes := kv.writes
-
-	fixedNames(t, c, existing)
-	if _, err := c.CreateSecretRef(ctx, loc, map[string]string{"token": "new"}); !errors.Is(err, ErrConflict) {
-		t.Fatalf("err = %v, want ErrConflict after the re-mint also clashes", err)
-	}
-	if kv.writes != writes || kv.at(path)["token"] != "old" {
-		t.Fatal("a name clash must leave the existing reference's vault value untouched")
+	if sm.lastPush.RefName != "default-github-pat-00000002" || sm.pushes != 1 {
+		t.Fatalf("stored once under %q, want the re-minted name", sm.lastPush.RefName)
 	}
 }
 
-func TestCreateSecretRef_ClashIsRetriedOnceWithANewName(t *testing.T) {
-	ctx := context.Background()
-	kv, oc := newFakeKV(t), newFakeOC()
-	c := newRefsClient(t, kv.provider(t), oc)
-	loc := githubPatLocation()
+func TestCreateSecretRef_SecondClashIsAConflict(t *testing.T) {
+	sm := newFakeSMProvider()
+	sm.takenNames = 2
+	c := newRefsClient(t, sm)
 
-	existing, _ := c.CreateSecretRef(ctx, loc, map[string]string{"token": "old"})
-	path := oc.created[existing].KVPath
-	fixedNames(t, c, existing, "default-github-pat-0a1b2c3d")
-
-	got, err := c.CreateSecretRef(ctx, loc, map[string]string{"token": "new"})
-	if err != nil || got != "default-github-pat-0a1b2c3d" {
-		t.Fatalf("got %q err %v, want the re-minted name", got, err)
-	}
-	if kv.at(path)["token"] != "old" || kv.at(oc.created[got].KVPath)["token"] != "new" {
-		t.Fatal("the re-minted reference must get its own vault entry")
-	}
-}
-
-func TestCreateSecretRef_ReferenceFailureWritesNothing(t *testing.T) {
-	kv, oc := newFakeKV(t), newFakeOC()
-	oc.createErr = errors.New("oc unavailable")
-	c := newRefsClient(t, kv.provider(t), oc)
-
-	if _, err := c.CreateSecretRef(context.Background(), githubPatLocation(), map[string]string{"token": "v"}); err == nil {
-		t.Fatal("want an error when the reference cannot be created")
-	}
-	if kv.writes != 0 {
-		t.Fatalf("no value may be written without its reference, got %d writes", kv.writes)
-	}
-}
-
-func TestCreateSecretRef_VaultFailureRemovesTheNewReference(t *testing.T) {
-	ctx := context.Background()
-	kv, oc := newFakeKV(t), newFakeOC()
-	c := newRefsClient(t, kv.provider(t), oc)
-	loc := githubPatLocation()
-	existing, _ := c.CreateSecretRef(ctx, loc, map[string]string{"token": "old"})
-
-	kv.failWrites = true
-	if _, err := c.CreateSecretRef(ctx, loc, map[string]string{"token": "new"}); err == nil {
-		t.Fatal("want an error when the vault write fails")
-	}
-	if len(oc.created) != 1 || !oc.exists(existing) {
-		t.Fatalf("the new reference must be deleted and the existing one kept, refs=%d", len(oc.created))
+	_, err := c.CreateSecretRef(context.Background(), githubPatLocation(), map[string]string{"token": "v"})
+	if !errors.Is(err, ErrConflict) || sm.pushes != 0 {
+		t.Fatalf("err = %v, pushes = %d; want ErrConflict with nothing stored", err, sm.pushes)
 	}
 }
 
 func TestCreateSecretRef_LongNamesFitADNSLabel(t *testing.T) {
-	kv, oc := newFakeKV(t), newFakeOC()
-	c := newRefsClient(t, kv.provider(t), oc)
+	sm := newFakeSMProvider()
+	c := newRefsClient(t, sm)
 	loc := githubPatLocation()
 	loc.ControlPlaneNamespace = strings.Repeat("a", 60)
 
-	name, err := c.CreateSecretRef(context.Background(), loc, map[string]string{"token": "v"})
-	if err != nil {
+	if _, err := c.CreateSecretRef(context.Background(), loc, map[string]string{"token": "v"}); err != nil {
 		t.Fatalf("CreateSecretRef: %v", err)
 	}
+	name := sm.lastPush.RefName
 	if len(name) > 63 || !regexp.MustCompile(`^a+-github-pat-[0-9a-f]{8}$`).MatchString(name) {
 		t.Fatalf("name %q (len %d): want a DNS label keeping the entity, cpNS trimmed", name, len(name))
 	}
 }
 
 func TestCreateSecretRef_RequiresDataAndControlPlaneNamespace(t *testing.T) {
-	kv, oc := newFakeKV(t), newFakeOC()
-	c := newRefsClient(t, kv.provider(t), oc)
+	sm := newFakeSMProvider()
+	c := newRefsClient(t, sm)
 	ctx := context.Background()
 
 	if _, err := c.CreateSecretRef(ctx, githubPatLocation(), nil); err == nil {
@@ -404,77 +204,60 @@ func TestCreateSecretRef_RequiresDataAndControlPlaneNamespace(t *testing.T) {
 	if _, err := c.CreateSecretRef(ctx, loc, map[string]string{"token": "v"}); err == nil {
 		t.Fatal("want an error without ControlPlaneNamespace")
 	}
-	if kv.writes != 0 || len(oc.created) != 0 {
-		t.Fatal("a rejected call must write nothing")
+	if sm.pushes != 0 {
+		t.Fatal("a rejected call must store nothing")
 	}
 }
 
-func TestDeleteSecretRef_ByNameOnly(t *testing.T) {
-	ctx := context.Background()
-	kv, oc := newFakeKV(t), newFakeOC()
-	c := newRefsClient(t, kv.provider(t), oc)
-	loc := githubPatLocation()
+func TestDeleteSecretRef_DeletesByTheStoredName(t *testing.T) {
+	sm := newFakeSMProvider()
+	c := newRefsClient(t, sm)
 
-	a, _ := c.CreateSecretRef(ctx, loc, map[string]string{"token": "v1"})
-	b, _ := c.CreateSecretRef(ctx, loc, map[string]string{"token": "v2"})
-	if err := c.DeleteSecretRef(ctx, loc, a); err != nil {
-		t.Fatal(err)
+	if err := c.DeleteSecretRef(context.Background(), githubPatLocation(), "cred-github-pat-0a1b2c"); err != nil {
+		t.Fatalf("DeleteSecretRef: %v", err)
 	}
-	if oc.exists(a) || !oc.exists(b) || kv.has(a) || !kv.has(b) {
-		t.Fatal("delete must remove exactly the named reference and its value")
-	}
-	if err := c.DeleteSecretRef(ctx, loc, a); err != nil {
-		t.Fatalf("second delete must be a no-op, got %v", err)
+	if sm.lastDelete.RefName != "cred-github-pat-0a1b2c" {
+		t.Fatalf("deleted %q, want the stored name", sm.lastDelete.RefName)
 	}
 }
 
 func TestDeleteSecretRef_RequiresAName(t *testing.T) {
-	kv, oc := newFakeKV(t), newFakeOC()
-	c := newRefsClient(t, kv.provider(t), oc)
-	ctx := context.Background()
-	loc := githubPatLocation()
-	b, _ := c.CreateSecretRef(ctx, loc, map[string]string{"token": "v"})
+	sm := newFakeSMProvider()
+	c := newRefsClient(t, sm)
 
-	if err := c.DeleteSecretRef(ctx, loc, ""); err == nil {
+	if err := c.DeleteSecretRef(context.Background(), githubPatLocation(), ""); err == nil {
 		t.Fatal("an empty name must be refused, never derived from the location")
 	}
-	if !oc.exists(b) || !kv.has(b) {
+	if sm.lastDelete != (SecretLocation{}) {
 		t.Fatal("a refused delete must remove nothing")
 	}
 }
 
-// ---- Cloud install (provider names references itself) ----------------------
+// ---- fixed-name writes -----------------------------------------------------
 
-func TestCreateSecretRef_ManagedProviderReturnsItsName(t *testing.T) {
-	ctx := context.Background()
+func TestCreateSecret_PassesTheLocationAndReturnsTheProvidersName(t *testing.T) {
 	sm := newFakeSMProvider()
-	c := newRefsClient(t, sm, nil)
-	loc := SecretLocation{OrgName: "ou-1", ControlPlaneNamespace: "wc-x", EntityName: "github-pat"}
+	c := newRefsClient(t, sm)
+	loc := SecretLocation{OrgName: "ou-1", ControlPlaneNamespace: "default", ProjectName: "shop", EntityName: "extres-postgres-dev"}
 
-	name, err := c.CreateSecretRef(ctx, loc, map[string]string{"token": "v"})
+	name, err := c.CreateSecret(context.Background(), loc, map[string]string{"password": "p"})
 	if err != nil {
-		t.Fatalf("CreateSecretRef: %v", err)
+		t.Fatalf("CreateSecret: %v", err)
 	}
-	if !strings.HasPrefix(name, "cred-github-pat-") || sm.lastPush.RefName == "" {
-		t.Fatalf("name %q; the minted hint must still be passed", name)
-	}
-	if err := c.DeleteSecretRef(ctx, loc, name); err != nil {
-		t.Fatalf("DeleteSecretRef: %v", err)
-	}
-	if sm.lastDelete.RefName != name {
-		t.Fatal("managed delete must carry the stored name")
+	if name != "cred-extres-postgres-dev-0a1b2c" || sm.lastPush != loc || sm.lastPushValue["password"] != "p" {
+		t.Fatalf("name %q, pushed %+v %v", name, sm.lastPush, sm.lastPushValue)
 	}
 }
 
-func TestCreateSecretRef_ManagedProviderGetsBothGithubPatKeys(t *testing.T) {
+func TestDeleteSecret_PassesTheLocation(t *testing.T) {
 	sm := newFakeSMProvider()
-	c := newRefsClient(t, sm, nil)
-	data := map[string]string{"token": "v", "password": "v"}
+	c := newRefsClient(t, sm)
+	loc := SecretLocation{OrgName: "ou-1", ControlPlaneNamespace: "default", EntityName: "amp-model-billing-dev"}
 
-	if _, err := c.CreateSecretRef(context.Background(), SecretLocation{OrgName: "ou-1", ControlPlaneNamespace: "wc-x", EntityName: "github-pat"}, data); err != nil {
-		t.Fatalf("CreateSecretRef: %v", err)
+	if err := c.DeleteSecret(context.Background(), loc, "ignored"); err != nil {
+		t.Fatalf("DeleteSecret: %v", err)
 	}
-	if sm.pushes != 1 || !reflect.DeepEqual(sm.lastPushValue, data) {
-		t.Fatalf("the two-key map must be pushed as-is in one call (pushes=%d)", sm.pushes)
+	if sm.lastDelete != loc {
+		t.Fatalf("deleted %+v, want %+v", sm.lastDelete, loc)
 	}
 }

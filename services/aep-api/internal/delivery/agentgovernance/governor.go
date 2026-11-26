@@ -148,10 +148,10 @@ type Governor struct {
 	// tracingExpiry remembers, per (org, component, environment), when the
 	// tracing token this process last minted runs out.
 	//
-	// IT CANNOT BE READ BACK, which is why it is remembered at all. The secret
-	// store is write-only (the OpenBao provider does not implement a value
-	// read), so nothing can ask what token an agent holds or when it lapses —
-	// the only moment the expiry is knowable is the mint that produced it.
+	// IT IS NOT READ BACK, which is why it is remembered at all. The governor
+	// never reads a secret value out of the store, so nothing asks what token
+	// an agent holds or when it lapses — the only moment the expiry is
+	// knowable is the mint that produced it.
 	//
 	// In memory: the first governed deploy after a restart mints once more
 	// than it strictly needed to. That costs nothing here — a tracing token is
