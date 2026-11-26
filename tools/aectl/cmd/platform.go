@@ -649,6 +649,14 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		OpenBaoRelease:        ocOpenBaoRelease,
 		OpenBaoServiceAccount: ocOpenBaoSA,
 		OpenBaoWriteRole:      ocWriteRole,
+		BindingSecrets: openChoreoBindingSecrets{
+			client:            k8sClient,
+			kubeconfig:        kubeconfig,
+			platformNamespace: initPlatformNamespace,
+			ocNamespace:       ocNamespace,
+			tokenURL:          idp.Public.TokenURL,
+			plane:             secretTargetPlane(),
+		},
 	}); err != nil {
 		return fmt.Errorf("install environment identity provider: %w", err)
 	}

@@ -116,14 +116,13 @@ func bindingSecretData(inst *ThunderInstance) map[string][]byte {
 	}
 }
 
-// writeBindingRecord writes the 4 projections of the binding record described
+// writeBindingRecord writes the 5 projections of the binding record described
 // in deployments/design/two-tier-thunder.md: a ConfigMap in T2's own
 // namespace (the non-secret half, read by consumers that already know which
 // T2 they're looking at), a Secret mirrored into thunder-app-operator-system
 // (the only namespace that operator's Secret informer/RBAC can see), an
-// OpenBao copy (aep-api runs outside the cluster and has no Kubernetes
-// access), and annotations on the Environment (aep-api's other read path,
-// for the same reason).
+// OpenBao copy, an OpenChoreo secret holding the credential, and annotations
+// on the Environment.
 func writeBindingRecord(ctx context.Context, c clients, cfg Config, inst *ThunderInstance) error {
 	name := BindingName(cfg.Org, cfg.Env)
 	labels := bindingLabels(cfg.Org, cfg.Env)
@@ -157,14 +156,44 @@ func writeBindingRecord(ctx context.Context, c clients, cfg Config, inst *Thunde
 		return fmt.Errorf("write OpenBao binding copy: %w", err)
 	}
 
-	if _, err := c.applyKubectl(ctx, "annotate", "environment", cfg.Env, "-n", cfg.Org, "--overwrite",
-		"aep.wso2.com/thunder-binding="+name,
-		"aep.wso2.com/thunder-issuer="+inst.PublicURL,
-		"aep.wso2.com/thunder-admin-url="+inst.AdminURL,
-		"aep.wso2.com/thunder-system-resource-identifier="+inst.SystemResourceIdentifier,
-		"aep.wso2.com/thunder-secret-path="+openBaoBindingSecretPath(cfg.Org, cfg.Env),
-	); err != nil {
+	// Before the annotation, so it never names an unstored secret.
+	if err := writeOpenChoreoBinding(ctx, cfg, inst); err != nil {
+		return err
+	}
+
+	args := append([]string{"annotate", "environment", cfg.Env, "-n", cfg.Org, "--overwrite"}, bindingAnnotations(cfg, inst)...)
+	if _, err := c.applyKubectl(ctx, args...); err != nil {
 		return fmt.Errorf("annotate Environment %s/%s: %w", cfg.Org, cfg.Env, err)
+	}
+	return nil
+}
+
+func bindingAnnotations(cfg Config, inst *ThunderInstance) []string {
+	name := BindingName(cfg.Org, cfg.Env)
+	return []string{
+		"aep.wso2.com/thunder-binding=" + name,
+		"aep.wso2.com/thunder-issuer=" + inst.PublicURL,
+		"aep.wso2.com/thunder-admin-url=" + inst.AdminURL,
+		"aep.wso2.com/thunder-system-resource-identifier=" + inst.SystemResourceIdentifier,
+		"aep.wso2.com/thunder-secret-path=" + openBaoBindingSecretPath(cfg.Org, cfg.Env),
+		"aep.wso2.com/thunder-secret-ref=" + name,
+	}
+}
+
+func bindingCredentialData(inst *ThunderInstance) map[string]string {
+	return map[string]string{
+		openBaoKeyClientID:     "aep-system-client",
+		openBaoKeyClientSecret: inst.SystemClientSecret,
+	}
+}
+
+func writeOpenChoreoBinding(ctx context.Context, cfg Config, inst *ThunderInstance) error {
+	if cfg.BindingSecrets == nil {
+		return fmt.Errorf("write OpenChoreo binding secret: envidp.Config.BindingSecrets is not set")
+	}
+	name := BindingName(cfg.Org, cfg.Env)
+	if err := cfg.BindingSecrets.PutSecret(ctx, cfg.Org, name, bindingCredentialData(inst)); err != nil {
+		return fmt.Errorf("write OpenChoreo binding secret %s/%s: %w", cfg.Org, name, err)
 	}
 	return nil
 }

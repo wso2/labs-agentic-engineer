@@ -16,7 +16,11 @@
 
 package envidp
 
-import "testing"
+import (
+	"context"
+	"strings"
+	"testing"
+)
 
 func TestBindingName(t *testing.T) {
 	if got, want := BindingName("default", "default"), "thunder-binding-default-default"; got != want {
@@ -63,6 +67,59 @@ func TestBindingConfigMapData(t *testing.T) {
 		if data[k] != v {
 			t.Errorf("data[%q] = %q, want %q", k, data[k], v)
 		}
+	}
+}
+
+func TestBindingCredentialData(t *testing.T) {
+	data := bindingCredentialData(&ThunderInstance{SystemClientSecret: "shh"})
+	if len(data) != 2 || data["clientId"] != "aep-system-client" || data["clientSecret"] != "shh" {
+		t.Fatalf("data = %v, want exactly {clientId: aep-system-client, clientSecret: shh}", data)
+	}
+}
+
+func TestBindingAnnotations(t *testing.T) {
+	cfg := Config{Org: "default", Env: "development"}
+	inst := &ThunderInstance{PublicURL: "http://development-idp.openchoreo.localhost:8080", AdminURL: "http://admin", SystemResourceIdentifier: "sys"}
+	got := strings.Join(bindingAnnotations(cfg, inst), " ")
+	for _, want := range []string{
+		"aep.wso2.com/thunder-binding=thunder-binding-default-development",
+		"aep.wso2.com/thunder-issuer=http://development-idp.openchoreo.localhost:8080",
+		"aep.wso2.com/thunder-admin-url=http://admin",
+		"aep.wso2.com/thunder-system-resource-identifier=sys",
+		"aep.wso2.com/thunder-secret-path=secret/aep/thunder/default/development",
+		"aep.wso2.com/thunder-secret-ref=thunder-binding-default-development",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("annotations lack %q: %s", want, got)
+		}
+	}
+}
+
+type recordingBindingSecrets struct {
+	namespace, name string
+	data            map[string]string
+	err             error
+}
+
+func (r *recordingBindingSecrets) PutSecret(_ context.Context, namespace, name string, data map[string]string) error {
+	r.namespace, r.name, r.data = namespace, name, data
+	return r.err
+}
+
+func TestWriteOpenChoreoBinding_StoresTheCredentialInTheOrgsNamespace(t *testing.T) {
+	store := &recordingBindingSecrets{}
+	cfg := Config{Org: "default", Env: "development", BindingSecrets: store}
+	if err := writeOpenChoreoBinding(context.Background(), cfg, &ThunderInstance{SystemClientSecret: "shh"}); err != nil {
+		t.Fatalf("writeOpenChoreoBinding: %v", err)
+	}
+	if store.namespace != "default" || store.name != "thunder-binding-default-development" || store.data["clientSecret"] != "shh" {
+		t.Errorf("stored %s/%s %v", store.namespace, store.name, store.data)
+	}
+}
+
+func TestWriteOpenChoreoBinding_RequiresAStore(t *testing.T) {
+	if err := writeOpenChoreoBinding(context.Background(), Config{Org: "default", Env: "development"}, &ThunderInstance{}); err == nil {
+		t.Fatal("want an error without Config.BindingSecrets")
 	}
 }
 

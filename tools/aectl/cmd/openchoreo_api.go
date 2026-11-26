@@ -20,9 +20,15 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
+	"github.com/spf13/viper"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+
+	"github.com/wso2/aep/aectl/internal/envidp"
+	k8s "github.com/wso2/aep/aectl/internal/kubernetes"
+	"github.com/wso2/aep/aectl/internal/openchoreo"
 )
 
 // ocAPIServiceName is the Service OpenChoreo's control-plane chart gives its
@@ -44,4 +50,74 @@ func ocAPIPort(ctx context.Context, client kubernetes.Interface, namespace strin
 		}
 	}
 	return "", fmt.Errorf("OpenChoreo's API Service %s/%s has no port named http", namespace, ocAPIServiceName)
+}
+
+func aectlClientSecret(ctx context.Context, client kubernetes.Interface, platformNamespace string) (string, error) {
+	sec, err := client.CoreV1().Secrets(platformNamespace).Get(ctx, aectlClientSecretsName, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("read %s/%s, the secret of %s: %w", platformNamespace, aectlClientSecretsName, aectlOpenChoreoClientID, err)
+	}
+	v := sec.Data["AECTL_OPENCHOREO_CLIENT_SECRET"]
+	if len(v) == 0 {
+		return "", fmt.Errorf("%s/%s has no AECTL_OPENCHOREO_CLIENT_SECRET; its ESO sync may be incomplete", platformNamespace, aectlClientSecretsName)
+	}
+	return string(v), nil
+}
+
+func secretTargetPlane() openchoreo.TargetPlane {
+	p := openchoreo.TargetPlane{
+		Kind: viper.GetString("oc.secret_target_plane.kind"),
+		Name: viper.GetString("oc.secret_target_plane.name"),
+	}
+	if p.Kind == "" {
+		p.Kind = "ClusterDataPlane"
+	}
+	if p.Name == "" {
+		p.Name = "default"
+	}
+	return p
+}
+
+const ocAPIReachableTimeout = time.Minute
+
+// openChoreoBindingSecrets stores secrets through OpenChoreo's Secret API as
+// aectl-openchoreo-client.
+type openChoreoBindingSecrets struct {
+	client            kubernetes.Interface
+	kubeconfig        string
+	platformNamespace string
+	ocNamespace       string
+	tokenURL          string
+	plane             openchoreo.TargetPlane
+}
+
+var _ envidp.BindingSecrets = openChoreoBindingSecrets{}
+
+func (s openChoreoBindingSecrets) PutSecret(ctx context.Context, namespace, name string, data map[string]string) error {
+	clientSecret, err := aectlClientSecret(ctx, s.client, s.platformNamespace)
+	if err != nil {
+		return err
+	}
+	port, err := ocAPIPort(ctx, s.client, s.ocNamespace)
+	if err != nil {
+		return err
+	}
+	pf, err := k8s.PortForwardService(ctx, s.ocNamespace, ocAPIServiceName, port, s.kubeconfig)
+	if err != nil {
+		return err
+	}
+	defer pf.Stop()
+	base := "http://localhost:" + pf.Port
+	if err := k8s.WaitForReachable(ctx, base+"/", ocAPIReachableTimeout, pf); err != nil {
+		return err
+	}
+	api := &openchoreo.Client{
+		BaseURL: base,
+		Token: openchoreo.ClientCredentials{
+			TokenURL:     s.tokenURL,
+			ClientID:     aectlOpenChoreoClientID,
+			ClientSecret: clientSecret,
+		},
+	}
+	return api.PutSecret(ctx, namespace, name, s.plane, data)
 }

@@ -90,8 +90,8 @@ same at both tiers, and every one of them exists because breaking it is silent:
 
 ## The binding record
 
-One environment, one record, written to the four places its consumers can
-actually reach. None of them can read the other three.
+One environment, one record, written to the places its consumers can
+actually reach. None of them can read the others.
 
 | Projection | Where | Read by |
 |---|---|---|
@@ -99,6 +99,7 @@ actually reach. None of them can read the other three.
 | `Secret <release>-aep-system-client` | the T2 namespace | the record of what the instance was given; what a re-run reuses instead of rotating |
 | `Secret thunder-binding-<org>-<env>` | `thunder-app-operator-system` | `thunder-app` — its Secret informer and RBAC are restricted to its own namespace, deliberately, so the credential has to be delivered there |
 | OpenBao `secret/aep/thunder/<org>/<env>` | OpenBao | `aep-api`, which runs in-cluster with no Kubernetes access to these Secrets and logs in to OpenBao by Kubernetes auth (role `aep-api`, read on `secret/data/aep/thunder/*` only) |
+| OpenChoreo secret `thunder-binding-<org>-<env>` (`clientId`, `clientSecret`) | the org's namespace, through OpenChoreo's Secret API | stored by `aectl` as its own client, `aectl-openchoreo-client`; the `Environment`'s `aep.wso2.com/thunder-secret-ref` names it |
 | `aep.wso2.com/thunder-*` annotations | the OpenChoreo `Environment` | `aep-api` again — it sees the OpenChoreo API and OpenBao, and nothing else |
 
 The ConfigMap is the authority: it names the release, the issuer, the in-cluster
