@@ -72,12 +72,14 @@ func importedPlatformSecrets() []generatedSecret {
 // importedClientNames are the clients whose secrets the IdP's admin creates
 // where aectl creates none (on Asgardeo: deployments/scripts/ae-asgardeo-apps.sh)
 // and imports under aep/idp-clients/<name>: aep-api's own client, the
-// AE-only client aep-api calls every org's pod with, and the one org's
-// publisher and AE Studio clients. They are the confidential clients of
-// asgardeoClients, whose secrets aectl generates where it creates them.
+// AE-only client aep-api calls every org's pod with, aectl's own client
+// (OpenChoreo's Secret API), and the one org's publisher and AE Studio
+// clients. They are the confidential clients of asgardeoClients, whose
+// secrets aectl generates where it creates them.
 var importedClientNames = []string{
 	"aep-api-client",
 	"ae-studio-internal",
+	"aectl-openchoreo",
 	"org-publisher",
 	"org-studio",
 }

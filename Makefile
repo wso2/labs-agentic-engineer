@@ -308,7 +308,7 @@ AECTL_CONFIG ?= skaffold/defaults.yaml
 # It is a mode of a NEW cluster, not a switch on a running one: an org's
 # secret paths are derived from the IdP's id for it.
 #
-# aectl can create AE's five applications itself (idp.clients asgardeo). Give
+# aectl can create AE's six applications itself (idp.clients asgardeo). Give
 # the credential of the organization's admin application in two files:
 #   make dev-env AE_DEV_IDP=asgardeo ASGARDEO_TENANT=<handle> \
 #     ASGARDEO_ADMIN_CLIENT_ID_FILE=<file> ASGARDEO_ADMIN_CLIENT_SECRET_FILE=<file>
@@ -329,9 +329,9 @@ ASGARDEO_ADMIN_CLIENT_SECRET_FILE ?=
 # the same issuer.
 ASGARDEO_BASE_URL ?= https://api.asgardeo.io
 
-# The four client secrets an Asgardeo install imports, by file name and vault
+# The five client secrets an Asgardeo install imports, by file name and vault
 # name (ae-asgardeo-apps.sh; importedClientNames in tools/aectl).
-AE_ASGARDEO_CLIENT_SECRETS := aep-api-client ae-studio-internal org-publisher org-studio
+AE_ASGARDEO_CLIENT_SECRETS := aep-api-client ae-studio-internal aectl-openchoreo org-publisher org-studio
 # The generated aectl config of an Asgardeo dev-env: a build artifact, never
 # committed (it names the developer's organization).
 AE_ASGARDEO_AECTL_CONFIG := tools/aectl/.aectl-asgardeo.yaml

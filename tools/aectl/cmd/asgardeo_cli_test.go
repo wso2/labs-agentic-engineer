@@ -62,7 +62,7 @@ func clientIDsOf(defs []idpClientDef) []string {
 func TestAsgardeoClients(t *testing.T) {
 	setAsgardeoClientsConfig(t)
 	got := asgardeoClients()
-	want := []string{"aep-api-client", "ae-studio-internal-client", "aep-console-client", "aep-publisher-default", "ae-studio-default"}
+	want := []string{"aep-api-client", "ae-studio-internal-client", aectlOpenChoreoClientID, "aep-console-client", "aep-publisher-default", "ae-studio-default"}
 	if ids := clientIDsOf(got); !slices.Equal(ids, want) {
 		t.Fatalf("clients = %v, want %v", ids, want)
 	}
@@ -85,7 +85,7 @@ func TestAsgardeoClients(t *testing.T) {
 	}
 }
 
-// Under idp.clients asgardeo aectl generates the four client secrets and
+// Under idp.clients asgardeo aectl generates the five client secrets and
 // imports none, and nothing of a ThunderID in the cluster is asked for.
 func TestPlatformSecrets_AsgardeoClientsAreGenerated(t *testing.T) {
 	setAsgardeoClientsConfig(t)
@@ -101,7 +101,7 @@ func TestPlatformSecrets_AsgardeoClientsAreGenerated(t *testing.T) {
 			t.Errorf("%s: generated value is not 32 bytes as hex (err %v)", g.path, err)
 		}
 	}
-	want := []string{"aep/idp-clients/aep-api-client", "aep/idp-clients/ae-studio-internal", "aep/idp-clients/org-publisher", "aep/idp-clients/org-studio"}
+	want := []string{"aep/idp-clients/aep-api-client", "aep/idp-clients/ae-studio-internal", "aep/idp-clients/aectl-openchoreo", "aep/idp-clients/org-publisher", "aep/idp-clients/org-studio"}
 	if !slices.Equal(paths, want) {
 		t.Fatalf("generated client secrets %v, want %v", paths, want)
 	}

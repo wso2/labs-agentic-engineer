@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# Creates AE's five OAuth applications in an Asgardeo organization. Run once
+# Creates AE's six OAuth applications in an Asgardeo organization. Run once
 # by that organization's admin, with the admin's own credentials, before AE is
 # installed with Asgardeo as its platform IdP. AE holds no management rights
 # on the organization, so nothing in AE can create these; and they need exact
@@ -29,6 +29,7 @@
 #                                         <console> after sign-out)
 #   aep-api-client               M2M      aep-api-client
 #   ae-studio-internal-client    M2M      ae-studio-internal
+#   aectl-openchoreo-client      M2M      aectl-openchoreo
 #   aep-publisher-<namespace>    M2M      org-publisher
 #   ae-studio-<namespace>        M2M      org-studio
 #
@@ -120,7 +121,7 @@ while [ $# -gt 0 ]; do
     --confirm-tenant) shift; CONFIRM_TENANT="${1:-}" ;;
     --with-openchoreo-publisher) WITH_OC_PUBLISHER=1 ;;
     --with-openchoreo-observer) WITH_OC_OBSERVER=1 ;;
-    -h|--help) sed -n '18,89p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '18,90p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
   shift
@@ -157,6 +158,7 @@ ISSUER="${BASE_URL%/}/t/${TENANT}/oauth2/token"
 APPS="aep-console-client|browser|
 aep-api-client|m2m|aep-api-client
 ae-studio-internal-client|m2m|ae-studio-internal
+aectl-openchoreo-client|m2m|aectl-openchoreo
 aep-publisher-${NAMESPACE}|m2m|org-publisher
 ae-studio-${NAMESPACE}|m2m|org-studio"
 if [ "$WITH_OC_PUBLISHER" = "1" ]; then
@@ -423,9 +425,9 @@ oc_clients=""
 [ "$WITH_OC_PUBLISHER" = "1" ] && oc_clients="publisher"
 [ "$WITH_OC_OBSERVER" = "1" ] && oc_clients="${oc_clients:+${oc_clients} and }observer"
 case "$oc_clients" in
-  "") echo "✅ All five applications are set up" ;;
-  *" and "*) echo "✅ All five applications and OpenChoreo's ${oc_clients} clients are set up" ;;
-  *) echo "✅ All five applications and OpenChoreo's ${oc_clients} client are set up" ;;
+  "") echo "✅ All six applications are set up" ;;
+  *" and "*) echo "✅ All six applications and OpenChoreo's ${oc_clients} clients are set up" ;;
+  *) echo "✅ All six applications and OpenChoreo's ${oc_clients} client are set up" ;;
 esac
 if [ -n "$absent" ]; then
   # An existing application's secret cannot be read back. Its file being gone

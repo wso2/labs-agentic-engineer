@@ -139,7 +139,7 @@ the four secret files. The mode:
   installs no platform ThunderID;
 - generates the aectl config from `AECTL_CONFIG` with the `idp:` block set
   (`deployments/scripts/ae-asgardeo-aectl-config.sh`, written to the ignored
-  `tools/aectl/.aectl-asgardeo.yaml`), imports the four secrets and installs
+  `tools/aectl/.aectl-asgardeo.yaml`), imports the five secrets and installs
   with `idp.clients: imported` (see "Install with Asgardeo as the platform IdP");
 - lets `aectl` create the applications when
   `ASGARDEO_ADMIN_CLIENT_ID_FILE` and `ASGARDEO_ADMIN_CLIENT_SECRET_FILE`
@@ -417,8 +417,8 @@ the Compose-chain removal.
 
 An Asgardeo organization can be the platform IdP, in place of the in-cluster
 ThunderID. No running part of AE holds management rights on the
-organization. Like every install, it serves one org. AE needs five
-applications in the organization: the console's browser client and four M2M
+organization. Like every install, it serves one org. AE needs six
+applications in the organization: the console's browser client and five M2M
 clients. There are two ways to create them.
 
 ### `aectl` creates the applications (`idp.clients: asgardeo`)
@@ -522,13 +522,14 @@ administers nothing on the organization.
 1. **Create the applications.** The organization's admin runs
    `deployments/scripts/ae-asgardeo-apps.sh` (its header is the manual) with
    an M2M application of their own that is authorized for the Application
-   Management API. It creates the console's browser client and four M2M
+   Management API. It creates the console's browser client and five M2M
    clients, and writes one file per M2M secret.
-2. **Import the four secrets** into the install's vault, one per file:
+2. **Import the five secrets** into the install's vault, one per file:
 
    ```bash
    aectl platform secret import --path aep/idp-clients/aep-api-client     --value-file <dir>/aep-api-client
    aectl platform secret import --path aep/idp-clients/ae-studio-internal --value-file <dir>/ae-studio-internal
+   aectl platform secret import --path aep/idp-clients/aectl-openchoreo   --value-file <dir>/aectl-openchoreo
    aectl platform secret import --path aep/idp-clients/org-publisher      --value-file <dir>/org-publisher
    aectl platform secret import --path aep/idp-clients/org-studio         --value-file <dir>/org-studio
    ```
@@ -614,10 +615,10 @@ Expect to find more on a third.
    AE's install: OpenChoreo's `security.oidc` issuer and key set, its own
    clients, and its setting for the claim that names a machine caller, which
    has to be `client_id`.
-3. **Create AE's five clients** with the IdP's own tools: the console's
+3. **Create AE's six clients** with the IdP's own tools: the console's
    browser client `aep-console-client`, and the machine clients
-   `aep-api-client`, `ae-studio-internal-client`, `aep-publisher-<namespace>`
-   and `ae-studio-<namespace>`. `deployments/scripts/ae-asgardeo-apps.sh` is
+   `aep-api-client`, `ae-studio-internal-client`, `aectl-openchoreo-client`,
+   `aep-publisher-<namespace>` and `ae-studio-<namespace>`. `deployments/scripts/ae-asgardeo-apps.sh` is
    the worked example: its header lists each client's settings.
 4. **Find the claim names.** Get one user token and one machine token and
    decode their payloads. Do not paste a token into a website or a chat.
@@ -647,7 +648,7 @@ Expect to find more on a third.
    Asgardeo.
 6. **Check, import, install.** `aectl platform config test --config <file>`
    prints each claim value and where it came from. Then import the config,
-   import the four client secrets (step 2 of "The organization's admin
+   import the five client secrets (step 2 of "The organization's admin
    creates the applications" above) and run `aectl platform install`.
 
 A claim value belongs in the config file. `aectl` stops when an
