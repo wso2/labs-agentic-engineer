@@ -1,0 +1,38 @@
+# OpenChoreo authorization for aectl's own client on the platform IdP
+# ({{ .Values.aectl.openchoreoClient.clientId }}). aectl calls OpenChoreo's
+# Secret API with it to store install-time secrets, such as each environment
+# Thunder's admin credential. OpenChoreo matches the token's `client_id` claim
+# to this binding, the way aep-api-client-binding does for aep-api.
+#
+# The role allows only secret:create and secret:update: aectl stores a secret
+# by "create, or update when it exists" and never reads a value back
+# (secret:view) or deletes one (secret:delete). A leaked aectl token can
+# therefore write secrets but not read anyone's.
+apiVersion: openchoreo.dev/v1alpha1
+kind: ClusterAuthzRole
+metadata:
+  name: aectl-secret-writer
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: wso2-aep
+spec:
+  actions:
+    - "secret:create"
+    - "secret:update"
+---
+apiVersion: openchoreo.dev/v1alpha1
+kind: ClusterAuthzRoleBinding
+metadata:
+  name: aectl-client-binding
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: wso2-aep
+spec:
+  effect: allow
+  entitlement:
+    claim: client_id
+    value: {{ .Values.aectl.openchoreoClient.clientId | quote }}
+  roleMappings:
+    - roleRef:
+        kind: ClusterAuthzRole
+        name: aectl-secret-writer

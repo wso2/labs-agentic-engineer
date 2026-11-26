@@ -314,6 +314,14 @@ openbao:
   # Address of OpenChoreo's built-in OpenBao service.
   addr: "http://openbao.openbao.svc.cluster.local:8200"
 
+aectl:
+  openchoreoClient:
+    # aectl's own client on the platform IdP, which it calls OpenChoreo's
+    # Secret API with. OpenChoreo grants it only secret:create and
+    # secret:update (templates/aectl/authz.yaml). Change it only on an IdP that
+    # assigns client IDs itself.
+    clientId: "aectl-openchoreo-client"
+
 secretStore:
   # The plane OpenChoreo's Secret API stores aep-api's secrets on: OpenChoreo
   # writes each value to that plane's secret store. Every plane of an install
