@@ -184,6 +184,12 @@ type Config struct {
 	OpenBaoRelease        string
 	OpenBaoServiceAccount string
 	OpenBaoWriteRole      string
+	BindingSecrets        BindingSecrets
+}
+
+// BindingSecrets stores the binding's credential where aep-api reads it.
+type BindingSecrets interface {
+	PutSecret(ctx context.Context, namespace, name string, data map[string]string) error
 }
 
 // maxReleaseName is Helm's own release-name limit. releaseName's result also

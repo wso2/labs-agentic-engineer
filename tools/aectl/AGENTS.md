@@ -70,6 +70,13 @@ tokens reads by them.
   `AE_STUDIO_INTERNAL_CLIENT_SECRET`) carries no org claims
   (`noUserAttributes`), and is `optional` (its own Secret, `aep-ae-studio-internal-secrets`; a
   missing Secret skips the client with a warning).
+  `aectl-openchoreo-client` (`aectlOpenChoreoClientID`, vault name
+  `aectl-openchoreo`, env `AECTL_OPENCHOREO_CLIENT_SECRET`) is aectl's own
+  client: aectl calls OpenChoreo's Secret API with it. Its secret is in its
+  own Secret, `aep-aectl-client-secrets`, which no pod reads. The platform
+  chart grants the ID in `aectl.openchoreoClient.clientId` only
+  `secret:create` and `secret:update` (`templates/aectl/authz.yaml`). The two
+  IDs must be the same (`TestAectlOpenChoreoClient_MatchesTheChartsBinding`).
 - `orgClients` (`cmd/thunder_cli.go`) adds the two clients of the org:
   `aep-publisher-<org>` and `ae-studio-<org>`. `aectl` registers them under
   the organization unit that `idp.org_handle` names (`OrgOUHandle`,
@@ -128,9 +135,9 @@ is an example. What differs from the sections above:
 
 - **Secrets.** `aectl` generates no client secret and asks for no admin
   secret. The admin of the IdP creates the clients (for Asgardeo:
-  `deployments/scripts/ae-asgardeo-apps.sh`) and imports four secrets under
+  `deployments/scripts/ae-asgardeo-apps.sh`) and imports five secrets under
   `aep/idp-clients/`: `aep-api-client`, `ae-studio-internal`,
-  `org-publisher` and `org-studio` (`importedClientNames`,
+  `aectl-openchoreo`, `org-publisher` and `org-studio` (`importedClientNames`,
   `cmd/platform_secrets.go`). `requireImportedClientSecrets` restores a
   secret that OpenBao lost from the cluster Secret that holds it. Then it
   stops, with the import command, for each secret that is still missing.
@@ -157,7 +164,7 @@ organization (`internal/asgardeo`, `cmd/asgardeo_cli.go`). The Helm values,
 the environment Thunders and `sre install` are as in "Imported clients".
 What differs:
 
-- **Clients.** `asgardeoClients` gives five: three of `aepThunderClients`
+- **Clients.** `asgardeoClients` gives six: four of `aepThunderClients`
   (`asgardeoPlatformClientIDs`) and the two of `orgClients`. `aectl` does
   not create the clients of OpenChoreo.
 - **Admin credential.** `platform install` and `platform sync-clients` read
@@ -168,7 +175,7 @@ What differs:
   command uses that token to its end.
   `refuseIDPAdminFlags` refuses the flags for another value of
   `idp.clients`.
-- **Secrets.** `generatedClientSecrets` gives the four secrets of
+- **Secrets.** `generatedClientSecrets` gives the five secrets of
   `importedClientNames` a generator (`generatedAsgardeoClientSecrets`).
   Nothing is imported.
 - **Setup.** `doAsgardeoSetup` runs where `doThunderSetup` runs.

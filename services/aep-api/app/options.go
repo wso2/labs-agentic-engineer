@@ -21,7 +21,6 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/ocauth"
 	"github.com/wso2/aep/aep-api/secretsprovider"
 )
@@ -66,9 +65,4 @@ type Options struct {
 	// openChoreoSecrets stores secrets through OpenChoreo's Secret API when no
 	// SecretsProvider is injected. Unexported: only NewOSSOptions sets it.
 	openChoreoSecrets bool
-
-	// openBaoAuth is the process's one OpenBao session (Kubernetes auth), used
-	// by the environment Thunder binding reader Assemble builds. Unexported:
-	// only NewOSSOptions sets it. Nil = no reader.
-	openBaoAuth secrets.VaultAuth
 }

@@ -115,9 +115,7 @@ path or secrets backend:
 **OSS `cmd/aep-api`** runs in **direct-OC mode**: M2M `AuthProvider` when service
 auth is configured, `DirectOCStrategy` (always M2M), a nil impersonation
 resolver, and secrets stored through OpenChoreo's Secret API on
-`SECRET_TARGET_PLANE_*`. With `OPENBAO_ADDR` set it also opens an OpenBao
-session (Kubernetes-auth login, `OPENBAO_AUTH_*`; no static token) for the
-environment Thunder binding reader.
+`SECRET_TARGET_PLANE_*`.
 An **overlay module** is a separate process entry that imports the same `app`
 package and injects different `Options` — typically a **PAS strategy** for auth
 an sm-api-backed `SecretsProvider` for cloud delivery, and the wso2cloud

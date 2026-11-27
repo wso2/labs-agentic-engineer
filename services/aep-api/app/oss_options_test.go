@@ -16,12 +16,7 @@
 
 package app
 
-import (
-	"net/http"
-	"net/http/httptest"
-	"sync/atomic"
-	"testing"
-)
+import "testing"
 
 // setOSSEnv sets the variables config.Load requires.
 func setOSSEnv(t *testing.T) {
@@ -41,44 +36,11 @@ func setOSSEnv(t *testing.T) {
 	t.Setenv("PLATFORM_IDP_ORG_STUDIO_SECRET", "s")
 }
 
-// With OPENBAO_ADDR set, NewOSSOptions builds the session Assemble's binding
-// reader uses, and talks to OpenBao not at all: aep-api boots with OpenBao
-// down or its role missing. Secrets go through OpenChoreo either way.
-func TestNewOSSOptions_OpenBaoSessionIsBuiltLazily(t *testing.T) {
+func TestNewOSSOptions_SecretsGoThroughOpenChoreo(t *testing.T) {
 	setOSSEnv(t)
-	var hits atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		hits.Add(1)
-		w.WriteHeader(http.StatusServiceUnavailable)
-	}))
-	t.Cleanup(srv.Close)
-	t.Setenv("OPENBAO_ADDR", srv.URL)
-	t.Setenv("OPENBAO_AUTH_TOKEN_PATH", "/nonexistent/token")
-
 	opts, err := NewOSSOptions()
 	if err != nil {
 		t.Fatalf("NewOSSOptions: %v", err)
-	}
-	if opts.openBaoAuth == nil {
-		t.Fatal("want an OpenBao session for the binding reader")
-	}
-	if opts.SecretsProvider != nil || !opts.openChoreoSecrets {
-		t.Fatalf("injected = %v, openChoreoSecrets = %v; want secrets through OpenChoreo", opts.SecretsProvider, opts.openChoreoSecrets)
-	}
-	if n := hits.Load(); n != 0 {
-		t.Fatalf("OpenBao was called %d times at boot; want 0", n)
-	}
-}
-
-func TestNewOSSOptions_NoOpenBaoAddrNoSessionSecretsStillDelivered(t *testing.T) {
-	setOSSEnv(t)
-	t.Setenv("OPENBAO_ADDR", "")
-	opts, err := NewOSSOptions()
-	if err != nil {
-		t.Fatalf("NewOSSOptions: %v", err)
-	}
-	if opts.openBaoAuth != nil {
-		t.Fatalf("session = %v; want none", opts.openBaoAuth)
 	}
 	if opts.SecretsProvider != nil || !opts.openChoreoSecrets {
 		t.Fatalf("injected = %v, openChoreoSecrets = %v; want secrets through OpenChoreo", opts.SecretsProvider, opts.openChoreoSecrets)

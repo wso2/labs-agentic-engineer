@@ -14,17 +14,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package secrets is the kernel module that owns every secret BACKEND.
-//
-// The org secrets live only in the vault (OpenBao, delivered to pods through
-// ExternalSecrets); Postgres holds their reference names, never a value. The
-// one sealed Postgres column, test_users.password_sealed, is sealed by
-// ColumnCipher. This module gives the backends ONE home and ONE arch fence: the
-// OpenBao/Vault SDK may be imported from here and nowhere else
-// (TestImportFences), so no business domain can reach a backend directly.
-//
-// It exposes a FEW purpose-specific ports, never one god port. The
-// user-facing "connect my GitHub / model key / resource secret" capabilities
-// are NOT here — they stay in their business domains (organization,
-// dependencies) and call these ports.
+// Package secrets owns the one sealed Postgres column (ColumnCipher,
+// test_users.password_sealed) and the credential validator. Secret values live
+// in the secret store behind secretmanagersvc; Postgres holds their reference
+// names only. No aep-api package imports the OpenBao or Vault SDK
+// (TestImportFences).
 package secrets

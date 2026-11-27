@@ -177,19 +177,6 @@ codingAgentRunner:
   deadline: ""
   validationDeadline: ""
 
-# Coding-agent dispatch wiring.
-#
-# A run cycle is an ephemeral OpenChoreo Component created through the OC API;
-# aep-api reads its pod logs and resource tree through that same API. The only
-# switch left here is the local-dev stub toggle below.
-codingAgentDispatch:
-  openBaoDirect:
-    # LOCAL DEV ONLY. Sets OPENBAO_ADDR and OPENBAO_AUTH_ROLE on aep-api for
-    # in-process secrets delivery (Kubernetes auth, no token). NEVER set true
-    # in production — prod injects a real SecretsProvider. `aectl platform
-    # install` sets this true for local installs.
-    enabled: false
-
 # Local stand-in for cloud platform-api ProvisionOrgUnit / the org bootstrap.
 # aep-api references a per-org NAMESPACED ComponentType (kind=ComponentType) for
 # each component; the base OpenChoreo ClusterComponentType lacks the
@@ -313,6 +300,14 @@ idp:
 openbao:
   # Address of OpenChoreo's built-in OpenBao service.
   addr: "http://openbao.openbao.svc.cluster.local:8200"
+
+aectl:
+  openchoreoClient:
+    # aectl's own client on the platform IdP, which it calls OpenChoreo's
+    # Secret API with. OpenChoreo grants it only secret:create and
+    # secret:update (templates/aectl/authz.yaml). Change it only on an IdP that
+    # assigns client IDs itself.
+    clientId: "aectl-openchoreo-client"
 
 secretStore:
   # The plane OpenChoreo's Secret API stores aep-api's secrets on: OpenChoreo

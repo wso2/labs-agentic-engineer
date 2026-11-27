@@ -125,12 +125,6 @@ func Load() (Config, error) {
 			Kind: r.readOptionalString("SECRET_TARGET_PLANE_KIND", "ClusterDataPlane"),
 			Name: r.readOptionalString("SECRET_TARGET_PLANE_NAME", "default"),
 		},
-		OpenBaoAddr: r.readOptionalString("OPENBAO_ADDR", ""),
-		OpenBaoAuth: OpenBaoAuthConfig{
-			Role:      r.readOptionalString("OPENBAO_AUTH_ROLE", "aep-api"),
-			Mount:     r.readOptionalString("OPENBAO_AUTH_MOUNT", "kubernetes"),
-			TokenPath: r.readOptionalString("OPENBAO_AUTH_TOKEN_PATH", "/var/run/secrets/kubernetes.io/serviceaccount/token"),
-		},
 		GitHubAppSlug:               r.readOptionalString("GITHUB_APP_SLUG", "aep-platform"),
 		CredentialValidatorInterval: r.readOptionalDuration("CREDENTIAL_VALIDATOR_INTERVAL", 24*time.Hour),
 

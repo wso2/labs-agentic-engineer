@@ -77,8 +77,6 @@ var ConfigMapKeys = []string{
 	"oc.data_plane_gateway_tls",
 	"oc.secret_target_plane.kind",
 	"oc.secret_target_plane.name",
-	"codingagent.openbao_direct.enabled",
-	"openbao.addr",
 	"ae_studio.webhook_relay.enabled",
 	"ae_studio.jev.enabled",
 	"ae_studio.jev.url",
@@ -203,10 +201,8 @@ var keyRegistry = map[string]configKeyMeta{
 	// OpenChoreo's Secret API: passed as secretStore.targetPlane.{kind,name}
 	// on install, each only when set. Absent leaves the chart default, the
 	// ClusterDataPlane "default" every aectl install creates.
-	"oc.secret_target_plane.kind":        {required: false, kind: kindString},
-	"oc.secret_target_plane.name":        {required: false, kind: kindString},
-	"codingagent.openbao_direct.enabled": {required: false, kind: kindBool},
-	"openbao.addr":                       {required: false, kind: kindURL},
+	"oc.secret_target_plane.kind": {required: false, kind: kindString},
+	"oc.secret_target_plane.name": {required: false, kind: kindString},
 	// The per-org AE Studio webhook relay (smee.io channel per org) for a
 	// cluster GitHub cannot reach. Passed as aeStudio.webhookRelay.enabled on
 	// install and update; absent is false. Never true in production.

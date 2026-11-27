@@ -39,8 +39,8 @@
 //   - StatusService — the masked status read (outputs by name only — secrets
 //     live only in SM-API / the OC-rendered Secret, never in a response).
 //
-// The no-secrets invariant holds throughout: secret VALUES go only to SM-API /
-// OpenBao; issue bodies, comments, and API responses carry only names / paths /
+// The no-secrets invariant holds throughout: secret VALUES go only to the secret
+// store; issue bodies, comments, and API responses carry only names / paths /
 // references. This package coordinates provisioners (dependencies/resources) +
 // GitHub issues (gitrepo); every other collaborator (executions store, design
 // read, repo lookup) is a narrow local port wired in the composition root.

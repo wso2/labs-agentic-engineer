@@ -63,7 +63,6 @@ func Run(opts Options) error {
 		ImpersonateOrgResolver: resolver,
 		SecretsProvider:        secretsProvider,
 		OpenChoreoSecrets:      opts.openChoreoSecrets,
-		OpenBaoAuth:            opts.openBaoAuth,
 		ResourceLabels:         opts.ResourceLabels,
 	}
 	application, err := intapp.Assemble(cfg, infra, seam)

@@ -139,7 +139,7 @@ the four secret files. The mode:
   installs no platform ThunderID;
 - generates the aectl config from `AECTL_CONFIG` with the `idp:` block set
   (`deployments/scripts/ae-asgardeo-aectl-config.sh`, written to the ignored
-  `tools/aectl/.aectl-asgardeo.yaml`), imports the four secrets and installs
+  `tools/aectl/.aectl-asgardeo.yaml`), imports the five secrets and installs
   with `idp.clients: imported` (see "Install with Asgardeo as the platform IdP");
 - lets `aectl` create the applications when
   `ASGARDEO_ADMIN_CLIENT_ID_FILE` and `ASGARDEO_ADMIN_CLIENT_SECRET_FILE`
@@ -197,7 +197,7 @@ the org's stored secrets would be orphaned. Delete the cluster first.
 `make dev-update` is one-shot, not a watch loop — run it again after every
 edit you want reflected in the cluster. Its steps are the `dev-update` target
 in the `Makefile`: build the images (only those whose dependencies changed),
-check the AE Studio refs, re-create aep-api's OpenBao role, upgrade the
+check the AE Studio refs, upgrade the
 `aep-platform` release with `aectl platform update`, run
 `aectl platform sync-clients`, and restart the platform Deployments (never the
 `ae-studio` pod, below). The upgrade does not re-derive aectl's install
@@ -417,8 +417,8 @@ the Compose-chain removal.
 
 An Asgardeo organization can be the platform IdP, in place of the in-cluster
 ThunderID. No running part of AE holds management rights on the
-organization. Like every install, it serves one org. AE needs five
-applications in the organization: the console's browser client and four M2M
+organization. Like every install, it serves one org. AE needs six
+applications in the organization: the console's browser client and five M2M
 clients. There are two ways to create them.
 
 ### `aectl` creates the applications (`idp.clients: asgardeo`)
@@ -522,13 +522,14 @@ administers nothing on the organization.
 1. **Create the applications.** The organization's admin runs
    `deployments/scripts/ae-asgardeo-apps.sh` (its header is the manual) with
    an M2M application of their own that is authorized for the Application
-   Management API. It creates the console's browser client and four M2M
+   Management API. It creates the console's browser client and five M2M
    clients, and writes one file per M2M secret.
-2. **Import the four secrets** into the install's vault, one per file:
+2. **Import the five secrets** into the install's vault, one per file:
 
    ```bash
    aectl platform secret import --path aep/idp-clients/aep-api-client     --value-file <dir>/aep-api-client
    aectl platform secret import --path aep/idp-clients/ae-studio-internal --value-file <dir>/ae-studio-internal
+   aectl platform secret import --path aep/idp-clients/aectl-openchoreo   --value-file <dir>/aectl-openchoreo
    aectl platform secret import --path aep/idp-clients/org-publisher      --value-file <dir>/org-publisher
    aectl platform secret import --path aep/idp-clients/org-studio         --value-file <dir>/org-studio
    ```
@@ -614,10 +615,10 @@ Expect to find more on a third.
    AE's install: OpenChoreo's `security.oidc` issuer and key set, its own
    clients, and its setting for the claim that names a machine caller, which
    has to be `client_id`.
-3. **Create AE's five clients** with the IdP's own tools: the console's
+3. **Create AE's six clients** with the IdP's own tools: the console's
    browser client `aep-console-client`, and the machine clients
-   `aep-api-client`, `ae-studio-internal-client`, `aep-publisher-<namespace>`
-   and `ae-studio-<namespace>`. `deployments/scripts/ae-asgardeo-apps.sh` is
+   `aep-api-client`, `ae-studio-internal-client`, `aectl-openchoreo-client`,
+   `aep-publisher-<namespace>` and `ae-studio-<namespace>`. `deployments/scripts/ae-asgardeo-apps.sh` is
    the worked example: its header lists each client's settings.
 4. **Find the claim names.** Get one user token and one machine token and
    decode their payloads. Do not paste a token into a website or a chat.
@@ -647,7 +648,7 @@ Expect to find more on a third.
    Asgardeo.
 6. **Check, import, install.** `aectl platform config test --config <file>`
    prints each claim value and where it came from. Then import the config,
-   import the four client secrets (step 2 of "The organization's admin
+   import the five client secrets (step 2 of "The organization's admin
    creates the applications" above) and run `aectl platform install`.
 
 A claim value belongs in the config file. `aectl` stops when an
@@ -935,23 +936,13 @@ Never `bao kv get` a multi-field document without `-field=<name>` piped to
    their cards; the org's repository hooks are re-keyed with the new secret
    by aep-api's hook repair once the pod rolls). Do not delete `org_secrets`
    rows by hand.
-5. **aep-api's OpenBao access.** The wipe also took aep-api's write-only
-   policy `aep-api-writer` and its Kubernetes-auth role `aep-api`; until they
-   are back every secret write aep-api makes fails (log event
-   `openbao.login_failed`). Re-apply both (idempotent; `make dev-update` runs
-   the same script before its upgrade):
-
-   ```bash
-   bash deployments/scripts/openbao-aep-api-auth.sh
-   kubectl -n openbao exec openbao-0 -- bao read auth/kubernetes/role/aep-api
-   ```
-6. **`host.k3d.internal`.** A colima or Docker restart that did not go through
+5. **`host.k3d.internal`.** A colima or Docker restart that did not go through
    `k3d cluster start` also drops `host.k3d.internal` from the node's
    `/etc/hosts` and from CoreDNS `NodeHosts`. Run
    `bash deployments/scripts/restore-host-k3d-internal.sh check`; on a finding,
    run it without `check` ([After a host restart](#after-a-host-restart)). Do
    not stop and start the cluster to fix it: that wipes OpenBao again.
-7. **Sync.** Run `aectl platform sync-clients`: it force-syncs the platform
+6. **Sync.** Run `aectl platform sync-clients`: it force-syncs the platform
    ExternalSecrets, then sets the Postgres role and the Thunder clients from
    them. On an install with `idp.clients: asgardeo` the command needs the
    admin credential and stops without it:
@@ -964,9 +955,7 @@ Never `bao kv get` a multi-field document without `-field=<name>` piped to
 ## Upgrading to write-only secrets
 
 From this release aep-api only writes secrets: no org secret value lives in
-Postgres, and aep-api reads none back. It logs in to OpenBao by Kubernetes auth
-(role `aep-api`, policy `aep-api-writer`, see
-`deployments/scripts/openbao-aep-api-auth.sh`) instead of a static token. The
+Postgres, and aep-api reads none back. The
 chart no longer renders the objects below. Helm removes the ones it rendered
 itself (the `aep-openbao-secrets` ExternalSecret, and with it its Secret), so
 their deletes below are no-ops after the upgrade, kept for installs that drifted
@@ -993,13 +982,8 @@ kubectl -n wso2-aep scale deploy/aep-api --replicas=0
 
 Drop from any overlay or `.env`; they are no longer read:
 `OPENBAO_TOKEN`, `TEST_MODE`, `LOCAL_OPENBAO_REPAIR`, `GITHUB_APP_ID`,
-`GITHUB_APP_PRIVATE_KEY_PATH`.
-
-Added (all optional, with defaults): `OPENBAO_AUTH_ROLE` (default `aep-api`),
-`OPENBAO_AUTH_MOUNT` (default `kubernetes`), `OPENBAO_AUTH_TOKEN_PATH` (default
-`/var/run/secrets/kubernetes.io/serviceaccount/token`). Cloud needs the
-OpenBao `aep-api` role and `aep-api-writer` policy created by SRE before the
-rollout.
+`GITHUB_APP_PRIVATE_KEY_PATH`, `OPENBAO_ADDR`, `OPENBAO_AUTH_ROLE`,
+`OPENBAO_AUTH_MOUNT`, `OPENBAO_AUTH_TOKEN_PATH`.
 
 ### Legacy objects to delete
 

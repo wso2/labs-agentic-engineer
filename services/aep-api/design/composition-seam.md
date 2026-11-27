@@ -65,10 +65,8 @@ One provider per process, chosen at construction. No fallback chain. Every
 provider creates the `SecretReference` for what it stores: the high-level
 client refuses one that does not.
 
-The environment Thunder binding reader still reads OpenBao directly: when
-`OPENBAO_ADDR` is set, `NewOSSOptions` opens one lazy Kubernetes-auth session
-(`OPENBAO_AUTH_*`, role `aep-api`; no static token) and hands it to `Run` in
-an unexported `Options` field. An overlay cannot set it and gets no reader.
+The environment Thunder binding reader reads its credential through the same
+client. With secrets delivery off there is no reader, and the roles gate is off.
 
 ## OpenChoreo transport
 

@@ -83,12 +83,12 @@ func registerIDPAdminFlags(cmd *cobra.Command) {
 // asgardeoPlatformClientIDs are the platform's clients an Asgardeo
 // organization needs, of aepThunderClients. The rest of that list serves what
 // installs only beside a ThunderID aectl administers.
-var asgardeoPlatformClientIDs = []string{"aep-console-client", "aep-api-client", "ae-studio-internal-client"}
+var asgardeoPlatformClientIDs = []string{"aep-console-client", "aep-api-client", "ae-studio-internal-client", aectlOpenChoreoClientID}
 
-// asgardeoClients is the five clients aectl creates in an Asgardeo
-// organization: the console's, aep-api's own, the AE-only client, and the
-// org's two. Each is the definition the ThunderID list holds, so a client
-// reads the same K8s Secret and vault path on both IdPs.
+// asgardeoClients is the six clients aectl creates in an Asgardeo
+// organization: the console's, aep-api's own, the AE-only client, aectl's
+// own, and the org's two. Each is the definition the ThunderID list holds, so
+// a client reads the same K8s Secret and vault path on both IdPs.
 func asgardeoClients() []idpClientDef {
 	var out []idpClientDef
 	for _, d := range aepThunderClients {

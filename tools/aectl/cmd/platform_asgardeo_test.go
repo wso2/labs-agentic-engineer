@@ -278,6 +278,7 @@ func TestRequireImportedClientSecrets(t *testing.T) {
 	all := map[string]string{
 		"aep/idp-clients/aep-api-client":     "s1",
 		"aep/idp-clients/ae-studio-internal": "s2",
+		"aep/idp-clients/aectl-openchoreo":   "s5",
 		"aep/idp-clients/org-publisher":      "s3",
 		"aep/idp-clients/org-studio":         "s4",
 	}
@@ -302,6 +303,13 @@ func TestRequireImportedClientSecrets(t *testing.T) {
 	restored, err := requireImportedClientSecrets(m.store())
 	if err != nil || len(restored) != 1 || m.vault["aep/idp-clients/org-studio"] != "s4" {
 		t.Fatalf("restore from the cluster: restored %v, err %v, vault %v", restored, err, m.vault["aep/idp-clients/org-studio"])
+	}
+
+	// aectl's own client was never imported: it stops, naming its import.
+	m = &memSeedStore{vault: copyOf(all, "aep/idp-clients/aectl-openchoreo")}
+	if _, err := requireImportedClientSecrets(m.store()); err == nil ||
+		!strings.Contains(err.Error(), "aectl platform secret import --path aep/idp-clients/aectl-openchoreo") {
+		t.Fatalf("a missing aectl-openchoreo import: err = %v", err)
 	}
 
 	// Two were never imported.
