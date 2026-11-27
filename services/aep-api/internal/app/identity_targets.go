@@ -64,6 +64,11 @@ const (
 	credentialKeyClientSecret = "clientSecret"
 )
 
+// bindingRecovery is the only recovery for a missing binding, and it applies
+// to one environment, so it is named with its scope.
+const bindingRecovery = "aectl platform install binds only the environment named by " +
+	"oc.pipeline_source_environment in oc.default_org_namespace; re-run it if that is this environment"
+
 // The two ways to address an environment's Thunder, and the config value that
 // picks one. See identityTargetResolver.adminBaseURL.
 const (
@@ -170,8 +175,8 @@ func (r *identityTargetResolver) Resolve(ctx context.Context, scope identity.Sco
 	if err != nil {
 		if errors.Is(err, openchoreo.ErrNoThunderBinding) {
 			return identity.Target{}, fmt.Errorf(
-				"environment %q of %q has no Thunder binding (re-run aectl platform install): %w",
-				scope.Environment, scope.OrgID, err)
+				"environment %q of %q has no Thunder binding (%s): %w",
+				scope.Environment, scope.OrgID, bindingRecovery, err)
 		}
 		return identity.Target{}, fmt.Errorf("read the Thunder binding of %s: %w", scope, err)
 	}
@@ -183,10 +188,10 @@ func (r *identityTargetResolver) Resolve(ctx context.Context, scope identity.Sco
 	clientID, clientSecret := fields[credentialKeyClientID], fields[credentialKeyClientSecret]
 	if clientID == "" || clientSecret == "" {
 		// Reported as a missing binding rather than an auth failure: the
-		// recovery is the same, and the install writes the credential again.
+		// recovery is the same.
 		return identity.Target{}, fmt.Errorf(
-			"the admin credential of %s is missing from the secret store (re-run aectl platform install): %w",
-			scope, openchoreo.ErrNoThunderBinding)
+			"the admin credential of %s is missing from the secret store (%s): %w",
+			scope, bindingRecovery, openchoreo.ErrNoThunderBinding)
 	}
 
 	baseURL := r.adminBaseURL(binding)

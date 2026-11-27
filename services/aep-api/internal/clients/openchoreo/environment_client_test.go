@@ -298,8 +298,10 @@ func TestEnvironmentClient_GetThunderBinding_UnboundEnvironment(t *testing.T) {
 	if !errors.Is(err, ErrNoThunderBinding) {
 		t.Fatalf("want ErrNoThunderBinding, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "aectl platform install") {
-		t.Fatalf("the error must name the fix, got: %v", err)
+	for _, want := range []string{"acme/staging", annThunderSecretRef} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the error must name the environment and what it lacks (%q), got: %v", want, err)
+		}
 	}
 }
 

@@ -87,7 +87,7 @@ const (
 
 // ErrNoThunderBinding is the answer for an environment that exists but has no
 // identity provider bound to it. It is its own error because the recovery is
-// specific and a caller cannot guess it: re-run aectl platform install.
+// specific: binding an environment, not retrying.
 var ErrNoThunderBinding = errors.New("openchoreo: environment has no Thunder binding")
 
 // ThunderBinding is one environment's identity provider, as the Environment
@@ -322,7 +322,7 @@ func thunderBindingFromAnnotations(orgID, environment string, annotations map[st
 		}
 	}
 	if len(missing) > 0 {
-		return ThunderBinding{}, fmt.Errorf("%w: %s/%s is missing %s — re-run aectl platform install",
+		return ThunderBinding{}, fmt.Errorf("%w: %s/%s is missing %s",
 			ErrNoThunderBinding, orgID, environment, strings.Join(missing, ", "))
 	}
 	return binding, nil
