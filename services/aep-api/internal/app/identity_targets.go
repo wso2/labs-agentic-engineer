@@ -29,11 +29,9 @@ package app
 //	the admin credential at the binding's secret path      (the secret store)
 //	a thundersvc client built from the two                 (this file)
 //
-// aep-api runs OUTSIDE the cluster in the local stack, so those annotations and
-// that secret path are the only two of the binding record's three projections it
-// can reach; the ConfigMap and the mirrored Secret that
-// deployments/scripts/setup-environment-thunder.sh also writes are for the
-// in-cluster operator.
+// The annotations and the OpenChoreo secret are the binding record's
+// projections aep-api reads; the ConfigMap and the mirrored Secret that aectl
+// also writes are for the in-cluster operator.
 
 import (
 	"context"
@@ -60,12 +58,16 @@ import (
 // per-request cost.
 const identityTargetTTL = 10 * time.Minute
 
-// thunderCredentialKeys are the fields setup-environment-thunder.sh writes at
-// the binding's secret path.
+// The keys of the binding's OpenChoreo secret, as aectl writes them.
 const (
 	credentialKeyClientID     = "clientId"
 	credentialKeyClientSecret = "clientSecret"
 )
+
+// bindingRecovery is the only recovery for a missing binding, and it applies
+// to one environment, so it is named with its scope.
+const bindingRecovery = "aectl platform install binds only the environment named by " +
+	"oc.pipeline_source_environment in oc.default_org_namespace; re-run it if that is this environment"
 
 // The two ways to address an environment's Thunder, and the config value that
 // picks one. See identityTargetResolver.adminBaseURL.
@@ -173,8 +175,8 @@ func (r *identityTargetResolver) Resolve(ctx context.Context, scope identity.Sco
 	if err != nil {
 		if errors.Is(err, openchoreo.ErrNoThunderBinding) {
 			return identity.Target{}, fmt.Errorf(
-				"environment %q of %q has no Thunder binding (run setup-environment-thunder.sh %s %s): %w",
-				scope.Environment, scope.OrgID, scope.OrgID, scope.Environment, err)
+				"environment %q of %q has no Thunder binding (%s): %w",
+				scope.Environment, scope.OrgID, bindingRecovery, err)
 		}
 		return identity.Target{}, fmt.Errorf("read the Thunder binding of %s: %w", scope, err)
 	}
@@ -185,12 +187,11 @@ func (r *identityTargetResolver) Resolve(ctx context.Context, scope identity.Sco
 	}
 	clientID, clientSecret := fields[credentialKeyClientID], fields[credentialKeyClientSecret]
 	if clientID == "" || clientSecret == "" {
-		// The binding names a path that holds nothing usable. Reported as a
-		// missing binding rather than an auth failure, because the recovery is
-		// the same script: re-run it and the credential is written again.
+		// Reported as a missing binding rather than an auth failure: the
+		// recovery is the same.
 		return identity.Target{}, fmt.Errorf(
-			"the admin credential of %s is missing from the secret store (run setup-environment-thunder.sh %s %s): %w",
-			scope, scope.OrgID, scope.Environment, openchoreo.ErrNoThunderBinding)
+			"the admin credential of %s is missing from the secret store (%s): %w",
+			scope, bindingRecovery, openchoreo.ErrNoThunderBinding)
 	}
 
 	baseURL := r.adminBaseURL(binding)

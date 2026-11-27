@@ -98,6 +98,6 @@ it builds, not only the install-time one.
 
 **Where the credential ends up.** Not in this directory and not in Git: the
 secret is generated per environment and written to the Secret in the T2
-namespace, mirrored into `thunder-app-operator-system`, and stored in OpenBao at
-`secret/aep/thunder/<org>/<env>`. `setup-environment-thunder.sh`'s header
-documents which consumer reads which copy.
+namespace, mirrored into `thunder-app-operator-system`, and stored through
+OpenChoreo's Secret API as `thunder-binding-<org>-<env>`.
+`deployments/design/two-tier-thunder.md` lists which consumer reads which copy.

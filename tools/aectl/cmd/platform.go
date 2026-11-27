@@ -629,12 +629,8 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		// Moves the environment tier's scheme and both gateway ports together.
 		// Must match WITH_TLS in the cluster setup script — see tls.enabled in
 		// internal/config for why a disagreement is silent until first login.
-		TLS:                   viper.GetBool("tls.enabled"),
-		Kubeconfig:            kubeconfig,
-		OpenBaoNamespace:      ocOpenBaoNamespace,
-		OpenBaoRelease:        ocOpenBaoRelease,
-		OpenBaoServiceAccount: ocOpenBaoSA,
-		OpenBaoWriteRole:      ocWriteRole,
+		TLS:        viper.GetBool("tls.enabled"),
+		Kubeconfig: kubeconfig,
 		BindingSecrets: openChoreoBindingSecrets{
 			client:            k8sClient,
 			kubeconfig:        kubeconfig,

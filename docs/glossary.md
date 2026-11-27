@@ -216,10 +216,10 @@ environment's gateway. ADR-0029.
 How an environment says which T2 is its own, and how each consumer reaches it:
 ConfigMap `thunder-binding-<org>-<env>` (selected by
 `aep.wso2.com/kind=thunder-binding` + `/org` + `/env`), the credential mirrored
-as a Secret into `thunder-app-operator-system` for `thunder-app` and into
-OpenBao at `secret/aep/thunder/<org>/<env>` for `aep-api`, and the non-secret
-half projected onto the OpenChoreo `Environment` as `aep.wso2.com/thunder-*`
-annotations. Nothing derives an issuer from a name; everything reads the record.
+as a Secret into `thunder-app-operator-system` for `thunder-app` and stored
+through OpenChoreo's Secret API as `thunder-binding-<org>-<env>` for `aep-api`,
+and the non-secret half projected onto the OpenChoreo `Environment` as
+`aep.wso2.com/thunder-*` annotations. Nothing derives an issuer from a name; everything reads the record.
 
 ### Environment gateway
 The API Platform gateway for one environment — `api-platform-<org>-<env>` in

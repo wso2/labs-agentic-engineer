@@ -98,14 +98,12 @@ actually reach. None of them can read the others.
 | `ConfigMap thunder-binding-<org>-<env>` | the T2 namespace | `thunder-app` (by label, cluster-wide watch), `setup-environment-gateway.sh`, `verify-convergence.sh`, `seed-test-users.sh` |
 | `Secret <release>-aep-system-client` | the T2 namespace | the record of what the instance was given; what a re-run reuses instead of rotating |
 | `Secret thunder-binding-<org>-<env>` | `thunder-app-operator-system` | `thunder-app` — its Secret informer and RBAC are restricted to its own namespace, deliberately, so the credential has to be delivered there |
-| OpenBao `secret/aep/thunder/<org>/<env>` | OpenBao | nothing; a leftover copy that the next change stops writing |
 | OpenChoreo secret `thunder-binding-<org>-<env>` (`clientId`, `clientSecret`) | the org's namespace, through OpenChoreo's Secret API | `aep-api`, through OpenChoreo's Secret API (its access also allows reading other secrets' values). Stored by `aectl` as its own client, `aectl-openchoreo-client`; the `Environment`'s `aep.wso2.com/thunder-secret-ref` names it |
 | `aep.wso2.com/thunder-*` annotations | the OpenChoreo `Environment` | `aep-api` again — it sees the OpenChoreo API and nothing else |
 
 The ConfigMap is the authority: it names the release, the issuer, the in-cluster
 admin URL, the System resource-server identifier, the trusted-issuer triple, and
-**where the other projections live** (`secretName` / `secretNamespace` for the
-operator, `secretPath` for the OpenBao copy). The labels are the contract, not the
+**where the operator's Secret lives** (`secretName` / `secretNamespace`). The labels are the contract, not the
 names — `aep.wso2.com/kind=thunder-binding` plus `/org` and `/env` — because the
 namespace is derived by Agent Manager's naming library and can be truncated.
 
@@ -227,7 +225,7 @@ last and cannot answer for a run that never got there.)
 Anything not ours is left running, and only AEP's own artefacts are withdrawn:
 its `aep-system-client` application and `aep-system-client-thunder-admin` role
 **deregistered from the instance over its admin API**, its Secrets and
-ConfigMaps deleted by their `managed-by` label, the OpenBao entry removed, the
+ConfigMaps deleted by their `managed-by` label, the
 `Environment` annotations stripped. Agent Manager's registrations are only
 deleted for an instance AEP created and has just removed, and the
 `thunder-url` handle is freed only after the system-client credential is
@@ -258,7 +256,7 @@ has no command in this repository today.
   own environment's binding issuer.
 - **11** — every `Environment` has exactly one binding ConfigMap; the release it
   names is deployed; the five `Environment` annotations equal the ConfigMap; the
-  OpenBao document exists and carries the same issuer; and the credential in the
+  OpenChoreo secret that `thunder-secret-ref` names exists; and the credential in the
   mirrored Secret mints `scope=system` and reaches `GET <issuer>/users` with 200.
 - **12** — each gateway's *rendered* `ThunderKeyManager` issuer equals its
   binding's. The rendered config, not the values file: it is what the controller

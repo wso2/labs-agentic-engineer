@@ -19,13 +19,10 @@ package envidp
 import (
 	"context"
 	"fmt"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	"github.com/wso2/aep/aectl/internal/openbao"
 )
 
 // Binding-record label/key names. These MUST match
@@ -50,15 +47,9 @@ const (
 	keyClientID     = "client-id"
 	keyClientSecret = "client-secret"
 
-	// openBaoKeyClientID/openBaoKeyClientSecret are the OpenBao projection's
-	// own key names — camelCase, matching setup-environment-thunder.sh's own
-	// write and aep-api's identity_targets.go credentialKeyClientID/
-	// credentialKeyClientSecret. A different casing than keyClientID/
-	// keyClientSecret above is deliberate: those name the K8s Secret mirrored
-	// into thunder-app-operator-system, a separate consumer with its own
-	// (kebab-case) contract.
-	openBaoKeyClientID     = "clientId"
-	openBaoKeyClientSecret = "clientSecret"
+	// The OpenChoreo secret's keys, as aep-api's identity_targets.go reads them.
+	credentialKeyClientID     = "clientId"
+	credentialKeyClientSecret = "clientSecret"
 )
 
 // BindingName is the Secret/ConfigMap name writeBindingRecord uses for a given
@@ -66,23 +57,6 @@ const (
 // the thunder-app-operator addon's WaitForSecrets precondition) name the same
 // Secret without duplicating the format string.
 func BindingName(org, env string) string { return fmt.Sprintf("thunder-binding-%s-%s", org, env) }
-
-// openBaoKVMount is the OpenBao KV-v2 mount every platform secret is written
-// under (see cmd.provisionOpenBao's own "/v1/secret/data/..." calls) —
-// matching setup-environment-thunder.sh's OPENBAO_MOUNT.
-const openBaoKVMount = "secret"
-
-// openBaoBindingPath is where writeOpenBaoBinding stores its projection of the
-// binding record, relative to openBaoKVMount.
-func openBaoBindingPath(org, env string) string { return fmt.Sprintf("aep/thunder/%s/%s", org, env) }
-
-// openBaoBindingSecretPath is openBaoBindingPath WITH its mount prefix — the
-// form the Environment's aep.wso2.com/thunder-secret-path annotation carries.
-// aep-api's own OpenBao reader is mount-relative, so it validates this prefix
-// against its configured mount and strips it before reading.
-func openBaoBindingSecretPath(org, env string) string {
-	return openBaoKVMount + "/" + openBaoBindingPath(org, env)
-}
 
 func bindingLabels(org, env string) map[string]string {
 	return map[string]string{
@@ -116,13 +90,13 @@ func bindingSecretData(inst *ThunderInstance) map[string][]byte {
 	}
 }
 
-// writeBindingRecord writes the 5 projections of the binding record described
+// writeBindingRecord writes the 4 projections of the binding record described
 // in deployments/design/two-tier-thunder.md: a ConfigMap in T2's own
 // namespace (the non-secret half, read by consumers that already know which
 // T2 they're looking at), a Secret mirrored into thunder-app-operator-system
 // (the only namespace that operator's Secret informer/RBAC can see), an
-// OpenBao copy, an OpenChoreo secret holding the credential, and annotations
-// on the Environment.
+// OpenChoreo secret holding the credential, and annotations on the
+// Environment.
 func writeBindingRecord(ctx context.Context, c clients, cfg Config, inst *ThunderInstance) error {
 	name := BindingName(cfg.Org, cfg.Env)
 	labels := bindingLabels(cfg.Org, cfg.Env)
@@ -152,10 +126,6 @@ func writeBindingRecord(ctx context.Context, c clients, cfg Config, inst *Thunde
 		return fmt.Errorf("mirror binding Secret to %s/%s: %w", operatorNamespace, name, err)
 	}
 
-	if err := writeOpenBaoBinding(ctx, cfg, inst); err != nil {
-		return fmt.Errorf("write OpenBao binding copy: %w", err)
-	}
-
 	// Before the annotation, so it never names an unstored secret.
 	if err := writeOpenChoreoBinding(ctx, cfg, inst); err != nil {
 		return err
@@ -175,15 +145,14 @@ func bindingAnnotations(cfg Config, inst *ThunderInstance) []string {
 		"aep.wso2.com/thunder-issuer=" + inst.PublicURL,
 		"aep.wso2.com/thunder-admin-url=" + inst.AdminURL,
 		"aep.wso2.com/thunder-system-resource-identifier=" + inst.SystemResourceIdentifier,
-		"aep.wso2.com/thunder-secret-path=" + openBaoBindingSecretPath(cfg.Org, cfg.Env),
 		"aep.wso2.com/thunder-secret-ref=" + name,
 	}
 }
 
 func bindingCredentialData(inst *ThunderInstance) map[string]string {
 	return map[string]string{
-		openBaoKeyClientID:     "aep-system-client",
-		openBaoKeyClientSecret: inst.SystemClientSecret,
+		credentialKeyClientID:     "aep-system-client",
+		credentialKeyClientSecret: inst.SystemClientSecret,
 	}
 }
 
@@ -196,44 +165,4 @@ func writeOpenChoreoBinding(ctx context.Context, cfg Config, inst *ThunderInstan
 		return fmt.Errorf("write OpenChoreo binding secret %s/%s: %w", cfg.Org, name, err)
 	}
 	return nil
-}
-
-// writeOpenBaoBinding writes the OpenBao projection at
-// secret/aep/thunder/<org>/<env>, following exactly the port-forward +
-// Kubernetes-auth + KV-v2-write pattern cmd.provisionOpenBao already uses for
-// every other platform secret (internal/openbao's PortForward/
-// WaitForReachable/GetSAToken/KubernetesLogin/Must) — same mechanism, new
-// path, so a second, independent OpenBao client was not needed.
-func writeOpenBaoBinding(ctx context.Context, cfg Config, inst *ThunderInstance) error {
-	pfCmd, err := openbao.PortForward(ctx, cfg.OpenBaoNamespace, cfg.OpenBaoRelease, cfg.Kubeconfig)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = pfCmd.Process.Kill() }()
-
-	baseURL := "http://localhost:" + openbao.LocalPort
-	if err := openbao.WaitForReachable(ctx, baseURL, 30*time.Second); err != nil {
-		return fmt.Errorf("OpenBao not reachable via port-forward: %w", err)
-	}
-
-	saToken, err := openbao.GetSAToken(ctx, cfg.OpenBaoNamespace, cfg.OpenBaoServiceAccount, cfg.Kubeconfig)
-	if err != nil {
-		return err
-	}
-	token, err := openbao.KubernetesLogin(ctx, baseURL, cfg.OpenBaoWriteRole, saToken)
-	if err != nil {
-		return err
-	}
-
-	path := openBaoBindingPath(cfg.Org, cfg.Env)
-	_, err = openbao.Must(ctx, "PUT", baseURL, token, "/v1/secret/data/"+path, map[string]interface{}{
-		"data": map[string]interface{}{
-			keyIssuer:              inst.PublicURL,
-			keyAdminURL:            inst.AdminURL,
-			keySystemResource:      inst.SystemResourceIdentifier,
-			openBaoKeyClientID:     "aep-system-client",
-			openBaoKeyClientSecret: inst.SystemClientSecret,
-		},
-	})
-	return err
 }

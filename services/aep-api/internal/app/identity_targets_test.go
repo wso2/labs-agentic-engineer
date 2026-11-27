@@ -259,7 +259,9 @@ func TestIdentityTargetResolver_UnboundEnvironmentNamesTheFix(t *testing.T) {
 	if !errors.Is(err, openchoreo.ErrNoThunderBinding) {
 		t.Fatalf("the sentinel was lost: %v", err)
 	}
-	for _, want := range []string{"default", "acme", "setup-environment-thunder.sh"} {
+	// aectl platform install binds one environment only, so the error must not
+	// offer it as the fix for any other.
+	for _, want := range []string{"default", "acme", "aectl platform install", "oc.default_org_namespace", "oc.pipeline_source_environment"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error %q does not mention %q", err, want)
 		}
