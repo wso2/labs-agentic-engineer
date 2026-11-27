@@ -87,7 +87,7 @@ const (
 
 // ErrNoThunderBinding is the answer for an environment that exists but has no
 // identity provider bound to it. It is its own error because the recovery is
-// specific and a caller cannot guess it: run setup-environment-thunder.sh.
+// specific and a caller cannot guess it: re-run aectl platform install.
 var ErrNoThunderBinding = errors.New("openchoreo: environment has no Thunder binding")
 
 // ThunderBinding is one environment's identity provider, as the Environment
@@ -322,8 +322,8 @@ func thunderBindingFromAnnotations(orgID, environment string, annotations map[st
 		}
 	}
 	if len(missing) > 0 {
-		return ThunderBinding{}, fmt.Errorf("%w: %s/%s is missing %s — run setup-environment-thunder.sh %s %s",
-			ErrNoThunderBinding, orgID, environment, strings.Join(missing, ", "), orgID, environment)
+		return ThunderBinding{}, fmt.Errorf("%w: %s/%s is missing %s — re-run aectl platform install",
+			ErrNoThunderBinding, orgID, environment, strings.Join(missing, ", "))
 	}
 	return binding, nil
 }
@@ -333,12 +333,11 @@ func thunderBindingFromAnnotations(orgID, environment string, annotations map[st
 // reasoning as the Thunder binding above: aep-api runs outside the cluster, so
 // the Environment is the one projection of the record it can read.
 const (
-	annAIGatewayEndpoint   = "aep.wso2.com/aigateway-endpoint"
-	annAIGatewayInternal   = "aep.wso2.com/aigateway-internal-endpoint"
-	annAIGatewayAdminURL   = "aep.wso2.com/aigateway-admin-url"
-	annAIGatewayGateway    = "aep.wso2.com/aigateway-gateway"
-	annAIGatewaySecretPath = "aep.wso2.com/aigateway-secret-path"
-	annAIGatewayBinding    = "aep.wso2.com/aigateway-binding"
+	annAIGatewayEndpoint = "aep.wso2.com/aigateway-endpoint"
+	annAIGatewayInternal = "aep.wso2.com/aigateway-internal-endpoint"
+	annAIGatewayAdminURL = "aep.wso2.com/aigateway-admin-url"
+	annAIGatewayGateway  = "aep.wso2.com/aigateway-gateway"
+	annAIGatewayBinding  = "aep.wso2.com/aigateway-binding"
 	// annOTelEndpoint is the environment's OTLP trace-ingest base, written by
 	// setup-environment-gateway.sh. It is NOT on the AI gateway: AMP serves
 	// /otel from the API PLATFORM gateway, a different Service on a different
@@ -383,8 +382,6 @@ type AIGatewayBinding struct {
 	AdminURL string
 	// GatewayID is the AMP gateway UUID a provider is attached to.
 	GatewayID string
-	// SecretPath is where AEP's own AMP credential lives in the secret store.
-	SecretPath string
 	// Name is the binding record's own name, for logs and diagnostics.
 	Name string
 	// OTelEndpoint is where this environment ingests traces — the OTLP base an
@@ -450,7 +447,6 @@ func aiGatewayBindingFromAnnotations(orgID, environment string, annotations map[
 		InternalEndpoint: strings.TrimSpace(annotations[annAIGatewayInternal]),
 		AdminURL:         strings.TrimSpace(annotations[annAIGatewayAdminURL]),
 		GatewayID:        strings.TrimSpace(annotations[annAIGatewayGateway]),
-		SecretPath:       strings.TrimSpace(annotations[annAIGatewaySecretPath]),
 		Name:             strings.TrimSpace(annotations[annAIGatewayBinding]),
 		OTelEndpoint:     strings.TrimSpace(annotations[annOTelEndpoint]),
 		ConsoleURL:       strings.TrimRight(strings.TrimSpace(annotations[annAMPConsoleURL]), "/"),

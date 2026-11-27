@@ -291,7 +291,6 @@ kubectl annotate environment "$ENV_NAME" -n "$ORG_NAME" --overwrite \
     "aep.wso2.com/aigateway-internal-endpoint=${INTERNAL_ENDPOINT}" \
     "aep.wso2.com/aigateway-admin-url=${AMP_API_OUT}" \
     "aep.wso2.com/aigateway-gateway=${GW_ID}" \
-    "aep.wso2.com/aigateway-secret-path=secret/aep/amp/${ORG_NAME}" \
     "aep.wso2.com/aigateway-binding=${GW_NAME}" \
     "aep.wso2.com/amp-console-url=${AMP_CONSOLE_OUT}" >/dev/null
 
@@ -299,7 +298,7 @@ kubectl annotate environment "$ENV_NAME" -n "$ORG_NAME" --overwrite \
 # a missing one is not a degraded gateway, it is an agent that keeps calling
 # Anthropic directly with nothing reporting why. Read back what landed.
 for key in aigateway-endpoint aigateway-internal-endpoint aigateway-admin-url \
-           aigateway-gateway aigateway-secret-path aigateway-binding; do
+           aigateway-gateway aigateway-binding; do
     value="$(kubectl get environment "$ENV_NAME" -n "$ORG_NAME" \
         -o "jsonpath={.metadata.annotations.aep\\.wso2\\.com/${key}}" 2>/dev/null || true)"
     [ -n "$value" ] \

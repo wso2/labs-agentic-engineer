@@ -298,7 +298,7 @@ func TestEnvironmentClient_GetThunderBinding_UnboundEnvironment(t *testing.T) {
 	if !errors.Is(err, ErrNoThunderBinding) {
 		t.Fatalf("want ErrNoThunderBinding, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "setup-environment-thunder.sh acme staging") {
+	if !strings.Contains(err.Error(), "aectl platform install") {
 		t.Fatalf("the error must name the fix, got: %v", err)
 	}
 }
@@ -316,7 +316,6 @@ func TestEnvironmentClient_GetThunderBinding_PartialBindingIsAbsent(t *testing.T
 		"no credential reference": {
 			"aep.wso2.com/thunder-issuer":                     "http://default-idp.amp.localhost:8080",
 			"aep.wso2.com/thunder-system-resource-identifier": "http://default-idp.amp.localhost:8080/mcp",
-			"aep.wso2.com/thunder-secret-path":                "secret/aep/thunder/acme/default",
 		},
 		"no issuer": {
 			"aep.wso2.com/thunder-system-resource-identifier": "http://default-idp.amp.localhost:8080/mcp",
@@ -351,11 +350,10 @@ func TestEnvironmentClient_GetThunderBinding_AdminURLIsOptional(t *testing.T) {
 
 func TestAIGatewayBindingFromAnnotations(t *testing.T) {
 	ann := map[string]string{
-		annAIGatewayEndpoint:   "http://ai-gateway.amp.localhost:8084",
-		annAIGatewayAdminURL:   "http://api.amp.localhost:8080/api/v1",
-		annAIGatewayGateway:    "gw-uuid",
-		annAIGatewaySecretPath: "secret/aep/amp/default",
-		annAIGatewayBinding:    "ai-gateway-default-default",
+		annAIGatewayEndpoint: "http://ai-gateway.amp.localhost:8084",
+		annAIGatewayAdminURL: "http://api.amp.localhost:8080/api/v1",
+		annAIGatewayGateway:  "gw-uuid",
+		annAIGatewayBinding:  "ai-gateway-default-default",
 	}
 	got, err := aiGatewayBindingFromAnnotations("default", "default", ann)
 	if err != nil {

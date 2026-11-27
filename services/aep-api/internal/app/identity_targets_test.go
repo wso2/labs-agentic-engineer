@@ -259,7 +259,7 @@ func TestIdentityTargetResolver_UnboundEnvironmentNamesTheFix(t *testing.T) {
 	if !errors.Is(err, openchoreo.ErrNoThunderBinding) {
 		t.Fatalf("the sentinel was lost: %v", err)
 	}
-	for _, want := range []string{"default", "acme", "setup-environment-thunder.sh"} {
+	for _, want := range []string{"default", "acme", "aectl platform install"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error %q does not mention %q", err, want)
 		}
