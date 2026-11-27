@@ -172,19 +172,8 @@ type Config struct {
 
 	// Kubeconfig is forwarded to every kubectl/helm invocation; empty uses
 	// the default (~/.kube/config or in-cluster).
-	Kubeconfig string
-
-	// OpenBaoNamespace, OpenBaoRelease, OpenBaoServiceAccount, and
-	// OpenBaoWriteRole address the same OpenBao instance
-	// cmd.provisionOpenBao already writes T1's secrets into — passed in
-	// rather than re-declared here so cmd's own constants
-	// (ocOpenBaoNamespace/ocOpenBaoRelease/ocOpenBaoSA/ocWriteRole) stay the
-	// single source of truth for them.
-	OpenBaoNamespace      string
-	OpenBaoRelease        string
-	OpenBaoServiceAccount string
-	OpenBaoWriteRole      string
-	BindingSecrets        BindingSecrets
+	Kubeconfig     string
+	BindingSecrets BindingSecrets
 }
 
 // BindingSecrets stores the binding's credential where aep-api reads it.

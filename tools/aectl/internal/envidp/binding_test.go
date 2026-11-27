@@ -18,7 +18,7 @@ package envidp
 
 import (
 	"context"
-	"strings"
+	"slices"
 	"testing"
 )
 
@@ -80,18 +80,18 @@ func TestBindingCredentialData(t *testing.T) {
 func TestBindingAnnotations(t *testing.T) {
 	cfg := Config{Org: "default", Env: "development"}
 	inst := &ThunderInstance{PublicURL: "http://development-idp.openchoreo.localhost:8080", AdminURL: "http://admin", SystemResourceIdentifier: "sys"}
-	got := strings.Join(bindingAnnotations(cfg, inst), " ")
-	for _, want := range []string{
+	got := bindingAnnotations(cfg, inst)
+	want := []string{
 		"aep.wso2.com/thunder-binding=thunder-binding-default-development",
 		"aep.wso2.com/thunder-issuer=http://development-idp.openchoreo.localhost:8080",
 		"aep.wso2.com/thunder-admin-url=http://admin",
 		"aep.wso2.com/thunder-system-resource-identifier=sys",
-		"aep.wso2.com/thunder-secret-path=secret/aep/thunder/default/development",
 		"aep.wso2.com/thunder-secret-ref=thunder-binding-default-development",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("annotations lack %q: %s", want, got)
-		}
+	}
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("annotations = %v, want %v", got, want)
 	}
 }
 
