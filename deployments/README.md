@@ -728,9 +728,9 @@ Re-run `make dev-env`: the install writes its inputs again and restores each
 generated key (Postgres password, Thunder client secrets, webhook relay seed)
 from the cluster Secret ESO last synced it into, so no holder of the old value
 breaks. It never rewrites a generated key the store still has, so a re-run on
-an intact OpenBao rotates nothing. Then follow steps 3 to 5 of
+an intact OpenBao rotates nothing. Then follow steps 3 and 4 of
 [Local OpenBao wipe recovery](#local-openbao-wipe-recovery) for what the
-install does not own (environment bindings, org secrets, aep-api's access).
+install does not own (the secrets stored through OpenChoreo, `host.k3d.internal`).
 
 **`make dev-env` drops Helm values set by hand.** Its `aectl platform install`
 is a `helm upgrade --install` that resets the release to the chart's defaults
@@ -827,7 +827,7 @@ CoreDNS ([After a host restart](#after-a-host-restart)).
 **Step 1 is what `make dev-env` (`aectl platform install`) does.** It writes
 the install's inputs again and restores every generated `aep/*` key from its
 Secret before it would generate one, and never rewrites a key the store has.
-Do the manual steps below only for what it does not own (steps 3 to 5), or
+Do the manual steps below only for what it does not own (steps 3 and 4), or
 without a re-install. Never write a value with `value=-` over
 `kubectl exec -i`: it intermittently stores an empty value.
 
@@ -897,52 +897,24 @@ Never `bao kv get` a multi-field document without `-field=<name>` piped to
    `sync-clients` refuses until every non-generated path above is back.
 2. **Verify** each written key by length (or sha256) against the Secret it came
    from.
-3. **Environment identity bindings.** Each environment with a Thunder binding
-   has a document at `secret/aep/thunder/<org>/<env>`, aep-api's only vault
-   read (environment-tier sign-in fails without it). aectl wrote it when it
-   bound the environment (`tools/aectl/internal/envidp`); rewrite its 5 fields
-   from what survives, one 0600 file per field, in one `kv put`:
-
-   | Field | Source |
-   |---|---|
-   | `issuer` | Environment `<env>` (org namespace) annotation `aep.wso2.com/thunder-issuer` |
-   | `adminURL` | annotation `aep.wso2.com/thunder-admin-url` |
-   | `systemResourceIdentifier` | annotation `aep.wso2.com/thunder-system-resource-identifier` |
-   | `clientId` | Secret `thunder-<org>-<env>-aep-system-client` (namespace `thunder-<org>-<env>`), key `client-id` |
-   | `clientSecret` | the same Secret, key `client-secret` |
-
-   An environment lists its binding path in the annotation
-   `aep.wso2.com/thunder-secret-path`; one without it has nothing to restore.
-4. **Org secrets (`user-app-secrets/<vault-org-ns>/<ref>`).** Every org secret
-   (`<ns>-github-pat-…`, `<ns>-github-webhook-secret-…`, `<ns>-default-key-…`,
-   `<ns>-coding-agent-key-…`, `<ns>-ae-publisher-client-…`,
-   `<ns>-ae-studio-client-…`) lives only in the vault, but each one a workload
-   consumes has an ExternalSecret whose target Secret keeps the last synced
-   value. List them by remote path, names only:
+3. **Secrets stored through OpenChoreo.** The org secrets and each
+   environment's Thunder binding credential (`thunder-binding-<org>-<env>`)
+   survive the wipe: OpenChoreo keeps each one as a Kubernetes Secret in
+   `openchoreo-kv-<ns>` and pushes it to OpenBao through a PushSecret every
+   hour. To push them now:
 
    ```bash
-   kubectl get externalsecret -A -o json | jq -r '.items[] | .metadata.namespace as $ns
-     | (.spec.target.name // .metadata.name) as $t | .spec.data[]?
-     | select(.remoteRef.key | test("user-app-secrets/"))
-     | [.remoteRef.key, .remoteRef.property, $ns, $t, .secretKey] | @tsv' | sort -u
+   kubectl get ns -o name | grep '^namespace/openchoreo-kv-' | cut -d/ -f2 | while read -r ns; do
+     kubectl -n "$ns" annotate pushsecret --all force-sync="$(date +%s)" --overwrite
+   done
    ```
-
-   For each remote path, write every property from its target Secret's key
-   (0600 file per field, as in step 1) in one `kv put`. When several Secrets
-   feed the same path and property, check they agree by sha256 first. A path
-   that `org_secrets` names but no Secret feeds has no surviving copy:
-   re-enter it in Settings (the GitHub token regenerates the webhook secret
-   and both org clients; the model key and the Claude token are re-saved on
-   their cards; the org's repository hooks are re-keyed with the new secret
-   by aep-api's hook repair once the pod rolls). Do not delete `org_secrets`
-   rows by hand.
-5. **`host.k3d.internal`.** A colima or Docker restart that did not go through
+4. **`host.k3d.internal`.** A colima or Docker restart that did not go through
    `k3d cluster start` also drops `host.k3d.internal` from the node's
    `/etc/hosts` and from CoreDNS `NodeHosts`. Run
    `bash deployments/scripts/restore-host-k3d-internal.sh check`; on a finding,
    run it without `check` ([After a host restart](#after-a-host-restart)). Do
    not stop and start the cluster to fix it: that wipes OpenBao again.
-6. **Sync.** Run `aectl platform sync-clients`: it force-syncs the platform
+5. **Sync.** Run `aectl platform sync-clients`: it force-syncs the platform
    ExternalSecrets, then sets the Postgres role and the Thunder clients from
    them. On an install with `idp.clients: asgardeo` the command needs the
    admin credential and stops without it:
