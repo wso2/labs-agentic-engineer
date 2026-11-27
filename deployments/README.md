@@ -197,7 +197,7 @@ the org's stored secrets would be orphaned. Delete the cluster first.
 `make dev-update` is one-shot, not a watch loop — run it again after every
 edit you want reflected in the cluster. Its steps are the `dev-update` target
 in the `Makefile`: build the images (only those whose dependencies changed),
-check the AE Studio refs, re-create aep-api's OpenBao role, upgrade the
+check the AE Studio refs, upgrade the
 `aep-platform` release with `aectl platform update`, run
 `aectl platform sync-clients`, and restart the platform Deployments (never the
 `ae-studio` pod, below). The upgrade does not re-derive aectl's install
