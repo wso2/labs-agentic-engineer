@@ -146,7 +146,8 @@ ae_studio:
 # are required; refused with idp.clients imported, where nothing reads them.
 thunder:
   # Kubernetes namespace where Thunder is deployed.
-  # Used when patching Thunder's CORS config and rolling its Deployment.
+  # Used for the port-forward to Thunder's Service when aectl registers
+  # OAuth clients, and for the AE Studio pod's egress rule.
   namespace: "thunder"
 
   # In-cluster URL of the Thunder service.

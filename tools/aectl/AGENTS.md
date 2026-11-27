@@ -113,13 +113,20 @@ tokens reads by them.
   `platformIDPInstallArgs` writes `idp.issuer`.
   `envidp` builds the environment Thunders' trust of the platform IdP from
   the same endpoints on `https://<host>:8443`.
-- `platform install` overwrites (plain PUT) every OpenBao seed it owns: the
-  `aep/idp-clients/<vaultName>` secrets,
-  `aep/anthropic-api-key`, `aep/postgres-password`, `aep/webhook-relay-seed`
-  (relay on or off), `aep/opensearch-{username,password}` and
-  `aep/thunder-admin/client-{id,secret}` (`cmd/platform.go`, the `secrets`
-  list). `install --reuse-secrets` overwrites nothing (the one exception is
-  `--replace-client-secrets`, see "Asgardeo clients"): it requires
+- `platform install` overwrites (plain PUT) only the secrets it is given this
+  run: `aep/anthropic-api-key`, `aep/opensearch-username` and, where it
+  administers Thunder, `aep/thunder-admin/client-{id,secret}`
+  (`platformInputPaths`, `writePlatformSecrets`, `cmd/platform_secrets.go`).
+  Every secret it generates — the `aep/idp-clients/<vaultName>` secrets,
+  `aep/postgres-password`, `aep/opensearch-password` and
+  `aep/webhook-relay-seed` (relay on or off) — is written create-only
+  (`generatedPlatformSecrets`, `seedGeneratedSecrets`, `putCreateOnly`,
+  `cmd/platform_secrets.go`) and by default never rewritten; that file's
+  header comment explains why. The one exception is a client secret under
+  `idp.clients: asgardeo`: with `--replace-client-secrets`, `aectl` writes a
+  fresh one over its vault path (see "Asgardeo clients").
+  `install --reuse-secrets` overwrites nothing beyond that same exception:
+  it requires
   `requiredOpenBaoPaths` and tops up, create-only, missing Thunder client
   secrets and (relay on) the relay seed. `platform update` writes only
   `aep/webhook-relay-seed`, create-only and only with
