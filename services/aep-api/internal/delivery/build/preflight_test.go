@@ -18,10 +18,15 @@ package build
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/wso2/aep/aep-api/internal/gen"
+	"github.com/wso2/aep/aep-api/internal/platform/apierr"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
@@ -481,4 +486,58 @@ func TestToBuildPreflight_CarriesNeedsResolution(t *testing.T) {
 	})
 	require.True(t, collectOnly.NeedsInput)
 	require.False(t, collectOnly.NeedsResolution)
+}
+
+// ----- error mapping (#968) ---------------------------------------------------
+
+// A project with no repository is a state of the project, not a server
+// fault: mapPreflightError must answer 404, never the generic 500 that used
+// to flood the logs at ERROR for every poll of a repo-less project.
+func TestMapPreflightError_RepoNotFound_Is404(t *testing.T) {
+	err := mapPreflightError(sourcecontrol.ErrRepoNotFound)
+	apiErr, ok := err.(*apierr.Error)
+	require.True(t, ok, "want *apierr.Error, got %T", err)
+	require.Equal(t, 404, apiErr.Status)
+	require.Equal(t, apierr.CodeNotFound, apiErr.Code)
+}
+
+// An error wrapping ErrRepoNotFound deeper in the call chain (errors.Is, not
+// just ==) must still be recognised.
+func TestMapPreflightError_WrappedRepoNotFound_Is404(t *testing.T) {
+	err := mapPreflightError(errors.New("read design: " + sourcecontrol.ErrRepoNotFound.Error()))
+	// A plain string-wrapped error (no %w) does NOT satisfy errors.Is, so this
+	// pins the OTHER half of the contract: anything that isn't actually the
+	// sentinel must stay a 500, never a false-positive 404.
+	apiErr, ok := err.(*apierr.Error)
+	require.True(t, ok)
+	require.Equal(t, 500, apiErr.Status)
+
+	wrapped := mapPreflightError(fmt.Errorf("read design: %w", sourcecontrol.ErrRepoNotFound))
+	apiErr, ok = wrapped.(*apierr.Error)
+	require.True(t, ok)
+	require.Equal(t, 404, apiErr.Status)
+}
+
+// Every other failure must keep answering the pre-existing 500 — this bug fix
+// changes the ErrRepoNotFound case only.
+func TestMapPreflightError_OtherError_Stays500(t *testing.T) {
+	err := mapPreflightError(errors.New("db unavailable"))
+	apiErr, ok := err.(*apierr.Error)
+	require.True(t, ok)
+	require.Equal(t, 500, apiErr.Status)
+	require.Equal(t, apierr.CodeInternal, apiErr.Code)
+}
+
+// End-to-end through the handler: a project with no repository must answer
+// 404, never the 500/internal_error the console used to see for the sample
+// "default" project (#968).
+func TestGetBuildPreflight_NoRepository_Returns404NotInternal(t *testing.T) {
+	svc := NewPreflightService(PreflightDeps{Design: fakeDesign{err: sourcecontrol.ErrRepoNotFound}})
+	h := NewHandler(nil, svc)
+
+	_, err := h.GetBuildPreflight(context.Background(), gen.GetBuildPreflightRequestObject{ProjectName: "default"})
+	apiErr, ok := err.(*apierr.Error)
+	require.True(t, ok, "want *apierr.Error, got %T (%v)", err, err)
+	require.Equal(t, 404, apiErr.Status)
+	require.Equal(t, apierr.CodeNotFound, apiErr.Code)
 }

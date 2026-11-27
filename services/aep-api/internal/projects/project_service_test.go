@@ -26,9 +26,13 @@
 package projects
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -881,6 +885,72 @@ func TestGetProjectStatus_NilOrFailingRepoMeansNoRepo(t *testing.T) {
 	}}
 	if st, err := NewProjectService(nil, norow, nil, nil, nil).GetProjectStatus(context.Background(), "acme", "web"); err != nil || st.Phase != "no-repo" {
 		t.Fatalf("GetRepo nil row: want phase no-repo, got %q (err %v)", st.Phase, err)
+	}
+}
+
+// lockedLogBuffer captures slog output behind a mutex, since the service
+// under test and the test goroutine both touch it.
+type lockedLogBuffer struct {
+	buf bytes.Buffer
+	mu  sync.Mutex
+}
+
+func (l *lockedLogBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.Write(p)
+}
+
+func (l *lockedLogBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.String()
+}
+
+func (l *lockedLogBuffer) Reset() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.buf.Reset()
+}
+
+// TestGetProjectStatus_RepoNotFoundLogsBelowError pins #968: a project with no
+// repository (sourcecontrol.ErrRepoNotFound) is an expected project state —
+// logged at WARN, never ERROR, so it does not page anyone. Any OTHER GetRepo
+// failure (a real infra fault) must keep logging at ERROR; the phase still
+// degrades to "no-repo" either way (TestGetProjectStatus_NilOrFailingRepoMeansNoRepo).
+//
+// Intentionally NOT parallel: it swaps the process-global slog default to
+// capture the log line, which would otherwise race other tests' output.
+func TestGetProjectStatus_RepoNotFoundLogsBelowError(t *testing.T) {
+	var out lockedLogBuffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&out, nil)))
+	defer slog.SetDefault(prev)
+
+	notFound := &fakeRepoSvc{GetRepoFunc: func(context.Context, string, string) (*sourcecontrol.GitRepository, error) {
+		return nil, sourcecontrol.ErrRepoNotFound
+	}}
+	if st, err := NewProjectService(nil, notFound, nil, nil, nil).GetProjectStatus(context.Background(), "acme", "web"); err != nil || st.Phase != "no-repo" {
+		t.Fatalf("ErrRepoNotFound: want phase no-repo, got %q (err %v)", st.Phase, err)
+	}
+	logs := out.String()
+	if strings.Contains(logs, `"level":"ERROR"`) {
+		t.Fatalf("ErrRepoNotFound must not log at ERROR: %s", logs)
+	}
+	if !strings.Contains(logs, `"level":"WARN"`) || !strings.Contains(logs, "get repo for project status") {
+		t.Fatalf("ErrRepoNotFound must still be logged, at WARN: %s", logs)
+	}
+
+	out.Reset()
+	dbDown := &fakeRepoSvc{GetRepoFunc: func(context.Context, string, string) (*sourcecontrol.GitRepository, error) {
+		return nil, errors.New("db down")
+	}}
+	if st, err := NewProjectService(nil, dbDown, nil, nil, nil).GetProjectStatus(context.Background(), "acme", "web"); err != nil || st.Phase != "no-repo" {
+		t.Fatalf("db down: want phase no-repo, got %q (err %v)", st.Phase, err)
+	}
+	logs = out.String()
+	if !strings.Contains(logs, `"level":"ERROR"`) {
+		t.Fatalf("an unrelated GetRepo failure must stay at ERROR: %s", logs)
 	}
 }
 
