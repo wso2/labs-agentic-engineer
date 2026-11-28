@@ -113,7 +113,7 @@ permission no action derives. Pass 2 runs before pass 5 because a membership edi
 mints a NEW group id, and the assignment has to name the current one.
 
 There is **no allowlist pass**. The OAuth client's `scopes` list is written onto
-the `thunder-app` CR by the provisioning overlay, not from here — and it enforces
+the `idp-app` CR by the provisioning overlay, not from here — and it enforces
 nothing either way: ThunderID 1.0.0 stores the field, reads it back, and silently
 drops an unknown or ungranted scope. The write gate on `security.json` is what
 keeps a stale handle out.

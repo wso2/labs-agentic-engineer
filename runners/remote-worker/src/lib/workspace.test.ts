@@ -80,7 +80,7 @@ test("installCrashArtefactExclude: a core dump cannot be staged, even by `git ad
 // what the exclude file SAYS and what git does with it are not the same claim.
 //
 // `core` + `core.*` ignored `src/authz/core.ts` — which the
-// `thunder-authentication` skill writes into every generated web app — and
+// `idp-authentication` skill writes into every generated web app — and
 // `src/core/` whole. A live run (2026-09-19) built two components whose sources
 // git then skipped in silence, and it committed neither.
 test("installCrashArtefactExclude: source named core is still staged by `git add -A`", async () => {

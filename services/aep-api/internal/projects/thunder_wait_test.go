@@ -68,7 +68,7 @@ func (f *fakeThunderReader) FindByResource(_ context.Context, resourceName, envi
 	return f.view, f.err
 }
 
-// fakeMarkerCatalog is a hand double of resourceMarkerCatalog. thunder-app
+// fakeMarkerCatalog is a hand double of resourceMarkerCatalog. idp-app
 // carries EnvConfig; postgres-cnpg does not — the wait keys on the marker,
 // never the type name.
 type fakeMarkerCatalog struct {
@@ -85,7 +85,7 @@ func (f *fakeMarkerCatalog) MarkersByName(context.Context) (map[string]ConsumerU
 
 func thunderWaitCatalog() *fakeMarkerCatalog {
 	return &fakeMarkerCatalog{byName: map[string]ConsumerURLMarker{
-		"thunder-app":   {EnvConfig: "redirectUris", Path: "/callback"},
+		"idp-app":       {EnvConfig: "redirectUris", Path: "/callback"},
 		"postgres-cnpg": {},
 	}}
 }
@@ -237,7 +237,7 @@ func assertNoThunderConsult(t *testing.T, h *thunderWaitHarness) {
 func webAppThunderOpts(origin string, cr *ThunderApplicationView) thunderWaitOpts {
 	return thunderWaitOpts{
 		component:  thunderWaitWeb,
-		designBody: webAppWithPlatformResource(thunderWaitWeb, thunderWaitDep, "thunder-app"),
+		designBody: webAppWithPlatformResource(thunderWaitWeb, thunderWaitDep, "idp-app"),
 		origin:     origin,
 		cr:         cr,
 	}
@@ -385,12 +385,12 @@ func TestDeploymentState_WebAppThunderNewOriginPendingUntilCRMatches(t *testing.
 	assertRedirectPatch(t, h.rc, newCallback, 2)
 }
 
-// Service/API components never enter the wait, even when they declare thunder-app.
-func TestDeploymentState_ServiceWithThunderAppSkipsWait(t *testing.T) {
+// Service/API components never enter the wait, even when they declare idp-app.
+func TestDeploymentState_ServiceWithIDPAppSkipsWait(t *testing.T) {
 	t.Parallel()
 	h := newThunderWaitHarness(t, thunderWaitOpts{
 		component:  thunderWaitAPI,
-		designBody: serviceWithPlatformResource(thunderWaitAPI, thunderWaitDep, "thunder-app"),
+		designBody: serviceWithPlatformResource(thunderWaitAPI, thunderWaitDep, "idp-app"),
 		origin:     thunderWaitOrigin,
 		cr:         placeholderThunderCR(),
 	})
@@ -421,7 +421,7 @@ func TestDeploymentState_ThunderPatchErrorSurfaces(t *testing.T) {
 	t.Parallel()
 	h := newThunderWaitHarness(t, thunderWaitOpts{
 		component:  thunderWaitWeb,
-		designBody: webAppWithPlatformResource(thunderWaitWeb, thunderWaitDep, "thunder-app"),
+		designBody: webAppWithPlatformResource(thunderWaitWeb, thunderWaitDep, "idp-app"),
 		origin:     thunderWaitOrigin,
 		cr:         matchingThunderCR(),
 		patchErr:   errors.New("patch boom"),
@@ -439,7 +439,7 @@ func TestDeploymentState_ThunderGetErrorSurfaces(t *testing.T) {
 	t.Parallel()
 	h := newThunderWaitHarness(t, thunderWaitOpts{
 		component:  thunderWaitWeb,
-		designBody: webAppWithPlatformResource(thunderWaitWeb, thunderWaitDep, "thunder-app"),
+		designBody: webAppWithPlatformResource(thunderWaitWeb, thunderWaitDep, "idp-app"),
 		origin:     thunderWaitOrigin,
 		thunderErr: errors.New("get boom"),
 	})
@@ -456,7 +456,7 @@ func TestDeploymentState_ThunderAPIMissingIsReady(t *testing.T) {
 	t.Parallel()
 	h := newThunderWaitHarness(t, thunderWaitOpts{
 		component:  thunderWaitWeb,
-		designBody: webAppWithPlatformResource(thunderWaitWeb, thunderWaitDep, "thunder-app"),
+		designBody: webAppWithPlatformResource(thunderWaitWeb, thunderWaitDep, "idp-app"),
 		origin:     thunderWaitOrigin,
 		thunderErr: ErrThunderApplicationAPIMissing,
 	})
@@ -489,7 +489,7 @@ func TestDeploymentState_FailedOCDoesNotConsultThunder(t *testing.T) {
 	t.Parallel()
 	h := newThunderWaitHarness(t, thunderWaitOpts{
 		component:  thunderWaitWeb,
-		designBody: webAppWithPlatformResource(thunderWaitWeb, thunderWaitDep, "thunder-app"),
+		designBody: webAppWithPlatformResource(thunderWaitWeb, thunderWaitDep, "idp-app"),
 		origin:     thunderWaitOrigin,
 		summary:    &openchoreo.ReleaseBindingSummary{ReadyStatus: "False", ReadyReason: "RenderingFailed"},
 		cr:         matchingThunderCR(),
@@ -511,7 +511,7 @@ func TestDeploymentState_UndeployDoesNotConsultThunder(t *testing.T) {
 	t.Parallel()
 	h := newThunderWaitHarness(t, thunderWaitOpts{
 		component:  thunderWaitWeb,
-		designBody: webAppWithPlatformResource(thunderWaitWeb, thunderWaitDep, "thunder-app"),
+		designBody: webAppWithPlatformResource(thunderWaitWeb, thunderWaitDep, "idp-app"),
 		origin:     thunderWaitOrigin,
 		summary:    &openchoreo.ReleaseBindingSummary{Undeploy: true},
 		cr:         placeholderThunderCR(),

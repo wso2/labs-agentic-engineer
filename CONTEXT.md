@@ -173,7 +173,7 @@ _Avoid_: shared mode, inherit (nothing is copied — the same key is read).
 **Platform resource**:
 A dependency kind: platform-provisioned infrastructure from a typed catalog
 (`resourceType`), approved and provisioned by the user in the console drawer —
-e.g. `postgres-cnpg`, `thunder-app`. Authored under a component's
+e.g. `postgres-cnpg`, `idp-app`. Authored under a component's
 `dependencies[]` in `design.json`; resolved against live platform state, never
 a stored "connected/not" flag.
 _Avoid_: connection (in OpenChoreo that names a consumed endpoint — the
@@ -306,7 +306,7 @@ _Avoid_: reserved name, well-known type name (no resource type's name is ever
 meaningful to the platform itself).
 
 **Thunder application**:
-A platform resource (`resourceType: thunder-app`) representing a per-project
+A platform resource (`resourceType: idp-app`) representing a per-project
 OAuth client on the Platform IdP. Declared under the same dependency name by
 both the SPA that signs users in and the service whose API it protects — the
 architect proposes it when the spec implies end-user sign-in; the user

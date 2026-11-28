@@ -54,7 +54,7 @@ swapping `src/authz/session.ts` is a module substitution, not a request.
 │   ├── wired.ts          copied verbatim — the gateway stand-in for wired mode
 │   ├── handlers.ts       YOURS — the seed data and the request handlers
 │   ├── env.ts            YOURS — what window._env_ holds
-│   └── authz/            thunder-authentication's — arrives with its `assets/app/` tree
+│   └── authz/            idp-authentication's — arrives with its `assets/app/` tree
 │       ├── contract.ts   verbatim — projects each contract into the operation table
 │       ├── gateway.ts    verbatim — the API gateway: the 401s
 │       ├── session.ts    verbatim — the substitute for src/authz/session.ts  ┐ only with an
@@ -77,12 +77,12 @@ cp "$AEP_SKILLS_DIR/react-webapp/assets/mock-badge.ts"    mock/badge.ts
 cp "$AEP_SKILLS_DIR/react-webapp/assets/mock-wired.ts"    mock/wired.ts
 # the gateway layer, ALWAYS — auth dependency or not:
 mkdir -p mock/authz
-cp "$AEP_SKILLS_DIR/thunder-authentication/assets/app/mock/authz/contract.ts" mock/authz/contract.ts
-cp "$AEP_SKILLS_DIR/thunder-authentication/assets/app/mock/authz/gateway.ts"  mock/authz/gateway.ts
+cp "$AEP_SKILLS_DIR/idp-authentication/assets/app/mock/authz/contract.ts" mock/authz/contract.ts
+cp "$AEP_SKILLS_DIR/idp-authentication/assets/app/mock/authz/gateway.ts"  mock/authz/gateway.ts
 ```
 
 With an auth dependency the two `mock/authz/` files above are already in place:
-`thunder-authentication`'s one `cp -r` of its `assets/app/` tree laid them down
+`idp-authentication`'s one `cp -r` of its `assets/app/` tree laid them down
 beside `mock/authz/session.ts`, and `npm run gen` writes
 `mock/authz/roles.gen.ts` next to them. Copy them again anyway; a second copy of
 an identical file changes nothing.
@@ -384,7 +384,7 @@ turns the one defect this arrangement exists to catch into a green screen.
 `mock/authz/roles.gen.ts` from `specs/design/security.json`'s `roles[]`, in the
 order that file declares them — the first is who a visitor is with no `?role=`
 on the URL — alongside the two `src/authz/*.gen.ts` tables
-(`thunder-authentication` §1). Commit it with them; mock mode restates nothing.
+(`idp-authentication` §1). Commit it with them; mock mode restates nothing.
 
 `mock/authz/session.ts` turns the `?role=` on the URL into the space-separated
 scope string a real token would carry — the OIDC scopes plus that role's grants

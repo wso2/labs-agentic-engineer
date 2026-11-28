@@ -22,7 +22,7 @@
  * the walker reads what it sees correctly.
  *
  * `wire` runs the generated SPA against the mock session the react-webapp /
- * thunder-authentication skills ship (`skills/thunder-authentication/assets/
+ * idp-authentication skills ship (`skills/idp-authentication/assets/
  * app/mock/authz/session.ts`): there is no identity provider, so there is no
  * sign-in page. If that asset's `signIn`/`signOut` change, this text changes
  * with them.

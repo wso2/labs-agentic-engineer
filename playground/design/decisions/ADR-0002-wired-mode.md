@@ -166,7 +166,7 @@ literal in both suites. Change the derivation and both fail.
 
 **The role badge is `react-webapp/assets/mock-badge.ts`, plain DOM.**
 `mock/browser.ts` mounts it and is copied to every app, auth dependency or not,
-while the `thunder-authentication` tree arrives only with an auth dependency; and
+while the `idp-authentication` tree arrives only with an auth dependency; and
 a React component would drag JSX into a plain-TS mock file. Its role list rides
 `/env-config.js`, the channel the operation table already uses.
 

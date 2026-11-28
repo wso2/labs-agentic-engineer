@@ -1,10 +1,10 @@
-# thunder-app — sample platform-resource ClusterResourceType (P5).
+# idp-app — sample platform-resource ClusterResourceType (P5).
 #
 # Installed by the local deployments/ scripts (acting as the cluster PE would);
 # app-factory's BFF only DISCOVERS and REFERENCES this type — it never authors a
 # ClusterResourceType (see p5-constraints "app-factory authors only the Resource +
 # binding"). This is the concrete `resourceType` an architect's platform-resource
-# dependency names (resourceType == ClusterResourceType.metadata.name == "thunder-app").
+# dependency names (resourceType == ClusterResourceType.metadata.name == "idp-app").
 #
 # It renders a `ThunderApplication` (aep.wso2.com/v1alpha1) — a namespaced CR the
 # thunder-app-operator reconciles into a real OAuth app on the Thunder that
@@ -27,7 +27,7 @@
 # ── Marker vocabulary (metadata labels/annotations) ────────────────────────────
 # The labels/annotations below are how the PE (the type author) TELLS AEP which
 # consumption behaviors this resource type needs. AEP keys its behavior ONLY on
-# these markers — it has NO hardcoded type names, so "thunder-app" is just data.
+# these markers — it has NO hardcoded type names, so "idp-app" is just data.
 # Adding a new auth flavor (or any new type) is a cluster install + a skill, never
 # an app-factory release. The markers AEP understands:
 #
@@ -52,7 +52,7 @@
 #     platform defaults to `/callback`, which is exactly what this type wants,
 #     so we leave it off and let the default apply.
 #
-#   aep.wso2.com/skill: thunder-authentication
+#   aep.wso2.com/skill: idp-authentication
 #     Design save ensures this skill is present in the design's `skillsPinned`
 #     whenever a dependency of this type exists — the per-type teaching lives in
 #     the skill, not in platform code.
@@ -60,7 +60,7 @@
 apiVersion: openchoreo.dev/v1alpha1
 kind: ClusterResourceType
 metadata:
-  name: thunder-app
+  name: idp-app
   labels:
     # role → design-save stamps end-user-required auth on services that depend on this type.
     aep.wso2.com/role: end-user-auth
@@ -76,7 +76,7 @@ metadata:
     aep.wso2.com/consumer-url-env-config: redirectUris
     # consumer-url-path omitted → defaults to /callback (the path this OAuth app expects).
     # skill → design-save appends this skill to the design's skillsPinned when this dep is present.
-    aep.wso2.com/skill: thunder-authentication
+    aep.wso2.com/skill: idp-authentication
 spec:
   retainPolicy: Delete
   parameters:
@@ -97,7 +97,7 @@ spec:
           # `group` and `ou` are required for role-aware apps: verified on
           # Thunder 0.34 that `groups` (and `ou*`) reach the ID TOKEN only when
           # these scopes are granted — the app's scopeClaims map them (set by
-          # the thunder-app operator). See the thunder-authentication skill.
+          # the thunder-app operator). See the idp-authentication skill.
           #
           # The list is a truthful RECORD of what the client asks for, NOT a
           # gate: ThunderID 1.0.0 stores it and never enforces it, and drops an

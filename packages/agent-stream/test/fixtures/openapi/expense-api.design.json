@@ -13,7 +13,7 @@
     {
       "kind": "platform-resource",
       "name": "user-auth",
-      "resourceType": "thunder-app",
+      "resourceType": "idp-app",
       "wiring": {
         "ref": "spike-p6-expense-tracker-user-auth",
         "envBindings": {
@@ -33,6 +33,6 @@
     "openapi-conventions",
     "go",
     "api-management",
-    "thunder-authentication"
+    "idp-authentication"
   ]
 }

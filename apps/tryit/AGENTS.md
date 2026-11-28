@@ -26,7 +26,7 @@ project's test users and talks to the component's public gateway URL directly.
   URI on every project's sign-in client at deploy time, so the two settings
   move together (compose: `tryit` on `8095:3000`, console's `VITE_TRY_IT_URL`).
 - `src/session.ts` carries the RFC 8707 `resource` on all three OAuth legs;
-  see `skills/thunder-authentication/assets/app/src/authz/session.ts` for why.
+  see `skills/idp-authentication/assets/app/src/authz/session.ts` for why.
 
 ## Layout
 

@@ -53,7 +53,7 @@
     {
       "kind": "platform-resource",
       "name": "user-auth",
-      "resourceType": "thunder-app",
+      "resourceType": "idp-app",
       "wiring": {
         "ref": "ev-library-circul-1d401a43",
         "envBindings": {
@@ -72,7 +72,7 @@
   "skillsPinned": [
     "openapi-conventions",
     "ballerina",
-    "thunder-authentication",
+    "idp-authentication",
     "api-management"
   ]
 }

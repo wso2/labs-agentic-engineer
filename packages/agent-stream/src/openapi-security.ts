@@ -24,7 +24,7 @@
  * security block meaning:
  *
  *  - the component's `design.json` — whether it depends on the sign-in client
- *    at all. A component is protected iff it declares the `thunder-app`
+ *    at all. A component is protected iff it declares the `idp-app`
  *    platform resource; there is no `publicComponents` list any more.
  *  - the project's `specs/design/security.json` — the permission catalog.
  *    Operations REFERENCE handles; they never define them, and a handle whose
@@ -47,20 +47,13 @@
  * sides must not drift into two wordings of one rule.
  */
 
+import { SIGN_IN_RESOURCE_TYPE } from "./component-design-schema.js";
 import type { DiagramBundleReader } from "./design-diagrams.js";
 import { OIDC_RESERVED_SCOPES } from "./security-design-catalog.js";
 import { openapiSecurityMessage as say } from "./openapi-security-messages.js";
 
 /** A component's own spec: `specs/design/components/<name>/openapi.yaml`. */
 const COMPONENT_SPEC_RE = /^specs\/design\/components\/([^/]+)\/openapi\.ya?ml$/;
-
-/**
- * The platform resource type that IS sign-in. A component depending on it gets
- * an OAuth client, an issuer and a JWKS URL wired into its environment, and its
- * operations are rendered onto the gateway with a jwt-auth policy; a component
- * that does not is served with no policy at all.
- */
-const SIGN_IN_RESOURCE_TYPE = "thunder-app";
 
 /** The one authored permission catalog (`SECURITY_DESIGN_JSON_RE` matches it). */
 const SECURITY_DESIGN_PATH = "specs/design/security.json";

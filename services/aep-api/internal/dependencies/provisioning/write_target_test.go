@@ -250,7 +250,7 @@ func TestResolveComponentRunnerSecrets_EmptyEnvResolvesTheWriteTarget(t *testing
 
 func TestSignInCoordinates_ReadsTheWriteTargetsBinding(t *testing.T) {
 	design := fakeDesign{comps: []spec.DesignComponent{{Name: "api", Dependencies: []spec.Dependency{
-		{Kind: spec.DependencyKindPlatformResource, Name: "user-auth", ResourceType: "thunder-app"},
+		{Kind: spec.DependencyKindPlatformResource, Name: "user-auth", ResourceType: "idp-app"},
 	}}}}
 	binding := &openchoreo.ResourceReleaseBinding{Status: &openchoreo.ResourceReleaseBindingStatus{
 		Outputs: []openchoreo.ResolvedOutput{{Name: "client_id", Value: "cid"}},

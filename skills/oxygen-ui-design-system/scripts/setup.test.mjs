@@ -119,7 +119,7 @@ test("a scaffold gets React pinned exactly, Oxygen added, and one npm install", 
   assert.equal(pkg.dependencies["@wso2/oxygen-ui"], "^0.13.1");
   assert.equal(pkg.dependencies["@wso2/oxygen-ui-icons-react"], "^0.13.1");
   // react-router-dom, NOT react-router: it is the DOM entry the generated app
-  // imports (thunder-authentication's gates.tsx / App.example.tsx), and it
+  // imports (idp-authentication's gates.tsx / App.example.tsx), and it
   // brings react-router with it. Installing only react-router left an app
   // importing a package npm had never installed (measured 2026-09-17).
   assert.equal(pkg.dependencies["react-router-dom"], "^7.18.3", "not 8.3.1, whose React peer the pinned React fails");

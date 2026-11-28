@@ -133,7 +133,7 @@ async function installCommitIdentity(
 // is a name a person picks too. The list read `core.*` for a while, which is
 // unanchored and extension-blind, so it ignored `core.ts`, `core.css` and
 // `core.go` — and `src/authz/core.ts` is written into EVERY generated web app by
-// the `thunder-authentication` skill, so it fired on every project. A bare
+// the `idp-authentication` skill, so it fired on every project. A bare
 // `core` matches a DIRECTORY of that name as well as a file, and `src/core/` is
 // about as common as a directory name gets. That combination cost a live run
 // (`ae-demo/simplest-crud-blog`, 2026-09-19) two fully-built components: their

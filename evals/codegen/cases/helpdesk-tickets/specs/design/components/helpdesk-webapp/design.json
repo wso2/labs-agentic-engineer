@@ -55,7 +55,7 @@
       "kind": "platform-resource",
       "name": "user-auth",
       "description": "SSO sign-in through Thunder.",
-      "resourceType": "thunder-app",
+      "resourceType": "idp-app",
       "wiring": {
         "ref": "ev-helpdesk-ticke-54feb9ea",
         "envBindings": {
@@ -71,6 +71,6 @@
   "skillsPinned": [
     "react-webapp",
     "oxygen-ui-design-system",
-    "thunder-authentication"
+    "idp-authentication"
   ]
 }

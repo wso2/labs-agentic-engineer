@@ -26,7 +26,7 @@ sets on the OAuth app:
   `profile → […]`, `email → […]`.
 - top-level `allowedUserTypes: [Person]` (lets org users authenticate).
 
-The `thunder-app` `ClusterResourceType`'s `scopes` default is
+The `idp-app` `ClusterResourceType`'s `scopes` default is
 `openid profile email group ou` (was `openid profile email`) — the SPA requests
 those, and the operator's `scopeClaims` release the matching claims. The claim
 set is a shared constant (`identityUserAttributes`, `tokenClaimConfig`,
@@ -109,7 +109,7 @@ the `scopeClaims` map + `idToken.userAttributes` above). That is why `group` and
 **Chosen over** having the SPA decode the **access token** for groups: that
 token is opaque to a public client by design, and decoding it in every app (plus
 teaching the skill to) is worse than standard-OIDC id_token claims. See the
-`thunder-authentication` skill for the SPA side.
+`idp-authentication` skill for the SPA side.
 
 **Chosen over** making the claim set a per-app CR / resourcetype parameter:
 identity claims are a platform contract that shouldn't vary per app; a per-app

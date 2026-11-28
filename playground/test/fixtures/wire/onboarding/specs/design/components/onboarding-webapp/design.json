@@ -39,7 +39,7 @@
     {
       "kind": "platform-resource",
       "name": "user-auth",
-      "resourceType": "thunder-app",
+      "resourceType": "idp-app",
       "wiring": {
         "ref": "track-each-hire96-e321d814",
         "envBindings": {
@@ -55,6 +55,6 @@
   "skillsPinned": [
     "react-webapp",
     "oxygen-ui-design-system",
-    "thunder-authentication"
+    "idp-authentication"
   ]
 }

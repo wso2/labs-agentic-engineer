@@ -1,5 +1,5 @@
 ---
-name: thunder-authentication
+name: idp-authentication
 description: "Apply when a component sits on the project's sign-in — a SPA whose users authenticate through the auth platform-resource dependency, or a protected backend those signed-in users call."
 metadata:
   aep:
@@ -7,7 +7,7 @@ metadata:
     audience: [coding]
 ---
 
-# Thunder Authentication
+# IdP Authentication
 
 End-user identity is delegated to Thunder, the platform's Identity Provider,
 which the API gateway is wired to as its external IDP. **What a caller may do is
@@ -84,7 +84,7 @@ rules they carry were measured against this IdP and this gateway, and every one
 of them has already been got wrong by a real run.
 
 ```bash
-cp -r "$AEP_SKILLS_DIR/thunder-authentication/assets/app/." .
+cp -r "$AEP_SKILLS_DIR/idp-authentication/assets/app/." .
 ```
 
 That puts eight files in place, all verbatim:

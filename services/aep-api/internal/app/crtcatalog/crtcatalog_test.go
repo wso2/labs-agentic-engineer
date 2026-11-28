@@ -34,17 +34,17 @@ func TestCatalog_ProjectsTheRepoCatalogForDesignSave(t *testing.T) {
 		t.Fatalf("ResourceTypesByName: %v", err)
 	}
 
-	thunder := got["thunder-app"]
+	idpApp := got["idp-app"]
 	want := spec.CRTType{
 		EndUserAuth:          true,
 		ConsumerURLEnvConfig: "redirectUris",
 		ConsumerURLPath:      dependencies.DefaultConsumerURLPath,
-		Skill:                "thunder-authentication",
-		Description:          thunder.Description,
+		Skill:                "idp-authentication",
+		Description:          idpApp.Description,
 		Outputs:              []string{"client_id", "issuer", "jwks_url", "scopes", "resource"},
 	}
-	if thunder.Description == "" || !reflect.DeepEqual(thunder, want) {
-		t.Errorf("thunder-app = %+v, want %+v (with a description)", thunder, want)
+	if idpApp.Description == "" || !reflect.DeepEqual(idpApp, want) {
+		t.Errorf("idp-app = %+v, want %+v (with a description)", idpApp, want)
 	}
 
 	pg := got["postgres-cnpg"]

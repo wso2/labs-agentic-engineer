@@ -63,9 +63,9 @@ const design = (deps: unknown[]) =>
 const bundle = (cell: string | null = CELL) =>
   new FileBundle(cell === null ? {} : { "specs/design/design.cell": cell });
 
-test("dependencies that are cell nodes pass — a thunder-app on the east edge included", () => {
+test("dependencies that are cell nodes pass — an idp-app on the east edge included", () => {
   const ok = design([
-    { kind: "platform-resource", name: "user-auth", resourceType: "thunder-app" },
+    { kind: "platform-resource", name: "user-auth", resourceType: "idp-app" },
     { kind: "component", name: "expense-webapp" },
   ]);
   assert.equal(checkComponentDependencies(API, ok, bundle()), null);

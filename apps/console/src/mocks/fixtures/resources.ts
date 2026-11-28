@@ -40,7 +40,7 @@ export const platformTypes: PlatformResourceTypeDTO[] = [
     consumers: [{ projectId: "acme-expenses", componentName: "expense-api" }],
   },
   {
-    name: "thunder-app",
+    name: "idp-app",
     description: "An OAuth client on the platform's identity provider, for end-user sign-in.",
     parameters: {},
     outputs: ["clientId", "issuer"],

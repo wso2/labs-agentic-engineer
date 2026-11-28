@@ -50,7 +50,7 @@ package identity
 //     rows.
 //
 // There is no allowlist pass. The OAuth client's `scopes` list is written by the
-// provisioning overlay onto the `thunder-app` CR, not from here — and it
+// provisioning overlay onto the `idp-app` CR, not from here — and it
 // enforces nothing either way: ThunderID 1.0.0 stores the field, reads it back
 // and silently drops an unknown or ungranted scope. The write gate on
 // security.json is what keeps a stale handle out.

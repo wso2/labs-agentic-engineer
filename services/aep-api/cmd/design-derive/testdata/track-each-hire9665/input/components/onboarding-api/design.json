@@ -31,13 +31,13 @@
     {
       "kind": "platform-resource",
       "name": "user-auth",
-      "resourceType": "thunder-app"
+      "resourceType": "idp-app"
     }
   ],
   "skillsPinned": [
     "openapi-conventions",
     "ballerina",
     "api-management",
-    "thunder-authentication"
+    "idp-authentication"
   ]
 }

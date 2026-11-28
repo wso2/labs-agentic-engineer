@@ -28,7 +28,7 @@ against a scope nobody can hold.
 
 The platform provisions from it at Build (resource server, actions, project
 roles, group bindings, test users) and the console renders it as the Security
-page. `architecture` declares the `thunder-app` dependency on the SPA and each
+page. `architecture` declares the `idp-app` dependency on the SPA and each
 protected API; this file says what the people who sign in through it may do.
 
 ---
@@ -337,6 +337,6 @@ here creates anything: the platform creates the resource server, the roles, the
 groups and the test users when the user clicks Build. `openapi-conventions` owns
 how an operation names a handle and which rows it reaches (its path),
 `prototype` owns which screens exist and which role's flow walks them,
-`thunder-authentication` owns how the SPA gates each screen on the operation it
+`idp-authentication` owns how the SPA gates each screen on the operation it
 loads; this skill owns the decisions all three consume, and
 `authorization-model` states the invariants they share.

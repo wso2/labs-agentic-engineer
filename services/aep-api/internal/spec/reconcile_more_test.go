@@ -277,8 +277,8 @@ func TestLoadEmbeddedLibrary(t *testing.T) {
 	}
 	wantKinds := map[string]string{
 		"api-management": "org", "ballerina": "org", "go": "org", "react-webapp": "org",
-		"thunder-authentication": "org",
-		"cell-design":            "platform", "design": "platform",
+		"idp-authentication": "org",
+		"cell-design":        "platform", "design": "platform",
 		"prototype": "platform", "grilling": "platform",
 		"architecture": "platform", "openapi-conventions": "platform", "start": "platform",
 		"task-planning": "platform", "acceptance-criteria": "platform",

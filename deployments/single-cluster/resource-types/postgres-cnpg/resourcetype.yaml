@@ -69,7 +69,7 @@ spec:
       # TRADE-OFF: without this gate the binding reports Ready BEFORE Postgres is
       # actually serving, so a consumer may connect to a not-yet-ready DB for the
       # first ~30s. Restore the readyWhen line below once OpenChoreo adds foreign-CRD
-      # health checks or data-plane watch events (issue #4323). Unlike thunder-app,
+      # health checks or data-plane watch events (issue #4323). Unlike idp-app,
       # postgres has no deterministic ready signal to key off, so this stays a
       # temporary measure rather than a redesign.
       #

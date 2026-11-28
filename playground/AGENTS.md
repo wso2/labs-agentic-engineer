@@ -56,7 +56,7 @@ only on your machine. The tracked projects are the cases in
 |---|---|---|
 | `oc-hello-claude` | two Ballerina APIs (`GET /hello`, `GET /bye`); no database, no auth, no UI; approximately 3 min | `aep`, `ballerina`, `openapi-conventions` |
 | `p4a-base` | the same specs as `oc-hello-claude`; never run | a clean source to copy for a new fixture |
-| `expense-claims`, `onboarding-tracker` | realistic size; also `evals/codegen` cases | `react-webapp`, `mock-verification`, `thunder-authentication`; use them to confirm that a change holds at size |
+| `expense-claims`, `onboarding-tracker` | realistic size; also `evals/codegen` cases | `react-webapp`, `mock-verification`, `idp-authentication`; use them to confirm that a change holds at size |
 
 Use a fixture that has `.aep-playground/undo/`, or a fixture that has no
 component directories. A fixture that has component directories and no

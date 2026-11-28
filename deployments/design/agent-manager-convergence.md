@@ -154,7 +154,7 @@ apply owns fields, not objects.
 Verified as safe to coexist:
 ComponentTypes (`service`/`web-application` vs `agent-api`/`external-agent-api`),
 ClusterWorkflows (`dockerfile-builder` vs `amp-*`), ClusterTraits, AEP's
-`postgres-cnpg` and `thunder-app` ClusterResourceTypes — different names,
+`postgres-cnpg` and `idp-app` ClusterResourceTypes — different names,
 different objects. `ProjectType/default` is the one object both products need
 under the same name, so it has one owner (AEP's platform chart) rather than two.
 

@@ -94,12 +94,12 @@ func TestResourceTypeCatalog_List_ProjectsMarkers(t *testing.T) {
 				{
 					// Carries every marker.
 					Metadata: openchoreo.OCObjectMeta{
-						Name:   "thunder-app",
+						Name:   "idp-app",
 						Labels: map[string]string{LabelRole: RoleEndUserAuth},
 						Annotations: map[string]string{
 							AnnotationConsumerURLEnvConfig: "redirectUris",
 							AnnotationConsumerURLPath:      "/oauth2/callback",
-							AnnotationSkill:                "thunder-authentication",
+							AnnotationSkill:                "idp-authentication",
 							AnnotationDescription:          "End-user sign-in for this project's apps.",
 						},
 					},
@@ -119,29 +119,29 @@ func TestResourceTypeCatalog_List_ProjectsMarkers(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("want 2 types, got %d", len(got))
 	}
-	// Sorted by name: postgres-cnpg first, thunder-app second.
-	if got[0].Name != "postgres-cnpg" || got[0].Markers != (TypeMarkers{}) {
-		t.Fatalf("postgres-cnpg: want zero-value Markers, got %+v", got[0].Markers)
+	// Sorted by name: idp-app first, postgres-cnpg second.
+	if got[1].Name != "postgres-cnpg" || got[1].Markers != (TypeMarkers{}) {
+		t.Fatalf("postgres-cnpg: want zero-value Markers, got %+v", got[1].Markers)
 	}
 	// A type without the description annotation projects an empty (and thus
 	// omitted-from-JSON) Description.
-	if got[0].Description != "" {
-		t.Fatalf("postgres-cnpg: Description = %q, want empty", got[0].Description)
+	if got[1].Description != "" {
+		t.Fatalf("postgres-cnpg: Description = %q, want empty", got[1].Description)
 	}
 	wantMarkers := TypeMarkers{
 		EndUserAuth:          true,
 		ConsumerURLEnvConfig: "redirectUris",
 		ConsumerURLPath:      "/oauth2/callback",
-		Skill:                "thunder-authentication",
+		Skill:                "idp-authentication",
 		Description:          "End-user sign-in for this project's apps.",
 	}
-	if got[1].Name != "thunder-app" || got[1].Markers != wantMarkers {
-		t.Fatalf("thunder-app: Markers = %+v, want %+v", got[1].Markers, wantMarkers)
+	if got[0].Name != "idp-app" || got[0].Markers != wantMarkers {
+		t.Fatalf("idp-app: Markers = %+v, want %+v", got[0].Markers, wantMarkers)
 	}
 	// Description is ALSO projected onto the serialized top-level field —
 	// the architect-facing MCP payload carries it (unlike Markers, json:"-").
-	if got[1].Description != wantMarkers.Description {
-		t.Fatalf("thunder-app: Description = %q, want %q", got[1].Description, wantMarkers.Description)
+	if got[0].Description != wantMarkers.Description {
+		t.Fatalf("idp-app: Description = %q, want %q", got[0].Description, wantMarkers.Description)
 	}
 }
 
@@ -153,7 +153,7 @@ func TestResourceTypeCatalog_MarkersByName(t *testing.T) {
 			return []openchoreo.ResourceType{
 				{
 					Metadata: openchoreo.OCObjectMeta{
-						Name:   "thunder-app",
+						Name:   "idp-app",
 						Labels: map[string]string{LabelRole: RoleEndUserAuth},
 						Annotations: map[string]string{
 							AnnotationConsumerURLEnvConfig: "redirectUris",
@@ -172,8 +172,8 @@ func TestResourceTypeCatalog_MarkersByName(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("want 2 entries, got %d: %+v", len(got), got)
 	}
-	if m := got["thunder-app"]; !m.EndUserAuth || m.ConsumerURLEnvConfig != "redirectUris" || m.ConsumerURLPath != DefaultConsumerURLPath {
-		t.Fatalf("thunder-app markers = %+v, want role+env-config+default path", m)
+	if m := got["idp-app"]; !m.EndUserAuth || m.ConsumerURLEnvConfig != "redirectUris" || m.ConsumerURLPath != DefaultConsumerURLPath {
+		t.Fatalf("idp-app markers = %+v, want role+env-config+default path", m)
 	}
 	if m := got["postgres-cnpg"]; m != (TypeMarkers{}) {
 		t.Fatalf("postgres-cnpg markers = %+v, want zero value", m)

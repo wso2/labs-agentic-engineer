@@ -1067,7 +1067,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	params.MCPSpecFetcher = spec.FetchSpecFromURL
 	params.MCPSpecSlicer = spec.SliceOpenAPI
 	// design-save keys BOTH platform-resource derivations on this catalog: the CRT
-	// role marker for end-user auth (thunder-app generalization), and the type's
+	// role marker for end-user auth (no type is known by name), and the type's
 	// declared outputs for the dependency wiring it stamps into design.json. Wired
 	// consumer-side so design holds only a narrow ResourceTypesByName port. When
 	// the design declares a platform-resource dependency and this catalog is

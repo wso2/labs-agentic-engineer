@@ -29,13 +29,13 @@
     {
       "kind": "platform-resource",
       "name": "user-auth",
-      "resourceType": "thunder-app"
+      "resourceType": "idp-app"
     }
   ],
   "skillsPinned": [
     "wireframes",
     "react-webapp",
     "oxygen-ui-design-system",
-    "thunder-authentication"
+    "idp-authentication"
   ]
 }

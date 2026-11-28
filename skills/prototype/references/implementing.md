@@ -38,11 +38,11 @@ screen holds. The prototype wins over the issue text when the two differ.
   route shows what its screen draws.
 - **`/forbidden` and `NoAccess` are in no prototype.** They are the one
   carve-out from "build only the screens the manifest lists". Every app with
-  an auth dependency has both. They come from `thunder-authentication`'s
+  an auth dependency has both. They come from `idp-authentication`'s
   `authz` asset, and their absence is a defect.
 
 Gate each screen on the **operation it loads** (the call whose answer the
-screen renders on open) through `thunder-authentication`'s `authz` assets.
+screen renders on open) through `idp-authentication`'s `authz` assets.
 Copy them verbatim; never re-implement them. Name the operation once in
 `src/authz/screens.ts` (`loads: "GET /me/claims"`). Then put
 `<RequireOperation op={…} />` around the route and `<Can op={…}>` around the

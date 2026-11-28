@@ -117,7 +117,7 @@ func TestRun_UnknownResourceTypeRefusesWithProductionText(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1 (stderr %q)", code, stderr)
 	}
-	for _, s := range []string{"resourceType is not installed on this cluster", `receipts ("object-storage")`, "available: postgres-cnpg, thunder-app"} {
+	for _, s := range []string{"resourceType is not installed on this cluster", `receipts ("object-storage")`, "available: idp-app, postgres-cnpg"} {
 		if !strings.Contains(stderr, s) {
 			t.Errorf("stderr %q missing %q", stderr, s)
 		}
@@ -139,7 +139,7 @@ func TestRun_AuthConflictRefuses(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := `{"name":"orders-api","type":"service","exposesAPI":{"auth":"service-required"},` +
-		`"dependencies":[{"kind":"platform-resource","name":"user-auth","resourceType":"thunder-app"}]}` + "\n"
+		`"dependencies":[{"kind":"platform-resource","name":"user-auth","resourceType":"idp-app"}]}` + "\n"
 	if err := os.WriteFile(filepath.Join(comp, "design.json"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}

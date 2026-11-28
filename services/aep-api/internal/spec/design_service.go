@@ -153,7 +153,7 @@ type designFileCommitter interface {
 // dependencies/resources catalog: it returns the installed resource types
 // (CRTType keyed by resourceType name) that design-save's platform-resource
 // derivation reads — the PE-authored markers the end-user-auth derivation keys on
-// (replacing the deleted hardcoded thunder-app name), and the declared outputs
+// (no type is known by name), and the declared outputs
 // the wiring derivation turns into env-var names.
 // *resources.ResourceTypeCatalog satisfies it structurally. Wired via
 // SetResourceCatalog at the composition root; a nil catalog fails the save

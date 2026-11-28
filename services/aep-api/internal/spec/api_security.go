@@ -49,7 +49,7 @@ func ResolveAPISecurityEnabled(comp DesignComponent) bool {
 //
 // The two are not merely similar here, they are the same case: an agent that a
 // SPA calls is a protected backend exactly as its sibling API is, joins the
-// project's ONE `thunder-app` registration by sharing the dependency name (see
+// project's ONE `idp-app` registration by sharing the dependency name (see
 // skills/security-design), and forwards the caller's bearer downstream
 // unchanged. What an agent adds is not a different auth model but a sharper
 // reason to apply this one: an unauthenticated LLM endpoint is billable by

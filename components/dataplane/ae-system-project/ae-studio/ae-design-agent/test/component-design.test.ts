@@ -247,7 +247,7 @@ test("unknown key inside exposesAPI -> SCHEMA_VIOLATION", () => {
 
 // The retired caller-identity field is gone from the schema, so it is now an
 // unknown top-level key like any other — a design.json authored before the
-// thunder-app dependency replaced it is rejected, not silently tolerated.
+// idp-app dependency replaced it is rejected, not silently tolerated.
 test("retired callerIdentity block -> SCHEMA_VIOLATION", () => {
   const doc = baseDoc();
   doc.callerIdentity = { mode: "end-user" };

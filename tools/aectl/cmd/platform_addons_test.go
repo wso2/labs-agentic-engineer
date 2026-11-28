@@ -95,7 +95,7 @@ func existingForAddon(a addons.Addon) map[string]bool {
 func TestRunAddonInstall_DeclinedConfirmation(t *testing.T) {
 	newApplierCalled := false
 	deps := addonDeps{
-		multiSelect: selectByID(t, "thunder-app"),
+		multiSelect: selectByID(t, "idp-app"),
 		confirm:     func(string) bool { return false },
 		installOperator: func(context.Context, string, addons.OperatorSpec) error {
 			t.Error("installOperator must not be called when confirmation is declined")
@@ -119,12 +119,12 @@ func TestRunAddonInstall_DeclinedConfirmation(t *testing.T) {
 // install fails, its dependent addon is skipped and the function returns nil
 // (other addons that succeed would still be applied; here only one is selected).
 func TestRunAddonInstall_OperatorFailureSkipsAddon(t *testing.T) {
-	first := addonByID(t, "thunder-app")
+	first := addonByID(t, "idp-app")
 
 	fa := &fakeApplier{existing: existingForAddon(first)}
 	installCalled := false
 	deps := addonDeps{
-		multiSelect: selectByID(t, "thunder-app"),
+		multiSelect: selectByID(t, "idp-app"),
 		confirm:     func(string) bool { return true },
 		installOperator: func(_ context.Context, _ string, op addons.OperatorSpec) error {
 			installCalled = true
@@ -141,7 +141,7 @@ func TestRunAddonInstall_OperatorFailureSkipsAddon(t *testing.T) {
 	if !installCalled {
 		t.Error("installOperator must be called")
 	}
-	// When operator fails, only pre-manifests are applied (zero for thunder-app
+	// When operator fails, only pre-manifests are applied (zero for idp-app
 	// since credentials are now provisioned by the platform chart, not PreManifests).
 	if got, want := len(fa.applied), len(first.Operator.PreManifests); got != want {
 		t.Errorf("applied %d manifest(s), want %d (pre-manifests only)", got, want)
@@ -152,7 +152,7 @@ func TestRunAddonInstall_OperatorFailureSkipsAddon(t *testing.T) {
 // installs successfully, all manifests for the selected addon are applied and
 // that every PreManifests apply event occurs before installOperator is called.
 func TestRunAddonInstall_SuccessAppliesManifests(t *testing.T) {
-	first := addonByID(t, "thunder-app")
+	first := addonByID(t, "idp-app")
 
 	var events []string
 	fa := &fakeApplier{
@@ -161,7 +161,7 @@ func TestRunAddonInstall_SuccessAppliesManifests(t *testing.T) {
 	}
 	installCalled := false
 	deps := addonDeps{
-		multiSelect: selectByID(t, "thunder-app"),
+		multiSelect: selectByID(t, "idp-app"),
 		confirm:     func(string) bool { return true },
 		installOperator: func(context.Context, string, addons.OperatorSpec) error {
 			installCalled = true
@@ -210,12 +210,12 @@ func TestRunAddonInstall_SuccessAppliesManifests(t *testing.T) {
 // OperatorSpec.WaitForSecrets is non-empty, deps.waitForSecrets is called before
 // installOperator and a successful sync allows the operator to install.
 func TestRunAddonInstall_OperatorWaitsForSecrets(t *testing.T) {
-	first := addonByID(t, "thunder-app")
+	first := addonByID(t, "idp-app")
 	fa := &fakeApplier{existing: existingForAddon(first)}
 
 	var events []string
 	deps := addonDeps{
-		multiSelect: selectByID(t, "thunder-app"),
+		multiSelect: selectByID(t, "idp-app"),
 		confirm:     func(string) bool { return true },
 		waitForSecrets: func(_ context.Context, namespace string, names []string) error {
 			events = append(events, "wait")
@@ -256,12 +256,12 @@ func TestRunAddonInstall_OperatorWaitsForSecrets(t *testing.T) {
 // returns an error (e.g. ESO sync timed out), installOperator is not called
 // and the failure is recorded in operatorFailed so the addon is skipped.
 func TestRunAddonInstall_SecretSyncTimeout(t *testing.T) {
-	first := addonByID(t, "thunder-app")
+	first := addonByID(t, "idp-app")
 	fa := &fakeApplier{existing: existingForAddon(first)}
 	installCalled := false
 
 	deps := addonDeps{
-		multiSelect: selectByID(t, "thunder-app"),
+		multiSelect: selectByID(t, "idp-app"),
 		confirm:     func(string) bool { return true },
 		waitForSecrets: func(_ context.Context, _ string, _ []string) error {
 			return errors.New("timed out waiting for thunder-binding-default-default")
@@ -349,12 +349,12 @@ func TestRunAddonInstall_AddonsFlag_All(t *testing.T) {
 // TestRunAddonInstall_AddonsFlag_Specific verifies that a comma-separated list
 // installs exactly those addons without prompting.
 func TestRunAddonInstall_AddonsFlag_Specific(t *testing.T) {
-	target := addonByID(t, "thunder-app")
+	target := addonByID(t, "idp-app")
 	fa := &fakeApplier{existing: existingForAddon(target)}
 	installedOps := []string{}
 
 	deps := addonDeps{
-		addonsFlag: "thunder-app",
+		addonsFlag: "idp-app",
 		multiSelect: func(string, []ui.SelectItem) ([]bool, bool) {
 			t.Error("multiSelect must not be called when --addons flag is set")
 			return nil, false
@@ -375,7 +375,7 @@ func TestRunAddonInstall_AddonsFlag_Specific(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Only thunder-app's operator should have been installed.
+	// Only idp-app's operator should have been installed.
 	if len(installedOps) != 1 || installedOps[0] != target.Operator.ReleaseName {
 		t.Errorf("installed operators = %v, want [%s]", installedOps, target.Operator.ReleaseName)
 	}
@@ -385,7 +385,7 @@ func TestRunAddonInstall_AddonsFlag_Specific(t *testing.T) {
 // list with more than one ID installs exactly those addons — both operators are
 // invoked, all their manifests are applied, and no interactive callback fires.
 func TestRunAddonInstall_AddonsFlag_MultipleIDs(t *testing.T) {
-	first := addonByID(t, "thunder-app")
+	first := addonByID(t, "idp-app")
 	second := addonByID(t, "postgres-cnpg")
 
 	existing := existingForAddon(first)
@@ -396,7 +396,7 @@ func TestRunAddonInstall_AddonsFlag_MultipleIDs(t *testing.T) {
 	var installedOps []string
 
 	deps := addonDeps{
-		addonsFlag: "thunder-app,postgres-cnpg",
+		addonsFlag: "idp-app,postgres-cnpg",
 		multiSelect: func(string, []ui.SelectItem) ([]bool, bool) {
 			t.Error("multiSelect must not be called when --addons flag is set")
 			return nil, false
@@ -432,7 +432,7 @@ func TestRunAddonInstall_AddonsFlag_MultipleIDs(t *testing.T) {
 	wantApplied := len(first.Operator.PreManifests) + len(first.Manifests) +
 		len(second.Operator.PreManifests) + len(second.Manifests)
 	if got := len(fa.applied); got != wantApplied {
-		t.Errorf("applied %d manifests, want %d (thunder-app + postgres-cnpg)", got, wantApplied)
+		t.Errorf("applied %d manifests, want %d (idp-app + postgres-cnpg)", got, wantApplied)
 	}
 }
 
@@ -474,7 +474,7 @@ func TestRunAddonInstall_OperatorVersion(t *testing.T) {
 			// The prerelease constraint is the operator's own; a platform
 			// version must not displace it.
 			name:            "prerelease constraint survives a set platform version",
-			addonID:         "thunder-app", // OperatorSpec.Version == ">0.0.0-0"
+			addonID:         "idp-app", // OperatorSpec.Version == ">0.0.0-0"
 			platformVersion: "0.6.0-rc.17",
 			wantVersion:     ">0.0.0-0",
 		},
@@ -489,7 +489,7 @@ func TestRunAddonInstall_OperatorVersion(t *testing.T) {
 			// no --version at all is what produced "Could not locate a version
 			// matching provided version string" on a chart with no stable tag.
 			name:            "prerelease constraint survives an empty platform version",
-			addonID:         "thunder-app",
+			addonID:         "idp-app",
 			platformVersion: "",
 			wantVersion:     ">0.0.0-0",
 		},

@@ -45,8 +45,8 @@ const (
 func twoWebAppsSharingAuth() map[string]string {
 	return map[string]string{
 		spec.DesignRootFile:            rootDesignMd(),
-		"components/guest/design.json": webappWithPR("guest", []prDep{{sharedDepName, "thunder-app"}}),
-		"components/admin/design.json": webappWithPR("admin", []prDep{{sharedDepName, "thunder-app"}}),
+		"components/guest/design.json": webappWithPR("guest", []prDep{{sharedDepName, "idp-app"}}),
+		"components/admin/design.json": webappWithPR("admin", []prDep{{sharedDepName, "idp-app"}}),
 	}
 }
 
@@ -56,7 +56,7 @@ func TestEmit_SharedAuthDependencyRegistersEveryWebAppsCallback(t *testing.T) {
 	design := readDesign(t, twoWebAppsSharingAuth())
 	oc := ocResolving(map[string]string{"guest": sharedGuestURL, "admin": sharedAdminURL})
 	rc := rcOutputs(authOutputs(), nil)
-	svc := svcWithCatalog(oc, rc, nil, &fakeCatalog{markers: authMarkers("thunder-app")})
+	svc := svcWithCatalog(oc, rc, nil, &fakeCatalog{markers: authMarkers("idp-app")})
 
 	// Composing ONE web app's env-config.js still registers the whole project's
 	// set — the field belongs to the dependency, not to the app being composed.
@@ -82,7 +82,7 @@ func TestEmit_SharedAuthDependencyWritesTheSameValueForEveryWebApp(t *testing.T)
 	design := readDesign(t, twoWebAppsSharingAuth())
 	oc := ocResolving(map[string]string{"guest": sharedGuestURL, "admin": sharedAdminURL})
 	rc := rcOutputs(authOutputs(), nil)
-	svc := svcWithCatalog(oc, rc, nil, &fakeCatalog{markers: authMarkers("thunder-app")})
+	svc := svcWithCatalog(oc, rc, nil, &fakeCatalog{markers: authMarkers("idp-app")})
 
 	for _, name := range []string{"guest", "admin", "guest", "admin"} {
 		if _, ready := svc.buildEnvValues(ctx, "acme", "proj", testWriteTarget, design, componentNamed(t, design, name)); !ready {
@@ -110,7 +110,7 @@ func TestEmit_SharedAuthDependencySkipsUnresolvedWebApps(t *testing.T) {
 	design := readDesign(t, twoWebAppsSharingAuth())
 	oc := ocResolving(map[string]string{"admin": sharedAdminURL})
 	rc := rcOutputs(authOutputs(), nil)
-	svc := svcWithCatalog(oc, rc, nil, &fakeCatalog{markers: authMarkers("thunder-app")})
+	svc := svcWithCatalog(oc, rc, nil, &fakeCatalog{markers: authMarkers("idp-app")})
 
 	if _, ready := svc.buildEnvValues(ctx, "acme", "proj", testWriteTarget, design, componentNamed(t, design, "admin")); !ready {
 		t.Fatal("want ready=true for the admin web app")

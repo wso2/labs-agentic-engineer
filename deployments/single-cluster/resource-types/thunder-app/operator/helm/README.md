@@ -17,7 +17,7 @@ chart-with-every-other-chart) precisely so it reads as optional. Neither the
 `wso2-ae-platform` chart nor the `wso2-agentic-engineer-bundle` chart installs
 it, and no dependency-catalog machinery references it.
 
-The thunder-app operator is one reference implementation of the `thunder-app`
+The thunder-app operator is one reference implementation of the `idp-app`
 `ClusterResourceType` contract — analogous to how the CNPG operator is one
 reference implementation for `postgres-cnpg`. On the local dev stack, the
 setup scripts (`deployments/scripts/setup-aep.sh`) install it, acting as the

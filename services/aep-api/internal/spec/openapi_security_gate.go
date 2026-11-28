@@ -34,7 +34,7 @@ package spec
 //     violation of a two-defect document a coin toss).
 //
 //   - PARITY GAP, recorded rather than papered over: the agent's bundle keys
-//     protectedness on the literal `thunder-app` resourceType while this gate
+//     protectedness on the literal `idp-app` resourceType while this gate
 //     reads the committed consequence of the CRT role marker (ADR-0007), so a
 //     renamed or aliased sign-in CRT is PROTECTED here and UNPROTECTED there —
 //     and the component then cannot be written at all. Closing it means teaching

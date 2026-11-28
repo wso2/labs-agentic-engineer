@@ -238,7 +238,7 @@ func TestReconcile_MigratesLegacyRepo(t *testing.T) {
 	// preserved custom skill (mine). retired is purged. Both sides are derived
 	// from the library rather than hardcoded, so this never needs bumping when
 	// a skill is added to or removed from skills/.
-	for _, orgDefault := range []string{"api-management", "thunder-authentication"} {
+	for _, orgDefault := range []string{"api-management", "idp-authentication"} {
 		if _, ok := byName[orgDefault]; !ok {
 			t.Fatalf("org-kind default %q was not seeded on migration: %+v", orgDefault, skillKeysOf(byName))
 		}

@@ -25,7 +25,7 @@ If the `wiring` has an `endpoint` object, the entry goes in
 - The platform injects values only under the env-var names in `envBindings`.
   Do not change or add a name. The output of a `platform-resource` has the
   name `<DEP>_<OUTPUT>` (`user-auth` + `jwks_url` → `USER_AUTH_JWKS_URL`). The
-  skill of the resource (for example `thunder-authentication`) tells what each
+  skill of the resource (for example `idp-authentication`) tells what each
   output is.
 - A `platform-resource` with no `wiring` is broken input. Say so in one line
   and stop the run.

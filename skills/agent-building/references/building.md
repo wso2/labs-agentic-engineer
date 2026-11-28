@@ -1015,7 +1015,7 @@ makes it true. Never implement an ownership or permission check here.
 through this component and collapsing them is the usual mistake:
 
 - **Inbound — who is calling me.** When the component's `design.json` carries
-  the project's `thunder-app` dependency, the API Platform Gateway has already
+  the project's `idp-app` dependency, the API Platform Gateway has already
   validated the caller's token and hands you the result as headers. Read
   `X-User-Id`; answer **401** when it is missing, exactly as `api-management`
   requires of a service. Never parse the JWT yourself — the gateway is the only

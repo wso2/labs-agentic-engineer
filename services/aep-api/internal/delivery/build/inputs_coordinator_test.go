@@ -109,10 +109,10 @@ func notesApp() []spec.DesignComponent {
 		{Name: "api", ComponentType: spec.ComponentTypeService, Dependencies: []spec.Dependency{
 			{Kind: spec.DependencyKindPlatformResource, Name: "notes-db", ResourceType: "postgres",
 				Parameters: map[string]any{"instances": 1, "storage": "1Gi"}},
-			{Kind: spec.DependencyKindPlatformResource, Name: "user-auth", ResourceType: "thunder-app"},
+			{Kind: spec.DependencyKindPlatformResource, Name: "user-auth", ResourceType: "idp-app"},
 		}},
 		{Name: "web", ComponentType: spec.ComponentTypeWebApplication, Dependencies: []spec.Dependency{
-			{Kind: spec.DependencyKindPlatformResource, Name: "user-auth", ResourceType: "thunder-app"},
+			{Kind: spec.DependencyKindPlatformResource, Name: "user-auth", ResourceType: "idp-app"},
 		}},
 	}
 }

@@ -32,7 +32,7 @@ func Test_consumerCallbackSet_carriesTheFixedCallback(t *testing.T) {
 	t.Parallel()
 	design := readDesign(t, map[string]string{
 		spec.DesignRootFile:          rootDesignMd(),
-		"components/web/design.json": webappWithPR("web", []prDep{{"user-auth", "thunder-app"}}),
+		"components/web/design.json": webappWithPR("web", []prDep{{"user-auth", "idp-app"}}),
 	})
 	originOf := func(string) string { return "http://web.local" }
 
@@ -55,10 +55,10 @@ func Test_FilesForComponent_agentRegistersTheFixedCallback(t *testing.T) {
 	ctx := context.Background()
 	files := map[string]string{
 		spec.DesignRootFile:            rootDesignMd(),
-		"components/agent/design.json": buildComponentJSON("agent", "ai-agent", nil, []prDep{{"user-auth", "thunder-app"}}),
+		"components/agent/design.json": buildComponentJSON("agent", "ai-agent", nil, []prDep{{"user-auth", "idp-app"}}),
 	}
 	rc := rcOutputs(authOutputs(), nil)
-	svc := svcWithCatalog(ocResolving(nil), rc, storeWith(files), &fakeCatalog{markers: authMarkers("thunder-app")})
+	svc := svcWithCatalog(ocResolving(nil), rc, storeWith(files), &fakeCatalog{markers: authMarkers("idp-app")})
 	svc.SetTryItCallbackURL(tryIt)
 
 	got, ready, err := svc.FilesForComponent(ctx, "acme", "proj", "agent")
@@ -83,10 +83,10 @@ func Test_FilesForComponent_agentWithoutAFixedCallbackPatchesNothing(t *testing.
 	t.Parallel()
 	files := map[string]string{
 		spec.DesignRootFile:            rootDesignMd(),
-		"components/agent/design.json": buildComponentJSON("agent", "ai-agent", nil, []prDep{{"user-auth", "thunder-app"}}),
+		"components/agent/design.json": buildComponentJSON("agent", "ai-agent", nil, []prDep{{"user-auth", "idp-app"}}),
 	}
 	rc := rcOutputs(authOutputs(), nil)
-	svc := svcWithCatalog(ocResolving(nil), rc, storeWith(files), &fakeCatalog{markers: authMarkers("thunder-app")})
+	svc := svcWithCatalog(ocResolving(nil), rc, storeWith(files), &fakeCatalog{markers: authMarkers("idp-app")})
 
 	if _, ready, err := svc.FilesForComponent(context.Background(), "acme", "proj", "agent"); err != nil || !ready {
 		t.Fatalf("ready=%v err=%v", ready, err)
@@ -105,7 +105,7 @@ func Test_FilesForComponent_agentWithoutSignInDepPatchesNothing(t *testing.T) {
 		"components/agent/design.json": buildComponentJSON("agent", "ai-agent", nil, []prDep{{"orders-db", "postgres-cnpg"}}),
 	}
 	rc := rcOutputs(authOutputs(), nil)
-	svc := svcWithCatalog(ocResolving(nil), rc, storeWith(files), &fakeCatalog{markers: authMarkers("thunder-app")})
+	svc := svcWithCatalog(ocResolving(nil), rc, storeWith(files), &fakeCatalog{markers: authMarkers("idp-app")})
 	svc.SetTryItCallbackURL(tryIt)
 
 	if _, _, err := svc.FilesForComponent(context.Background(), "acme", "proj", "agent"); err != nil {

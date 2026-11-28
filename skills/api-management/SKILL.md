@@ -41,7 +41,7 @@ gateway and will disagree with it.
 
 **Never issue one either.** No `/auth/login`, `/auth/register`, `/auth/logout`,
 or any token endpoint on any backend. The IDP owns token issuance — see
-`thunder-authentication`.
+`idp-authentication`.
 
 **Identity arrives as a signed assertion.** On every protected operation the
 gateway mints a short-lived JWT of the caller it just authenticated, signs it
@@ -79,7 +79,7 @@ replaced — including a client-supplied `x-jwt-assertion`.) So a handler behind
 `security: []` reads no identity of any kind, and the mock-mode walk checks that
 it does not.
 
-**`thunder-authentication` owns what these mean and how to authorize on them** —
+**`idp-authentication` owns what these mean and how to authorize on them** —
 verifying the assertion, the `/me/…` filters, and why the subject is not a
 directory lookup key. These rules are this skill's, because they are the
 gateway's contract:
@@ -194,7 +194,7 @@ Express all three in your stack's own idiom — its routing style, where a share
 helper lives, and how a handler returns a status — following the conventions
 that skill already sets rather than inventing a second one here.
 
-Assertion verification builds on this — see `thunder-authentication`.
+Assertion verification builds on this — see `idp-authentication`.
 
 ## Calling a protected upstream
 
