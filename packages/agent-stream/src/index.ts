@@ -159,6 +159,7 @@ export {
   checkComponentDesign,
   componentDesignSchema,
   COMPONENT_DESIGN_JSON_RE,
+  SIGN_IN_RESOURCE_TYPE,
 } from "./component-design-schema.js";
 export type { ComponentDesignProblem } from "./component-design-schema.js";
 export { checkDesignDiagram, cellNodeIds, prdActors, DOMAIN_MODEL_PATH, PRD_PATH } from "./design-diagrams.js";
