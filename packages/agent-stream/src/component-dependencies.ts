@@ -30,6 +30,7 @@
  * cell edge has a dependency is a whole-bundle question (#695).
  */
 
+import { SIGN_IN_RESOURCE_TYPE } from "./component-design-schema.js";
 import { cellNodeIds, DESIGN_CELL_PATH, type DiagramBundleReader } from "./design-diagrams.js";
 import { dependencyDesignPath } from "./dependency-design-schema.js";
 
@@ -73,7 +74,7 @@ function declarationFor(dep: Dep): string {
     case "component":
       return `a sibling component: \`component ${dep.name} …\` inside the cell`;
     case "platform-resource":
-      return dep.resourceType === "thunder-app"
+      return dep.resourceType === SIGN_IN_RESOURCE_TYPE
         ? `the identity provider: \`east ${dep.name} as "Thunder Auth" identity-server\``
         : `a project-scoped resource: \`component ${dep.name} as "…" database\` (or cache, …) inside the cell`;
     case "org-service":
