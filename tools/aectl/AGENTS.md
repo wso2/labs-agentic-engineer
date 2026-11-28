@@ -44,8 +44,8 @@ for `asgardeo` and is refused for the other values. `platform.idp.issuer` is
 required for `imported` and `asgardeo`. There, `platform.idp.issuer` and
 `asgardeo.api_url` must be https URLs. For `thunder`, `platform.idp.issuer`
 is optional: if it is not set, the issuer is `thunder.public_url`.
-`platform.idp.org_handle` is always
-required. `administersThunder` (`cmd/platform_idp.go`) reports the value
+`platform.idp.org_handle` is always required.
+`administersThunder` (`cmd/platform_idp.go`) reports the value
 `thunder`. `idpClients` gives the clients that `aectl` creates for the
 value.
 
@@ -112,8 +112,8 @@ tokens reads by them.
   the document on `thunder.url`, the address at which pods reach the IdP. If
   not, they are the URLs that the document gives.
   `platformIDPInstallArgs` writes `idp.issuer`.
-  These are the values of the chart, which keeps the block `idp.*`. Only the
-  config of `aectl` uses `platform.idp.*`.
+  These are the values of the chart: its block is `idp.*`. Only the config
+  of `aectl` uses `platform.idp.*`.
   `envidp` builds the environment Thunders' trust of the platform IdP from
   the same endpoints on `https://<host>:8443`.
 - `platform install` overwrites (plain PUT) every OpenBao seed it owns: the
@@ -133,8 +133,8 @@ tokens reads by them.
 ## Imported clients
 
 With `platform.idp.clients: imported`, the admin of the platform IdP creates
-the clients, and `aectl` administers nothing on the IdP. An Asgardeo organization
-is an example. What differs from the sections above:
+the clients, and `aectl` administers nothing on the IdP. An Asgardeo
+organization is an example. What differs from the sections above:
 
 - **Secrets.** `aectl` generates no client secret and asks for no admin
   secret. The admin of the IdP creates the clients (for Asgardeo:
@@ -163,8 +163,8 @@ is an example. What differs from the sections above:
 ## Asgardeo clients
 
 With `platform.idp.clients: asgardeo`, `aectl` creates AE's clients in an
-Asgardeo organization (`internal/asgardeo`, `cmd/asgardeo_cli.go`). The Helm values,
-the environment Thunders and `sre install` are as in "Imported clients".
+Asgardeo organization (`internal/asgardeo`, `cmd/asgardeo_cli.go`). The Helm
+values, the environment Thunders and `sre install` are as in "Imported clients".
 What differs:
 
 - **Clients.** `asgardeoClients` gives six: four of `aepThunderClients`

@@ -16,19 +16,18 @@
 # under the License.
 
 # Prints an aectl config whose platform IdP is an Asgardeo organization: the
-# given base config with its `platform.idp:` block set to imported clients, Asgardeo's
-# claim names written out in full under `preset: "none"` (the shape a config
-# for any other IdP takes), the organization's issuer and its handle, and
-# with the four keys
-# of its `thunder:` block commented out (aectl refuses them where it
-# administers no ThunderID). `make dev-env AE_DEV_IDP=asgardeo` uses it so a
-# developer's organization handle is never written into the repository;
-# everything else (URLs, namespaces, toggles) stays the base's.
+# given base config with its `platform.idp:` block set to imported clients,
+# Asgardeo's claim names written out in full under `preset: "none"` (the shape
+# a config for any other IdP takes), the organization's issuer and its handle,
+# and with the four keys of its `thunder:` block commented out (aectl refuses
+# them where it administers no ThunderID). `make dev-env AE_DEV_IDP=asgardeo`
+# uses it so a developer's organization handle is never written into the
+# repository; everything else (URLs, namespaces, toggles) stays the base's.
 #
 # With [clients] `asgardeo`, aectl creates the applications itself: the
-# `platform.idp:` block then says `clients: "asgardeo"`, and the base's commented
-# `asgardeo:` block is turned on with the address of the organization's
-# management API.
+# `platform.idp:` block then says `clients: "asgardeo"`, and the base's
+# commented `asgardeo:` block is turned on with the address of the
+# organization's management API.
 #
 # Usage: ae-asgardeo-aectl-config.sh <base config> <organization handle> [base URL] [clients]
 #   <base config>           skaffold/defaults.yaml, or a copy of it

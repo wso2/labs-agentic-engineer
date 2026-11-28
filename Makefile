@@ -539,8 +539,8 @@ obs-status:
 # one) and registers it. Idempotent, and it touches no database or Thunder
 # admin secret. On an Asgardeo cluster where aectl created the applications
 # (platform.idp.clients asgardeo) it needs the admin credential again: pass
-# the same ASGARDEO_ADMIN_CLIENT_ID_FILE and ASGARDEO_ADMIN_CLIENT_SECRET_FILE as to
-# `make dev-env`. Without them it stops there and names the two flags.
+# the same ASGARDEO_ADMIN_CLIENT_ID_FILE and ASGARDEO_ADMIN_CLIENT_SECRET_FILE
+# as to `make dev-env`. Without them it stops there and names the two flags.
 #
 # One-shot, not a watch loop. Run after `make dev-env`.
 # Console: http://console.ae.localhost:8080

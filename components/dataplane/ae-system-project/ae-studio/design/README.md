@@ -235,8 +235,8 @@ its own deployment.
 | `publicScheme`, `listenerName`, `publicPortSuffix` | `AE_STUDIO_PUBLIC_SCHEME`, `AE_STUDIO_LISTENER_NAME`, `AE_STUDIO_PUBLIC_PORT_SUFFIX` | from aectl `tls.enabled` alone: `http`/`http`/`:19080`, or `https`/`https`/`:19443` |
 | `consoleOrigins` | `AE_STUDIO_CONSOLE_ORIGINS` | the console's public URL and `http://localhost:8090` (Vite `pnpm dev`) |
 | `idp.issuer` | `AE_STUDIO_IDP_ISSUER` | the platform IdP's issuer: aectl `platform.idp.issuer`, or `thunder.public_url` where that is unset |
-| `idp.jwksUrl`, `idp.tokenUrl` | `AE_STUDIO_IDP_JWKS_URL`, `AE_STUDIO_IDP_TOKEN_URL` | the IdP's OIDC discovery document (`jwks_uri`, `token_endpoint`). A ThunderID aectl administers (`idp.clients` `thunder`): its paths on aectl `thunder.url` (in-cluster: the issuer's host is loopback inside a pod). Otherwise: the public endpoints as the document names them |
-| `idp.claims.*` | `PLATFORM_IDP_CLAIMS_*` (aep-api's own settings; the pod gets the same values) | the chart's `idp.claims`, from aectl's `idp.claims` block (a preset, then its keys): the token dialect the three containers read the IdP's claims by, their `AE_IDP_CLAIMS_*` |
+| `idp.jwksUrl`, `idp.tokenUrl` | `AE_STUDIO_IDP_JWKS_URL`, `AE_STUDIO_IDP_TOKEN_URL` | the IdP's OIDC discovery document (`jwks_uri`, `token_endpoint`). A ThunderID aectl administers (`platform.idp.clients` `thunder`): its paths on aectl `thunder.url` (in-cluster: the issuer's host is loopback inside a pod). Otherwise: the public endpoints as the document names them |
+| `idp.claims.*` | `PLATFORM_IDP_CLAIMS_*` (aep-api's own settings; the pod gets the same values) | the chart's `idp.claims`, from aectl's `platform.idp.claims` block (a preset, then its keys): the token dialect the three containers read the IdP's claims by, their `AE_IDP_CLAIMS_*` |
 | `idp.userAudiences` | `AE_STUDIO_IDP_USER_AUDIENCES` | the console's client id (chart default) |
 | `aepApiBaseUrl` | `AE_STUDIO_AEP_API_BASE_URL` | the chart: `aep-api`'s in-cluster Service URL |
 | `aeOnlyClientId` | `AE_STUDIO_INTERNAL_CLIENT_ID` | `ae-studio-internal-client` |

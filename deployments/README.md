@@ -137,11 +137,11 @@ the four secret files. The mode:
 - points OpenChoreo's control plane at the organization (its four
   `security.oidc` URLs come from the organization's discovery document) and
   installs no platform ThunderID;
-- generates the aectl config from `AECTL_CONFIG` with the `idp:` block set
-  (`deployments/scripts/ae-asgardeo-aectl-config.sh`, written to the ignored
-  `tools/aectl/.aectl-asgardeo.yaml`), imports the five secrets and installs
-  with `platform.idp.clients: imported` (see "Install with Asgardeo as the
-  platform IdP");
+- generates the aectl config from `AECTL_CONFIG` with the `platform.idp:`
+  block set (`deployments/scripts/ae-asgardeo-aectl-config.sh`, written to the
+  ignored `tools/aectl/.aectl-asgardeo.yaml`), imports the five secrets and
+  installs with `platform.idp.clients: imported` (see "Install with Asgardeo
+  as the platform IdP");
 - lets `aectl` create the applications when
   `ASGARDEO_ADMIN_CLIENT_ID_FILE` and `ASGARDEO_ADMIN_CLIENT_SECRET_FILE`
   name the credential files of the organization's admin application. The
@@ -437,12 +437,13 @@ application of the organization.
 2. **Set the config** and import it. Leave the four `thunder.*` keys out.
 
    ```yaml
-   idp:
-     clients: "asgardeo"
-     claims:
-       preset: "asgardeo"
-     issuer: "https://api.asgardeo.io/t/<handle>/oauth2/token"
-     org_handle: "<handle>"
+   platform:
+     idp:
+       clients: "asgardeo"
+       claims:
+         preset: "asgardeo"
+       issuer: "https://api.asgardeo.io/t/<handle>/oauth2/token"
+       org_handle: "<handle>"
    asgardeo:
      api_url: "https://api.asgardeo.io/t/<handle>/api/server/v1"
    oc:
@@ -539,12 +540,13 @@ administers nothing on the organization.
    `aectl` refuses them where it administers no ThunderID.
 
    ```yaml
-   idp:
-     clients: "imported"
-     claims:
-       preset: "asgardeo"
-     issuer: "https://api.asgardeo.io/t/<handle>/oauth2/token"
-     org_handle: "<handle>"
+   platform:
+     idp:
+       clients: "imported"
+       claims:
+         preset: "asgardeo"
+       issuer: "https://api.asgardeo.io/t/<handle>/oauth2/token"
+       org_handle: "<handle>"
    oc:
      default_org_namespace: "<the org's namespace>"   # the script's AE_ORG_NAMESPACE
    ```
@@ -624,23 +626,25 @@ Expect to find more on a third.
 4. **Find the claim names.** Get one user token and one machine token and
    decode their payloads. Do not paste a token into a website or a chat.
 5. **Write the config.** Copy `skaffold/defaults.yaml`, comment the four
-   `thunder.*` keys out, and write the whole `idp:` block with no preset:
+   `thunder.*` keys out, and write the whole `platform.idp:` block with no
+   preset:
 
    ```yaml
-   idp:
-     clients: "imported"
-     issuer: "https://<the IdP's issuer>"
-     org_handle: "<the org's handle in the tokens>"
-     claims:
-       preset: "none"
-       org:
-         handle: "<claim>"
-         id: "<claim>"
-         name: "<claim>"          # optional
-       caller_type:
-         claim: "<claim>"
-         machine: "<value>"
-         user: "<value>"          # set it: any third value is then refused
+   platform:
+     idp:
+       clients: "imported"
+       issuer: "https://<the IdP's issuer>"
+       org_handle: "<the org's handle in the tokens>"
+       claims:
+         preset: "none"
+         org:
+           handle: "<claim>"
+           id: "<claim>"
+           name: "<claim>"          # optional
+         caller_type:
+           claim: "<claim>"
+           machine: "<value>"
+           user: "<value>"          # set it: any third value is then refused
    ```
 
    With `preset: "none"` a required value that is missing stops the install.
