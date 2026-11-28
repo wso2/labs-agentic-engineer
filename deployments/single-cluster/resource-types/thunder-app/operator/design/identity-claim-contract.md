@@ -26,7 +26,7 @@ sets on the OAuth app:
   `profile → […]`, `email → […]`.
 - top-level `allowedUserTypes: [Person]` (lets org users authenticate).
 
-The `thunder-app` `ClusterResourceType`'s `scopes` default is
+The `idp-app` `ClusterResourceType`'s `scopes` default is
 `openid profile email group ou` (was `openid profile email`) — the SPA requests
 those, and the operator's `scopeClaims` release the matching claims. The claim
 set is a shared constant (`identityUserAttributes`, `tokenClaimConfig`,

@@ -8,9 +8,9 @@ replica, leader election off, watching all namespaces — the same shape as the
 CNPG operator. It is the *only* component in the platform that calls Thunder's
 admin REST API for these applications; the BFF never does.
 
-The CR is rendered by the `thunder-app` `ClusterResourceType`
+The CR is rendered by the `idp-app` `ClusterResourceType`
 (`deployments/single-cluster/resource-types/thunder-app/resourcetype.yaml`),
-one instance per project per `thunder-app` platform-resource dependency. See
+one instance per project per `idp-app` platform-resource dependency. See
 ADR-0006 for why this exists
 (`docs/decisions/ADR-0006-auth-as-platform-resource.md`). The chart that
 installs this operator lives at

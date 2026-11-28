@@ -24,7 +24,7 @@
  * security block meaning:
  *
  *  - the component's `design.json` — whether it depends on the sign-in client
- *    at all. A component is protected iff it declares the `thunder-app`
+ *    at all. A component is protected iff it declares the `idp-app`
  *    platform resource; there is no `publicComponents` list any more.
  *  - the project's `specs/design/security.json` — the permission catalog.
  *    Operations REFERENCE handles; they never define them, and a handle whose

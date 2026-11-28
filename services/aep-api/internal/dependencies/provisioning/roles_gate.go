@@ -32,9 +32,9 @@ package provisioning
 // gate exists to prevent. And a password reaches the issue comment and nothing
 // else, so every log line and failure reason on these paths is redacted.
 //
-// **Why its own gate, rather than folding into the `thunder-app` dependency
+// **Why its own gate, rather than folding into the `idp-app` dependency
 // gate.** Build preflight deliberately skips a dependency whose OpenChoreo
-// binding is already Ready, so on every rebuild `thunder-app` carries no input,
+// binding is already Ready, so on every rebuild `idp-app` carries no input,
 // `provisionResource` is never called, and `settleReadyGates` re-authors
 // nothing. A role added in v2 would then never be created. The roles gate is
 // therefore driven by the DESIGN at the tag, not by the drawer inputs — it is

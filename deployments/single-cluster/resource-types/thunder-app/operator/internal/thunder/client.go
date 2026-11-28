@@ -665,7 +665,7 @@ func verifyScopes(cfg map[string]any, app DesiredApp) error {
 //   - scopeClaimConfig gates which claims Thunder releases per requested scope.
 //     `group → [groups]` is load-bearing: verified on Thunder 0.34 that
 //     `groups` reaches the ID TOKEN only when the `group` scope is granted
-//     (the thunder-app resource type's `scopes` default requests it). Without
+//     (the idp-app resource type's `scopes` default requests it). Without
 //     it, groups appears only in the access token and the SPA (reading the
 //     id_token) sees no role.
 //   - allowedUserTypes lets org (Person) users authenticate.

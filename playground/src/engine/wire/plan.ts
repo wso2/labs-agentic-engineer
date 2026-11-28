@@ -257,7 +257,7 @@ function bindingsOf(dependency: Dependency, workload: WorkloadBindings | undefin
 }
 
 /**
- * The values a `thunder-app` binding gets.
+ * The values an `idp-app` binding gets.
  *
  * Placeholders, on purpose. The service reads these at start — and PANICS when
  * one is empty — but in wired mode nothing authenticates against Thunder: the

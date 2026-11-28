@@ -424,7 +424,7 @@ func catalogTree(doc *Document) []PlannedResource {
 
 // ClientScopes is what the project's OAuth client is allowed to ask for: the
 // OIDC scopes every access token carries plus every catalog handle,
-// space-joined, exactly as the `thunder-app` CRT's `scopes` parameter wants it.
+// space-joined, exactly as the `idp-app` CRT's `scopes` parameter wants it.
 func ClientScopes(doc *Document) string {
 	return strings.Join(append(slices.Clone(OIDCScopes), CatalogHandles(doc)...), " ")
 }

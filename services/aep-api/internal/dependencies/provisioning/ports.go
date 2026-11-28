@@ -371,7 +371,7 @@ type RolesEnsureOutcome struct {
 	// token the gateway rejects.
 	ResourceIdentifier string
 	// ClientID is the OAuth client of the project's sign-in resource — the
-	// `user-auth` thunder-app every protected component shares. It is published
+	// `user-auth` idp-app every protected component shares. It is published
 	// beside the logins because a username and a password START no OAuth flow:
 	// the authorize leg names a CLIENT, and this project's one is resolved into
 	// components as `<DEP>_CLIENT_ID` and nowhere a reader of this ticket can
