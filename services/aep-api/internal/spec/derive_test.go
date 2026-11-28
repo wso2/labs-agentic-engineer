@@ -31,9 +31,9 @@ func assembled(t *testing.T, files map[string]string) *DesignFile {
 	return d
 }
 
-func thunderAndPostgres() map[string]CRTType {
+func idpAppAndPostgres() map[string]CRTType {
 	return map[string]CRTType{
-		"idp-app":   {EndUserAuth: true, Outputs: []string{"client_id", "issuer"}},
+		"idp-app":       {EndUserAuth: true, Outputs: []string{"client_id", "issuer"}},
 		"postgres-cnpg": {Outputs: []string{"host", "port"}},
 	}
 }
@@ -43,7 +43,7 @@ func TestDerivePlatformResourceFacts_ReturnsTheChangedComponentRendered(t *testi
 	files := designFilesWithDeps(`[{"kind":"platform-resource","name":"user-auth","resourceType":"idp-app"}]`)
 	design := assembled(t, files)
 
-	derived, err := DerivePlatformResourceFacts(design, thunderAndPostgres(), "web")
+	derived, err := DerivePlatformResourceFacts(design, idpAppAndPostgres(), "web")
 	if err != nil {
 		t.Fatalf("DerivePlatformResourceFacts: %v", err)
 	}
@@ -67,12 +67,12 @@ func TestDerivePlatformResourceFacts_ReturnsTheChangedComponentRendered(t *testi
 func TestDerivePlatformResourceFacts_OwnOutputDerivesNothing(t *testing.T) {
 	t.Parallel()
 	files := designFilesWithDeps(`[{"kind":"platform-resource","name":"orders-db","resourceType":"postgres-cnpg"}]`)
-	first, err := DerivePlatformResourceFacts(assembled(t, files), thunderAndPostgres(), "web")
+	first, err := DerivePlatformResourceFacts(assembled(t, files), idpAppAndPostgres(), "web")
 	if err != nil || len(first) != 1 {
 		t.Fatalf("first pass: files=%d err=%v", len(first), err)
 	}
 	files[first[0].Path] = first[0].Content
-	second, err := DerivePlatformResourceFacts(assembled(t, files), thunderAndPostgres(), "web")
+	second, err := DerivePlatformResourceFacts(assembled(t, files), idpAppAndPostgres(), "web")
 	if err != nil {
 		t.Fatalf("second pass: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestDerivePlatformResourceFacts_UnknownTypeRefusesBeforeMutating(t *testing
     {"kind":"platform-resource","name":"user-auth","resourceType":"idp-app"},
     {"kind":"platform-resource","name":"receipts","resourceType":"object-storage"}]`))
 
-	derived, err := DerivePlatformResourceFacts(design, thunderAndPostgres(), "web")
+	derived, err := DerivePlatformResourceFacts(design, idpAppAndPostgres(), "web")
 	if !errors.Is(err, ErrUnknownResourceType) || !strings.Contains(err.Error(), `receipts ("object-storage")`) {
 		t.Fatalf("want ErrUnknownResourceType naming the dependency, got %v", err)
 	}
@@ -102,7 +102,7 @@ func TestDerivePlatformResourceFacts_AuthConflictRefuses(t *testing.T) {
 		`[{"kind":"platform-resource","name":"user-auth","resourceType":"idp-app"}]`,
 		`{"auth": "service-required"}`))
 
-	if _, err := DerivePlatformResourceFacts(design, thunderAndPostgres(), "web"); !errors.Is(err, ErrEndUserAuthConflict) {
+	if _, err := DerivePlatformResourceFacts(design, idpAppAndPostgres(), "web"); !errors.Is(err, ErrEndUserAuthConflict) {
 		t.Fatalf("want ErrEndUserAuthConflict, got %v", err)
 	}
 }

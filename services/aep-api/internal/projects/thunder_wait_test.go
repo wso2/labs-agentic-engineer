@@ -85,7 +85,7 @@ func (f *fakeMarkerCatalog) MarkersByName(context.Context) (map[string]ConsumerU
 
 func thunderWaitCatalog() *fakeMarkerCatalog {
 	return &fakeMarkerCatalog{byName: map[string]ConsumerURLMarker{
-		"idp-app":   {EnvConfig: "redirectUris", Path: "/callback"},
+		"idp-app":       {EnvConfig: "redirectUris", Path: "/callback"},
 		"postgres-cnpg": {},
 	}}
 }
@@ -386,7 +386,7 @@ func TestDeploymentState_WebAppThunderNewOriginPendingUntilCRMatches(t *testing.
 }
 
 // Service/API components never enter the wait, even when they declare idp-app.
-func TestDeploymentState_ServiceWithThunderAppSkipsWait(t *testing.T) {
+func TestDeploymentState_ServiceWithIDPAppSkipsWait(t *testing.T) {
 	t.Parallel()
 	h := newThunderWaitHarness(t, thunderWaitOpts{
 		component:  thunderWaitAPI,

@@ -364,9 +364,9 @@ describe("DesignView — cross-component 'Used by' (#252 Task 15)", () => {
     render(
       <DesignView
         design={designJson([
-          { kind: "platform-resource", name: "idp-app", resourceType: "auth" },
+          { kind: "platform-resource", name: "thunder-app", resourceType: "auth" },
         ])}
-        dependencyUsedBy={{ "idp-app": ["auth-service", "web-frontend"] }}
+        dependencyUsedBy={{ "thunder-app": ["auth-service", "web-frontend"] }}
       />,
     );
     expect(screen.getByText(/used by/i)).toBeInTheDocument();

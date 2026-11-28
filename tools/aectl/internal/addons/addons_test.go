@@ -72,7 +72,7 @@ func TestAvailable_OperatorMetadata(t *testing.T) {
 	}
 }
 
-func TestAvailable_ThunderApp(t *testing.T) {
+func TestAvailable_IDPApp(t *testing.T) {
 	a := findAddon(t, "idp-app")
 	op := a.Operator
 	if got, want := op.ReleaseName, "thunder-app-operator"; got != want {

@@ -25,11 +25,11 @@ import (
 
 // --- deriveEndUserAuth (pure function) ---------------------------------------
 
-// thunderDep builds a platform-resource dependency of the SAMPLE resourceType
+// idpAppDep builds a platform-resource dependency of the SAMPLE resourceType
 // "idp-app". The name is arbitrary sample data — derivation keys on the CRT
 // role MARKER (authRole), never on the name (see
-// TestDeriveEndUserAuth_UnlabeledTypeUntouchedEvenIfNamedThunderApp).
-func thunderDep(name string) Dependency {
+// TestDeriveEndUserAuth_UnlabeledTypeUntouchedEvenIfNamedIDPApp).
+func idpAppDep(name string) Dependency {
 	return Dependency{Kind: DependencyKindPlatformResource, Name: name, ResourceType: "idp-app"}
 }
 
@@ -60,7 +60,7 @@ func TestDeriveEndUserAuth_StampsNilExposesAPI(t *testing.T) {
 	comps := []DesignComponent{{
 		Name:          "orders-api",
 		ComponentType: "service",
-		Dependencies:  []Dependency{thunderDep("user-auth")},
+		Dependencies:  []Dependency{idpAppDep("user-auth")},
 	}}
 
 	if err := deriveEndUserAuth(comps, authRole("idp-app")); err != nil {
@@ -78,7 +78,7 @@ func TestDeriveEndUserAuth_ExistingEndUserRequiredUnchanged(t *testing.T) {
 	comps := []DesignComponent{{
 		Name:          "orders-api",
 		ComponentType: "service",
-		Dependencies:  []Dependency{thunderDep("user-auth")},
+		Dependencies:  []Dependency{idpAppDep("user-auth")},
 		ExposesAPI:    &ExposesAPI{Auth: authEndUserRequired, Managed: true, UserContext: "X-User-Id"},
 	}}
 
@@ -98,7 +98,7 @@ func TestDeriveEndUserAuth_ServiceRequiredConflictErrors(t *testing.T) {
 	comps := []DesignComponent{{
 		Name:          "orders-api",
 		ComponentType: "service",
-		Dependencies:  []Dependency{thunderDep("user-auth")},
+		Dependencies:  []Dependency{idpAppDep("user-auth")},
 		ExposesAPI:    &ExposesAPI{Auth: authServiceRequired},
 	}}
 
@@ -123,7 +123,7 @@ func TestDeriveEndUserAuth_WebAppUntouched(t *testing.T) {
 	comps := []DesignComponent{{
 		Name:          "storefront-web",
 		ComponentType: "web-application",
-		Dependencies:  []Dependency{thunderDep("user-auth")},
+		Dependencies:  []Dependency{idpAppDep("user-auth")},
 	}}
 
 	if err := deriveEndUserAuth(comps, authRole("idp-app")); err != nil {
@@ -146,7 +146,7 @@ func TestDeriveEndUserAuth_AIAgentStampedLikeAService(t *testing.T) {
 	comps := []DesignComponent{{
 		Name:          "booking-agent",
 		ComponentType: ComponentTypeAIAgent,
-		Dependencies:  []Dependency{thunderDep("user-auth")},
+		Dependencies:  []Dependency{idpAppDep("user-auth")},
 	}}
 
 	if err := deriveEndUserAuth(comps, authRole("idp-app")); err != nil {
@@ -166,7 +166,7 @@ func TestDeriveEndUserAuth_AIAgentServiceRequiredConflictErrors(t *testing.T) {
 	comps := []DesignComponent{{
 		Name:          "booking-agent",
 		ComponentType: ComponentTypeAIAgent,
-		Dependencies:  []Dependency{thunderDep("user-auth")},
+		Dependencies:  []Dependency{idpAppDep("user-auth")},
 		ExposesAPI:    &ExposesAPI{Auth: authServiceRequired},
 	}}
 
@@ -239,12 +239,12 @@ func TestDeriveEndUserAuth_OtherResourceTypeUntouched(t *testing.T) {
 // happens to be "idp-app" but which carries NO end-user-auth role marker
 // (empty catalog) is left completely untouched. This is the crux of the
 // generalization — derivation keys on the CRT marker, never on the name.
-func TestDeriveEndUserAuth_UnlabeledTypeUntouchedEvenIfNamedThunderApp(t *testing.T) {
+func TestDeriveEndUserAuth_UnlabeledTypeUntouchedEvenIfNamedIDPApp(t *testing.T) {
 	t.Parallel()
 	comps := []DesignComponent{{
 		Name:          "orders-api",
 		ComponentType: "service",
-		Dependencies:  []Dependency{thunderDep("user-auth")},
+		Dependencies:  []Dependency{idpAppDep("user-auth")},
 	}}
 
 	// Empty marker map: "idp-app" carries no role — nothing to derive.
@@ -282,9 +282,9 @@ func TestDeriveEndUserAuth_StampsAnyLabeledType(t *testing.T) {
 func TestDeriveEndUserAuth_MixedComponentsOnlyQualifyingServiceStamped(t *testing.T) {
 	t.Parallel()
 	comps := []DesignComponent{
-		{Name: "orders-api", ComponentType: "service", Dependencies: []Dependency{thunderDep("user-auth")}},
+		{Name: "orders-api", ComponentType: "service", Dependencies: []Dependency{idpAppDep("user-auth")}},
 		{Name: "billing-api", ComponentType: "service"},
-		{Name: "storefront-web", ComponentType: "web-application", Dependencies: []Dependency{thunderDep("user-auth")}},
+		{Name: "storefront-web", ComponentType: "web-application", Dependencies: []Dependency{idpAppDep("user-auth")}},
 	}
 
 	if err := deriveEndUserAuth(comps, authRole("idp-app")); err != nil {
@@ -395,7 +395,7 @@ func TestDeriveAtHead_UnknownResourceTypeReturnsSentinel(t *testing.T) {
 	svc.fileCommitter = fc
 	svc.resourceCatalog = &fakeTypeCatalog{types: map[string]CRTType{
 		"postgres-cnpg": {},
-		"idp-app":   {},
+		"idp-app":       {},
 	}}
 
 	err := svc.DerivePlatformResourceFactsAtHead(context.Background(), "acme", "web")
