@@ -142,8 +142,9 @@ ae_studio:
     url: ""
 
 # The ThunderID aectl administers. Read when aectl registers the platform
-# IdP's clients (idp.clients thunder, below, or unset), where all four keys
-# are required; refused with idp.clients imported, where nothing reads them.
+# IdP's clients (platform.idp.clients thunder, below, or unset), where all
+# four keys are required; refused with platform.idp.clients imported, where
+# nothing reads them.
 thunder:
   # Kubernetes namespace where Thunder is deployed.
   # Used when patching Thunder's CORS config and rolling its Deployment.
@@ -169,61 +170,62 @@ thunder:
 # users and of its own clients. Its endpoints are not configured: `aectl`
 # reads them from <issuer>/.well-known/openid-configuration at install and
 # update.
-idp:
-  # Who creates AE's clients on the IdP:
-  #   thunder   `aectl` registers them on the ThunderID of the thunder: block
-  #             above, which it administers, and generates their secrets.
-  #             Unset means this.
-  #   imported  the IdP's admin created them and imports their secrets with
-  #             `aectl platform secret import`. `aectl` administers nothing on
-  #             the IdP. Use it for any IdP whose admin creates the clients.
-  #   asgardeo  `aectl` creates them in the Asgardeo organization of the
-  #             asgardeo: block below and generates their secrets. Install and
-  #             `platform sync-clients` then take the credential of the
-  #             organization's admin application from two files
-  #             (--idp-admin-client-id-file, --idp-admin-client-secret-file).
-  #             It is read for that run and never stored.
-  clients: "thunder"
-  # How the IdP's tokens name two things no standard defines: the caller's
-  # org, and whether a token was issued to a machine or to a user. `aectl`
-  # passes the values to aep-api, the AE Studio pod and the console, which
-  # read tokens by them and know no IdP. A value comes from the preset, then
-  # from a key set here. An AEP_IDP_CLAIMS_* environment variable is refused:
-  # a claim value belongs in this file. Install, update and
-  # `platform config test` print each value with where it came from.
-  claims:
-    # The shipped values to start from: `thunder` (unset means this) or
-    # `asgardeo`. `none` starts from nothing, for another IdP: every value
-    # marked required below then has to be set, and a missing one stops the
-    # install.
-    preset: "thunder"
-    # Each is the name of a top-level text claim of the IdP's tokens.
-    # org:
-    #   handle: ""   # required: the handle the IdP knows the caller's org by
-    #   id: ""       # required: the IdP's own id for that org, a UUID
-    #   name: ""     # optional: a display name for the org
-    # caller_type:
-    #   claim: ""    # required: the claim that says who a token was issued to
-    #   machine: ""  # required: its value that means a machine
-    #   user: ""     # optional: its value that means a user. Set: only these
-    #                # two values are accepted. Unset: any value other than
-    #                # the machine's is read as a user's.
-  # The handle the IdP's tokens name the one org by: the handle of a ThunderID
-  # organization unit (local: the built-in `default` unit), or the handle of
-  # an Asgardeo organization. aep-api maps it to oc.default_org_namespace and
-  # reads a token of any other org as no org. On ThunderID aectl registers the
-  # org's two clients under that organization unit, which has to exist.
-  org_handle: "default"
-  # The IdP's issuer: the `iss` of every token. Required, and https, with
-  # idp.clients imported or asgardeo (an Asgardeo organization's is
-  # https://api.asgardeo.io/t/<handle>/oauth2/token). Optional on the
-  # ThunderID aectl administers: unset, it is thunder.public_url.
-  # See "Install with Asgardeo as the platform IdP" in deployments/README.md
-  # for both ways to create AE's applications in an Asgardeo organization.
-  # issuer: ""
+platform:
+  idp:
+    # Who creates AE's clients on the IdP:
+    #   thunder   `aectl` registers them on the ThunderID of the thunder: block
+    #             above, which it administers, and generates their secrets.
+    #             Unset means this.
+    #   imported  the IdP's admin created them and imports their secrets with
+    #             `aectl platform secret import`. `aectl` administers nothing on
+    #             the IdP. Use it for any IdP whose admin creates the clients.
+    #   asgardeo  `aectl` creates them in the Asgardeo organization of the
+    #             asgardeo: block below and generates their secrets. Install and
+    #             `platform sync-clients` then take the credential of the
+    #             organization's admin application from two files
+    #             (--idp-admin-client-id-file, --idp-admin-client-secret-file).
+    #             It is read for that run and never stored.
+    clients: "thunder"
+    # How the IdP's tokens name two things no standard defines: the caller's
+    # org, and whether a token was issued to a machine or to a user. `aectl`
+    # passes the values to aep-api, the AE Studio pod and the console, which
+    # read tokens by them and know no IdP. A value comes from the preset, then
+    # from a key set here. An AEP_PLATFORM_IDP_CLAIMS_* environment variable
+    # is refused: a claim value belongs in this file. Install, update and
+    # `platform config test` print each value with where it came from.
+    claims:
+      # The shipped values to start from: `thunder` (unset means this) or
+      # `asgardeo`. `none` starts from nothing, for another IdP: every value
+      # marked required below then has to be set, and a missing one stops the
+      # install.
+      preset: "thunder"
+      # Each is the name of a top-level text claim of the IdP's tokens.
+      # org:
+      #   handle: ""   # required: the handle the IdP knows the caller's org by
+      #   id: ""       # required: the IdP's own id for that org, a UUID
+      #   name: ""     # optional: a display name for the org
+      # caller_type:
+      #   claim: ""    # required: the claim that says who a token was issued to
+      #   machine: ""  # required: its value that means a machine
+      #   user: ""     # optional: its value that means a user. Set: only these
+      #                # two values are accepted. Unset: any value other than
+      #                # the machine's is read as a user's.
+    # The handle the IdP's tokens name the one org by: the handle of a ThunderID
+    # organization unit (local: the built-in `default` unit), or the handle of
+    # an Asgardeo organization. aep-api maps it to oc.default_org_namespace and
+    # reads a token of any other org as no org. On ThunderID aectl registers the
+    # org's two clients under that organization unit, which has to exist.
+    org_handle: "default"
+    # The IdP's issuer: the `iss` of every token. Required, and https, with
+    # platform.idp.clients imported or asgardeo (an Asgardeo organization's is
+    # https://api.asgardeo.io/t/<handle>/oauth2/token). Optional on the
+    # ThunderID aectl administers: unset, it is thunder.public_url.
+    # See "Install with Asgardeo as the platform IdP" in deployments/README.md
+    # for both ways to create AE's applications in an Asgardeo organization.
+    # issuer: ""
 
 # The Asgardeo organization where `aectl` creates AE's applications. Read only
-# with idp.clients asgardeo, and refused otherwise.
+# with platform.idp.clients asgardeo, and refused otherwise.
 # asgardeo:
 #   # The address of the organization's management API. It is a key of its
 #   # own because the IdP's discovery document does not name it.
