@@ -35,12 +35,12 @@ import (
 // Nothing here knows the IdP's URL layout: the endpoints come from its OIDC
 // discovery document, and the rest from config.
 type platformIDP struct {
-	// Clients is who creates AE's clients on the IdP (idp.clients): aectl,
+	// Clients is who creates AE's clients on the IdP (platform.idp.clients): aectl,
 	// on a ThunderID it administers (config.ClientsThunder); aectl, in an
 	// Asgardeo organization (config.ClientsAsgardeo); or the IdP's admin, who
 	// then imports their secrets (config.ClientsImported).
 	Clients string
-	// Claims is the idp.claims block: the names and values of the claims
+	// Claims is the platform.idp.claims block: the names and values of the claims
 	// that say a caller's org and caller type. aectl passes them to the
 	// chart, and every reader of the IdP's tokens reads by them.
 	Claims idpclaims.Resolved
@@ -53,24 +53,24 @@ type platformIDP struct {
 	// always for an IdP outside the cluster, which has no in-cluster address.
 	InCluster oidc.Endpoints
 	// OrgHandle and OrgNamespace name the one org the IdP serves: the handle
-	// its tokens name the org by (idp.org_handle), and the org's OpenChoreo
+	// its tokens name the org by (platform.idp.org_handle), and the org's OpenChoreo
 	// namespace aep-api maps it to (oc.default_org_namespace).
 	OrgHandle    string
 	OrgNamespace string
 }
 
-// platformIDPClients reads idp.clients: who creates AE's clients on the
+// platformIDPClients reads platform.idp.clients: who creates AE's clients on the
 // platform IdP. Unset is thunder; config validation has already refused a
 // value this build does not know.
 func platformIDPClients() string {
-	if c := strings.ToLower(strings.TrimSpace(viper.GetString("idp.clients"))); c != "" {
+	if c := strings.ToLower(strings.TrimSpace(viper.GetString("platform.idp.clients"))); c != "" {
 		return c
 	}
 	return config.ClientsThunder
 }
 
 // administersThunder reports whether the platform IdP is a ThunderID that
-// aectl administers (idp.clients thunder): aectl registers AE's clients on it
+// aectl administers (platform.idp.clients thunder): aectl registers AE's clients on it
 // with the ThunderID admin credential, and pods reach it at an in-cluster
 // address. Under every other value the IdP is outside the cluster: aectl
 // asks for no ThunderID admin secret and has no in-cluster IdP to reach.
@@ -92,11 +92,11 @@ func idpClients() []idpClientDef {
 }
 
 // platformIssuerKey is the config key that holds the platform IdP's issuer:
-// idp.issuer, or thunder.public_url where idp.issuer is unset (a ThunderID
+// platform.idp.issuer, or thunder.public_url where platform.idp.issuer is unset (a ThunderID
 // aectl administers, whose public URL is its issuer).
 func platformIssuerKey() string {
-	if strings.TrimSpace(viper.GetString("idp.issuer")) != "" {
-		return "idp.issuer"
+	if strings.TrimSpace(viper.GetString("platform.idp.issuer")) != "" {
+		return "platform.idp.issuer"
 	}
 	return "thunder.public_url"
 }
@@ -117,7 +117,7 @@ func discoverPlatformIDP(ctx context.Context) (platformIDP, error) {
 	}
 	idp := platformIDP{
 		Clients: platformIDPClients(), Claims: claims, Public: pub, InCluster: pub,
-		OrgHandle:    strings.TrimSpace(viper.GetString("idp.org_handle")),
+		OrgHandle:    strings.TrimSpace(viper.GetString("platform.idp.org_handle")),
 		OrgNamespace: ocOrgNamespace(),
 	}
 	if !administersThunder() {
@@ -129,9 +129,9 @@ func discoverPlatformIDP(ctx context.Context) (platformIDP, error) {
 	return idp, nil
 }
 
-// platformIDPClaims resolves the idp.claims block of the loaded config: the
-// preset (idp.claims.preset, thunder when unset), then the config's
-// idp.claims.* keys. An AEP_IDP_CLAIMS_* variable stops it
+// platformIDPClaims resolves the platform.idp.claims block of the loaded config: the
+// preset (platform.idp.claims.preset, thunder when unset), then the config's
+// platform.idp.claims.* keys. An AEP_PLATFORM_IDP_CLAIMS_* variable stops it
 // (config.ClaimsEnvRefusal): a claim value belongs in the config.
 func platformIDPClaims() (idpclaims.Resolved, error) {
 	if err := config.ClaimsEnvRefusal(); err != nil {

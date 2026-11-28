@@ -43,16 +43,16 @@ var testAsgardeoIDP = func() platformIDP {
 func setAsgardeoConfig(t *testing.T) {
 	t.Helper()
 	t.Cleanup(viper.Reset)
-	viper.Set("idp.clients", "imported")
-	viper.Set("idp.claims.preset", "asgardeo")
-	viper.Set("idp.issuer", "https://api.asgardeo.io/t/acmecorp/oauth2/token")
-	viper.Set("idp.org_handle", "acmecorp")
+	viper.Set("platform.idp.clients", "imported")
+	viper.Set("platform.idp.claims.preset", "asgardeo")
+	viper.Set("platform.idp.issuer", "https://api.asgardeo.io/t/acmecorp/oauth2/token")
+	viper.Set("platform.idp.org_handle", "acmecorp")
 	viper.Set("oc.api_url", "http://api.openchoreo.localhost:8080")
 	viper.Set("oc.system_namespace", "openchoreo-control-plane")
 	viper.Set("console.public_url", "http://console.ae.localhost:8080")
 }
 
-// On Asgardeo the document is read over idp.issuer, the pods get the public
+// On Asgardeo the document is read over platform.idp.issuer, the pods get the public
 // endpoints whatever thunder.url says, and the one org's handle and
 // namespace travel with the IdP.
 func TestDiscoverPlatformIDP_Asgardeo(t *testing.T) {
@@ -67,7 +67,7 @@ func TestDiscoverPlatformIDP_Asgardeo(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	issuer := srv.URL + "/t/acmecorp/oauth2/token"
-	viper.Set("idp.issuer", issuer)
+	viper.Set("platform.idp.issuer", issuer)
 	// Left over from a Thunder config: not read on Asgardeo.
 	viper.Set("thunder.url", "http://thunder-service.thunder.svc.cluster.local:8090")
 	viper.Set("thunder.public_url", "http://thunder.openchoreo.localhost:8080")
@@ -366,10 +366,10 @@ func TestSyncClients_ImportedClientsRegisterNothing(t *testing.T) {
 func TestSreInstall_RefusedWithImportedClients(t *testing.T) {
 	setAsgardeoConfig(t)
 	err := sreIDPSupported()
-	if err == nil || !strings.Contains(err.Error(), "idp.clients") {
-		t.Fatalf("err = %v, want a refusal naming idp.clients", err)
+	if err == nil || !strings.Contains(err.Error(), "platform.idp.clients") {
+		t.Fatalf("err = %v, want a refusal naming platform.idp.clients", err)
 	}
-	viper.Set("idp.clients", "thunder")
+	viper.Set("platform.idp.clients", "thunder")
 	if err := sreIDPSupported(); err != nil {
 		t.Fatalf("thunder: %v", err)
 	}

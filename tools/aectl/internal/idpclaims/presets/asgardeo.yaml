@@ -15,7 +15,7 @@
 # under the License.
 
 # How an Asgardeo token names the caller's org and caller type: the values of
-# aectl's idp.claims block that `idp.claims.preset: asgardeo` starts from.
+# aectl's platform.idp.claims block that `platform.idp.claims.preset: asgardeo` starts from.
 #
 # The org is the Asgardeo organization, which stamps its handle, id and name
 # on every token. The caller type is the aut claim, with two values, so both

@@ -222,13 +222,13 @@ func sreInstallPreflight() error {
 }
 
 // sreIDPSupported refuses `sre install` where the platform IdP is not a
-// ThunderID aectl administers (idp.clients imported or asgardeo). The install
+// ThunderID aectl administers (platform.idp.clients imported or asgardeo). The install
 // relies on OpenChoreo's observer and RCA clients, which `platform install`
 // registers only on that ThunderID, and points the observability plane at
 // it; on another IdP those clients are the cluster owner's.
 func sreIDPSupported() error {
 	if !administersThunder() {
-		return fmt.Errorf("sre install needs a ThunderID that aectl administers (idp.clients thunder): it relies on OpenChoreo's observer and RCA clients, which aectl registers only there (idp.clients is %s)", platformIDPClients())
+		return fmt.Errorf("sre install needs a ThunderID that aectl administers (platform.idp.clients thunder): it relies on OpenChoreo's observer and RCA clients, which aectl registers only there (platform.idp.clients is %s)", platformIDPClients())
 	}
 	return nil
 }

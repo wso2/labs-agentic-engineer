@@ -15,7 +15,7 @@
 # under the License.
 
 # How a ThunderID token names the caller's org and caller type: the values of
-# aectl's idp.claims block that `idp.claims.preset: thunder` (and an unset
+# aectl's platform.idp.claims block that `platform.idp.claims.preset: thunder` (and an unset
 # preset) starts from.
 #
 # The org is an organization unit. The caller type is the OAuth grant the

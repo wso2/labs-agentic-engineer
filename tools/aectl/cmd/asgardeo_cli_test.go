@@ -44,7 +44,7 @@ import (
 func setAsgardeoClientsConfig(t *testing.T) {
 	t.Helper()
 	setAsgardeoConfig(t)
-	viper.Set("idp.clients", "asgardeo")
+	viper.Set("platform.idp.clients", "asgardeo")
 	viper.Set("asgardeo.api_url", "https://api.asgardeo.io/t/acmecorp/api/server/v1")
 }
 
@@ -85,12 +85,12 @@ func TestAsgardeoClients(t *testing.T) {
 	}
 }
 
-// Under idp.clients asgardeo aectl generates the five client secrets and
+// Under platform.idp.clients asgardeo aectl generates the five client secrets and
 // imports none, and nothing of a ThunderID in the cluster is asked for.
 func TestPlatformSecrets_AsgardeoClientsAreGenerated(t *testing.T) {
 	setAsgardeoClientsConfig(t)
 	if administersThunder() {
-		t.Fatal("administersThunder is true under idp.clients asgardeo")
+		t.Fatal("administersThunder is true under platform.idp.clients asgardeo")
 	}
 	generated := generatedClientSecrets()
 	var paths []string
@@ -120,7 +120,7 @@ func TestPlatformSecrets_AsgardeoClientsAreGenerated(t *testing.T) {
 		}
 	}
 	if err := sreIDPSupported(); err == nil {
-		t.Error("sre install is not refused under idp.clients asgardeo")
+		t.Error("sre install is not refused under platform.idp.clients asgardeo")
 	}
 	if got := envIDPPlatformTrust(platformIDP{Clients: "asgardeo", Public: testAsgardeoIDP.Public}); got.Configured() {
 		t.Errorf("an environment ThunderID is told to trust the Asgardeo organization: %+v", got)
@@ -424,7 +424,7 @@ func TestRefuseIDPAdminFlags(t *testing.T) {
 	if err := refuseIDPAdminFlags(); err == nil {
 		t.Fatal("an admin file flag with imported clients: want an error")
 	}
-	viper.Set("idp.clients", "asgardeo")
+	viper.Set("platform.idp.clients", "asgardeo")
 	if err := refuseIDPAdminFlags(); err != nil {
 		t.Fatalf("under asgardeo: %v", err)
 	}

@@ -145,12 +145,12 @@ func TestResolve_NoPresetRequiresEveryValue(t *testing.T) {
 	if err == nil {
 		t.Fatal("an incomplete block passed")
 	}
-	for _, key := range []string{"idp.claims.org.id", "idp.claims.caller_type.machine"} {
+	for _, key := range []string{"platform.idp.claims.org.id", "platform.idp.claims.caller_type.machine"} {
 		if !strings.Contains(err.Error(), key) {
 			t.Errorf("err %v does not name %s", err, key)
 		}
 	}
-	for _, key := range []string{"idp.claims.org.handle", "idp.claims.org.name", "idp.claims.caller_type.user"} {
+	for _, key := range []string{"platform.idp.claims.org.handle", "platform.idp.claims.org.name", "platform.idp.claims.caller_type.user"} {
 		if strings.Contains(err.Error(), key) {
 			t.Errorf("err %v names %s, which is set or optional", err, key)
 		}
@@ -185,7 +185,7 @@ func TestDescribe(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Join(thunder.Describe(), "\n")
-	for _, want := range []string{"idp.claims.org.handle", "ouHandle", "from preset thunder", "idp.claims.caller_type.user", "(none)", "not set", `any grant_type other than "client_credentials" is read as a user's`} {
+	for _, want := range []string{"platform.idp.claims.org.handle", "ouHandle", "from preset thunder", "platform.idp.claims.caller_type.user", "(none)", "not set", `any grant_type other than "client_credentials" is read as a user's`} {
 		if !strings.Contains(lines, want) {
 			t.Errorf("description lacks %q:\n%s", want, lines)
 		}

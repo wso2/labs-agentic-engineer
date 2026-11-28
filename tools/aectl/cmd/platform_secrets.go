@@ -123,7 +123,7 @@ func requireImportedClientSecrets(st seedStore) ([]seededSecret, error) {
 		return restored, nil
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%d client secret(s) of the platform IdP are not in OpenBao. With idp.clients imported aectl creates no client: the IdP's admin creates them (on Asgardeo with deployments/scripts/ae-asgardeo-apps.sh, which writes one file per secret). Import each:", len(missing))
+	fmt.Fprintf(&b, "%d client secret(s) of the platform IdP are not in OpenBao. With platform.idp.clients imported aectl creates no client: the IdP's admin creates them (on Asgardeo with deployments/scripts/ae-asgardeo-apps.sh, which writes one file per secret). Import each:", len(missing))
 	for _, path := range missing {
 		fmt.Fprintf(&b, "\n  aectl platform secret import --path %s --value-file <file>", path)
 	}

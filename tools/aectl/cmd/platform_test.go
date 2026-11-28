@@ -137,7 +137,7 @@ func TestAEStudioOverrides(t *testing.T) {
 // testPlatformIDP is the local ThunderID as discovery names it, with the
 // in-cluster endpoints on thunder.url: the values every install so far wrote
 // by appending the paths by hand.
-// presetClaims is the idp.claims block of a shipped preset with nothing laid
+// presetClaims is the platform.idp.claims block of a shipped preset with nothing laid
 // over it, for fixtures.
 func presetClaims(name string) idpclaims.Resolved {
 	r, err := idpclaims.Resolve(name, func(string) (string, idpclaims.Source) { return "", "" })
@@ -164,7 +164,7 @@ var testPlatformIDP = platformIDP{
 	},
 }
 
-// textLikeClaims is an idp.claims block whose values look like another type
+// textLikeClaims is a platform.idp.claims block whose values look like another type
 // to Helm: a boolean, a number, and an empty optional value.
 func textLikeClaims(t *testing.T) idpclaims.Resolved {
 	t.Helper()
@@ -398,7 +398,7 @@ func setValidUpdateConfig(t *testing.T) {
 	viper.Set("thunder.admin_client_id", "admin")
 	viper.Set("oc.api_url", "http://api.openchoreo.localhost:8080")
 	viper.Set("oc.system_namespace", "openchoreo-control-plane")
-	viper.Set("idp.org_handle", "default")
+	viper.Set("platform.idp.org_handle", "default")
 }
 
 // `platform update` (and so `make dev-update`) must carry every pair install
@@ -647,12 +647,12 @@ func TestOpenBaoToken_NotRequired(t *testing.T) {
 	}
 }
 
-// The idp.claims block is layered: the preset, then the config's keys. Each
+// The platform.idp.claims block is layered: the preset, then the config's keys. Each
 // value says which layer it came from.
 func TestPlatformIDPClaims_LayersPresetAndConfig(t *testing.T) {
 	t.Cleanup(viper.Reset)
-	viper.Set("idp.claims.preset", "asgardeo")
-	viper.Set("idp.claims.org.handle", "from_config")
+	viper.Set("platform.idp.claims.preset", "asgardeo")
+	viper.Set("platform.idp.claims.org.handle", "from_config")
 
 	got, err := platformIDPClaims()
 	if err != nil {
@@ -678,27 +678,27 @@ func TestPlatformIDPClaims_LayersPresetAndConfig(t *testing.T) {
 
 // A claim value is not taken from the environment: it would hold for one
 // run, and the next update without the variable would send the stored value
-// back to the chart. Any AEP_IDP_CLAIMS_* variable stops the command and is
+// back to the chart. Any AEP_PLATFORM_IDP_CLAIMS_* variable stops the command and is
 // named, the preset's and a blank one included.
 func TestPlatformIDPClaims_EnvironmentVariableRefused(t *testing.T) {
 	for _, tc := range []struct{ name, value string }{
-		{"AEP_IDP_CLAIMS_ORG_HANDLE", "org_handle"},
-		{"AEP_IDP_CLAIMS_PRESET", "asgardeo"},
-		{"AEP_IDP_CLAIMS_CALLER_TYPE_USER", " "},
+		{"AEP_PLATFORM_IDP_CLAIMS_ORG_HANDLE", "org_handle"},
+		{"AEP_PLATFORM_IDP_CLAIMS_PRESET", "asgardeo"},
+		{"AEP_PLATFORM_IDP_CLAIMS_CALLER_TYPE_USER", " "},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Cleanup(viper.Reset)
 			t.Setenv(tc.name, tc.value)
 			_, err := platformIDPClaims()
-			if err == nil || !strings.Contains(err.Error(), tc.name) || !strings.Contains(err.Error(), "idp.claims") {
-				t.Fatalf("err = %v, want one naming %s and idp.claims", err, tc.name)
+			if err == nil || !strings.Contains(err.Error(), tc.name) || !strings.Contains(err.Error(), "platform.idp.claims") {
+				t.Fatalf("err = %v, want one naming %s and platform.idp.claims", err, tc.name)
 			}
 		})
 	}
 	// Another AEP_* variable is not a claim value.
-	t.Setenv("AEP_IDP_ORG_HANDLE", "default")
+	t.Setenv("AEP_PLATFORM_IDP_ORG_HANDLE", "default")
 	if _, err := platformIDPClaims(); err != nil {
-		t.Fatalf("AEP_IDP_ORG_HANDLE must not be refused: %v", err)
+		t.Fatalf("AEP_PLATFORM_IDP_ORG_HANDLE must not be refused: %v", err)
 	}
 }
 

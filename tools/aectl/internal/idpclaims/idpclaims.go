@@ -15,7 +15,7 @@
 // under the License.
 
 // Package idpclaims resolves the platform IdP's claim names and values: the
-// idp.claims block of aectl's config, which says how a token names the
+// platform.idp.claims block of aectl's config, which says how a token names the
 // caller's org and whether it was issued to a machine or to a user. No
 // standard defines those, so each IdP has its own; aectl passes the resolved
 // values to the chart, and every reader of the IdP's tokens (aep-api, the AE
@@ -23,7 +23,7 @@
 //
 // A value comes from two layers, lowest first: a preset shipped with aectl
 // (a data file per IdP AE has been run against), then the config's
-// idp.claims.* keys. The preset names live only here: nothing downstream of
+// platform.idp.claims.* keys. The preset names live only here: nothing downstream of
 // aectl sees one.
 package idpclaims
 
@@ -49,16 +49,16 @@ const DefaultPreset = "thunder"
 // for, so that a value left out is an error and not another IdP's name.
 const NoPreset = "none"
 
-// Field is one value of the idp.claims block.
+// Field is one value of the platform.idp.claims block.
 type Field struct {
-	// Key is the field's config key, under idp.claims (for example
-	// "org.handle"); "idp.claims."+Key is the whole key.
+	// Key is the field's config key, under platform.idp.claims (for example
+	// "org.handle"); "platform.idp.claims."+Key is the whole key.
 	Key string
 	// Required marks a value a token reader cannot work without.
 	Required bool
 }
 
-// Fields are the values of the idp.claims block, in the order they are shown.
+// Fields are the values of the platform.idp.claims block, in the order they are shown.
 var Fields = []Field{
 	{Key: "org.handle", Required: true},
 	{Key: "org.id", Required: true},
@@ -97,7 +97,7 @@ type Value struct {
 	Source Source
 }
 
-// Resolved is the idp.claims block after layering.
+// Resolved is the platform.idp.claims block after layering.
 type Resolved struct {
 	Preset string
 	Values []Value
@@ -111,7 +111,7 @@ type Override func(key string) (value string, source Source)
 // ErrUnknownPreset is a preset name aectl does not ship.
 var ErrUnknownPreset = errors.New("unknown preset")
 
-// Presets lists the values idp.claims.preset takes: the shipped presets,
+// Presets lists the values platform.idp.claims.preset takes: the shipped presets,
 // sorted, then NoPreset.
 func Presets() []string {
 	entries, _ := presetFiles.ReadDir("presets")
@@ -131,7 +131,7 @@ func presetValues(name string) (map[string]string, error) {
 	}
 	raw, err := presetFiles.ReadFile("presets/" + name + ".yaml")
 	if err != nil {
-		return nil, fmt.Errorf("idp.claims.preset: %w %q (shipped: %s)", ErrUnknownPreset, name, strings.Join(Presets(), ", "))
+		return nil, fmt.Errorf("platform.idp.claims.preset: %w %q (shipped: %s)", ErrUnknownPreset, name, strings.Join(Presets(), ", "))
 	}
 	var doc map[string]map[string]string
 	if err := yaml.Unmarshal(raw, &doc); err != nil {
@@ -146,7 +146,7 @@ func presetValues(name string) (map[string]string, error) {
 	return out, nil
 }
 
-// Resolve layers the idp.claims block: the preset (DefaultPreset when preset
+// Resolve layers the platform.idp.claims block: the preset (DefaultPreset when preset
 // is empty), then override. A required value no layer sets is an error
 // naming every such key: readers of the IdP's tokens refuse an incomplete
 // set, so the install stops here instead. A shipped preset is complete, so
@@ -170,7 +170,7 @@ func Resolve(preset string, override Override) (Resolved, error) {
 		if v.Value == "" {
 			v.Source = SourceUnset
 			if f.Required {
-				missing = append(missing, "idp.claims."+f.Key)
+				missing = append(missing, "platform.idp.claims."+f.Key)
 			}
 		}
 		res.Values = append(res.Values, v)
@@ -200,10 +200,10 @@ func (r Resolved) Describe() []string {
 	var lines []string
 	for _, v := range r.Values {
 		if v.Value == "" {
-			lines = append(lines, fmt.Sprintf("idp.claims.%-20s %-20s %s", v.Key, "(none)", v.Source))
+			lines = append(lines, fmt.Sprintf("platform.idp.claims.%-20s %-20s %s", v.Key, "(none)", v.Source))
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("idp.claims.%-20s %-20s from %s", v.Key, v.Value, v.Source))
+		lines = append(lines, fmt.Sprintf("platform.idp.claims.%-20s %-20s from %s", v.Key, v.Value, v.Source))
 	}
 	if c := r.Claims(); c.User == "" {
 		lines = append(lines, fmt.Sprintf("no caller_type.user value: any %s other than %q is read as a user's", c.CallerType, c.Machine))

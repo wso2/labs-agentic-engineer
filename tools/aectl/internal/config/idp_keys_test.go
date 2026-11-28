@@ -41,14 +41,14 @@ var thunderKeys = map[string]string{
 	"thunder.url":             "http://thunder-service.thunder.svc.cluster.local:8090",
 	"thunder.admin_client_id": "ae-install-client",
 	"thunder.public_url":      "http://thunder.openchoreo.localhost:8080",
-	"idp.org_handle":          "default",
+	"platform.idp.org_handle": "default",
 }
 
 var asgardeoKeys = map[string]string{
-	"idp.clients":       "imported",
-	"idp.claims.preset": "asgardeo",
-	"idp.issuer":        "https://api.asgardeo.io/t/acmecorp/oauth2/token",
-	"idp.org_handle":    "acmecorp",
+	"platform.idp.clients":       "imported",
+	"platform.idp.claims.preset": "asgardeo",
+	"platform.idp.issuer":        "https://api.asgardeo.io/t/acmecorp/oauth2/token",
+	"platform.idp.org_handle":    "acmecorp",
 }
 
 func without(m map[string]string, key string) map[string]string {
@@ -77,15 +77,15 @@ func hasErrorNaming(errs []string, key string) bool {
 }
 
 // An install where aectl registers the clients needs the four thunder.* keys
-// and the handle of the org it serves, whether idp.clients is unset or says
+// and the handle of the org it serves, whether platform.idp.clients is unset or says
 // thunder.
 func TestValidate_ThunderKeysRequiredUnderThunder(t *testing.T) {
 	for _, clients := range []string{"", "thunder"} {
-		if errs := validateViper(idpConfig(with(thunderKeys, "idp.clients", clients))); len(errs) != 0 {
+		if errs := validateViper(idpConfig(with(thunderKeys, "platform.idp.clients", clients))); len(errs) != 0 {
 			t.Fatalf("clients %q: a complete Thunder config is invalid: %v", clients, errs)
 		}
 		for key := range thunderKeys {
-			errs := validateViper(idpConfig(with(without(thunderKeys, key), "idp.clients", clients)))
+			errs := validateViper(idpConfig(with(without(thunderKeys, key), "platform.idp.clients", clients)))
 			if !hasErrorNaming(errs, key) {
 				t.Errorf("clients %q without %s: errors %v do not name it", clients, key, errs)
 			}
@@ -100,7 +100,7 @@ func TestValidate_ImportedClientsNeedTheIssuerAndNoThunderKeys(t *testing.T) {
 	if errs := validateViper(idpConfig(asgardeoKeys)); len(errs) != 0 {
 		t.Fatalf("a complete Asgardeo config is invalid: %v", errs)
 	}
-	for _, key := range []string{"idp.issuer", "idp.org_handle"} {
+	for _, key := range []string{"platform.idp.issuer", "platform.idp.org_handle"} {
 		errs := validateViper(idpConfig(without(asgardeoKeys, key)))
 		if !hasErrorNaming(errs, key) {
 			t.Errorf("without %s: errors %v do not name it", key, errs)
@@ -113,7 +113,7 @@ func TestValidate_ImportedClientsNeedTheIssuerAndNoThunderKeys(t *testing.T) {
 // so each is refused.
 func TestValidate_ThunderKeysRefusedWithImportedClients(t *testing.T) {
 	for key, val := range thunderKeys {
-		if key == "idp.org_handle" {
+		if key == "platform.idp.org_handle" {
 			continue
 		}
 		errs := validateViper(idpConfig(with(asgardeoKeys, key, val)))
@@ -127,15 +127,15 @@ func TestValidate_ThunderKeysRefusedWithImportedClients(t *testing.T) {
 // thunder.public_url when unset) and may be the local ThunderID's http URL.
 func TestValidate_IssuerIsOptionalWhereAectlRegistersClients(t *testing.T) {
 	for _, issuer := range []string{"http://thunder.openchoreo.localhost:8080", "https://idp.example.com"} {
-		if errs := validateViper(idpConfig(with(thunderKeys, "idp.issuer", issuer))); len(errs) != 0 {
+		if errs := validateViper(idpConfig(with(thunderKeys, "platform.idp.issuer", issuer))); len(errs) != 0 {
 			t.Errorf("issuer %q under thunder: %v", issuer, errs)
 		}
 	}
 }
 
 func TestValidate_UnknownClientsRefused(t *testing.T) {
-	errs := validateViper(idpConfig(with(thunderKeys, "idp.clients", "managed")))
-	if !hasErrorNaming(errs, "idp.clients") {
+	errs := validateViper(idpConfig(with(thunderKeys, "platform.idp.clients", "managed")))
+	if !hasErrorNaming(errs, "platform.idp.clients") {
 		t.Fatalf("errors %v do not refuse the value", errs)
 	}
 }
@@ -144,17 +144,17 @@ func TestValidate_UnknownClientsRefused(t *testing.T) {
 // against: plain http is refused, as is anything that is not an absolute URL.
 func TestValidate_ImportedClientsIssuerMustBeHTTPS(t *testing.T) {
 	for _, issuer := range []string{"http://api.asgardeo.io/t/acmecorp/oauth2/token", "api.asgardeo.io/t/acmecorp", "not a url"} {
-		errs := validateViper(idpConfig(with(asgardeoKeys, "idp.issuer", issuer)))
-		if !hasErrorNaming(errs, "idp.issuer") {
+		errs := validateViper(idpConfig(with(asgardeoKeys, "platform.idp.issuer", issuer)))
+		if !hasErrorNaming(errs, "platform.idp.issuer") {
 			t.Errorf("issuer %q: errors %v do not refuse it", issuer, errs)
 		}
 	}
 }
 
 // asgardeoClientsKeys is a config where aectl creates the clients in an
-// Asgardeo organization (idp.clients asgardeo). asgardeoKeys above is the
+// Asgardeo organization (platform.idp.clients asgardeo). asgardeoKeys above is the
 // same organization with imported clients.
-var asgardeoClientsKeys = with(with(asgardeoKeys, "idp.clients", "asgardeo"),
+var asgardeoClientsKeys = with(with(asgardeoKeys, "platform.idp.clients", "asgardeo"),
 	"asgardeo.api_url", "https://api.asgardeo.io/t/acmecorp/api/server/v1")
 
 // Where aectl creates the clients in an Asgardeo organization it needs the
@@ -162,21 +162,21 @@ var asgardeoClientsKeys = with(with(asgardeoKeys, "idp.clients", "asgardeo"),
 // of the thunder.* keys.
 func TestValidate_AsgardeoClientsNeedTheIssuerAndTheAPIAddress(t *testing.T) {
 	if errs := validateViper(idpConfig(asgardeoClientsKeys)); len(errs) != 0 {
-		t.Fatalf("a complete config with idp.clients asgardeo is invalid: %v", errs)
+		t.Fatalf("a complete config with platform.idp.clients asgardeo is invalid: %v", errs)
 	}
-	for _, key := range []string{"idp.issuer", "idp.org_handle", "asgardeo.api_url"} {
+	for _, key := range []string{"platform.idp.issuer", "platform.idp.org_handle", "asgardeo.api_url"} {
 		errs := validateViper(idpConfig(without(asgardeoClientsKeys, key)))
 		if !hasErrorNaming(errs, key) {
 			t.Errorf("without %s: errors %v do not name it", key, errs)
 		}
 	}
 	for key, val := range thunderKeys {
-		if key == "idp.org_handle" {
+		if key == "platform.idp.org_handle" {
 			continue
 		}
 		errs := validateViper(idpConfig(with(asgardeoClientsKeys, key, val)))
 		if !hasErrorNaming(errs, key) {
-			t.Errorf("%s with idp.clients asgardeo: errors %v do not refuse it", key, errs)
+			t.Errorf("%s with platform.idp.clients asgardeo: errors %v do not refuse it", key, errs)
 		}
 	}
 }
@@ -185,7 +185,7 @@ func TestValidate_AsgardeoClientsNeedTheIssuerAndTheAPIAddress(t *testing.T) {
 // refused, as is anything that is not an absolute URL. So is a plain http
 // issuer.
 func TestValidate_AsgardeoClientsAddressesMustBeHTTPS(t *testing.T) {
-	for _, key := range []string{"asgardeo.api_url", "idp.issuer"} {
+	for _, key := range []string{"asgardeo.api_url", "platform.idp.issuer"} {
 		for _, val := range []string{"http://api.asgardeo.io/t/acmecorp/api/server/v1", "api.asgardeo.io/t/acmecorp", "not a url"} {
 			errs := validateViper(idpConfig(with(asgardeoClientsKeys, key, val)))
 			if !hasErrorNaming(errs, key) {
@@ -212,22 +212,22 @@ func TestValidate_AsgardeoAPIAddressRefusedUnderAnotherValue(t *testing.T) {
 
 // A preset aectl does not ship is refused by name, once.
 func TestValidate_UnknownPresetRefused(t *testing.T) {
-	errs := validateViper(idpConfig(with(thunderKeys, "idp.claims.preset", "okta")))
-	if !hasErrorNaming(errs, "idp.claims.preset") || len(errs) != 1 {
+	errs := validateViper(idpConfig(with(thunderKeys, "platform.idp.claims.preset", "okta")))
+	if !hasErrorNaming(errs, "platform.idp.claims.preset") || len(errs) != 1 {
 		t.Fatalf("errors %v, want one refusing the preset", errs)
 	}
 }
 
-// The idp.claims block has to be complete after the preset and the config's
+// The platform.idp.claims block has to be complete after the preset and the config's
 // own keys are layered. A preset alone is complete; a config key replaces a
 // preset value; no key can blank a required one, since an empty value sets
 // nothing.
 func TestValidate_ClaimsAreLayeredOverThePreset(t *testing.T) {
 	for name, extra := range map[string]map[string]string{
 		"no claims keys: the default preset": {},
-		"the asgardeo preset":                {"idp.claims.preset": "asgardeo"},
-		"a key over the preset":              {"idp.claims.org.handle": "tenant", "idp.claims.caller_type.user": "authorization_code"},
-		"an empty key sets nothing":          {"idp.claims.org.id": ""},
+		"the asgardeo preset":                {"platform.idp.claims.preset": "asgardeo"},
+		"a key over the preset":              {"platform.idp.claims.org.handle": "tenant", "platform.idp.claims.caller_type.user": "authorization_code"},
+		"an empty key sets nothing":          {"platform.idp.claims.org.id": ""},
 	} {
 		cfg := map[string]string{}
 		for k, v := range thunderKeys {
@@ -245,9 +245,9 @@ func TestValidate_ClaimsAreLayeredOverThePreset(t *testing.T) {
 // With no preset, every required value has to be in the config: one left
 // out is an error that names its key.
 func TestValidate_NoPresetRequiresEveryClaim(t *testing.T) {
-	cfg := with(with(with(thunderKeys, "idp.claims.preset", "none"), "idp.claims.org.handle", "tenant"), "idp.claims.org.id", "tenant_id")
+	cfg := with(with(with(thunderKeys, "platform.idp.claims.preset", "none"), "platform.idp.claims.org.handle", "tenant"), "platform.idp.claims.org.id", "tenant_id")
 	errs := validateViper(idpConfig(cfg))
-	if len(errs) != 1 || !strings.Contains(errs[0], "idp.claims.caller_type.claim") || !strings.Contains(errs[0], "idp.claims.caller_type.machine") {
+	if len(errs) != 1 || !strings.Contains(errs[0], "platform.idp.claims.caller_type.claim") || !strings.Contains(errs[0], "platform.idp.claims.caller_type.machine") {
 		t.Fatalf("errors %v, want one naming the two missing keys", errs)
 	}
 }
@@ -278,7 +278,7 @@ func TestIDPKeys_ArePersisted(t *testing.T) {
 	for _, k := range ConfigMapKeys {
 		persisted[k] = true
 	}
-	for _, k := range []string{"idp.clients", "idp.claims.preset", "idp.claims.org.handle", "idp.claims.caller_type.user", "idp.issuer", "idp.org_handle", "asgardeo.api_url"} {
+	for _, k := range []string{"platform.idp.clients", "platform.idp.claims.preset", "platform.idp.claims.org.handle", "platform.idp.claims.caller_type.user", "platform.idp.issuer", "platform.idp.org_handle", "asgardeo.api_url"} {
 		if !persisted[k] {
 			t.Errorf("%s is not in ConfigMapKeys", k)
 		}
@@ -297,33 +297,33 @@ func TestIDPKeys_ArePersisted(t *testing.T) {
 }
 
 // A claim value is not taken from the environment. Every command that
-// validates a config stops on an AEP_IDP_CLAIMS_* variable first, the
+// validates a config stops on an AEP_PLATFORM_IDP_CLAIMS_* variable first, the
 // loaded config and a config file alike, and names the variable.
 func TestValidate_ClaimsFromTheEnvironmentAreRefused(t *testing.T) {
 	if err := ClaimsEnvRefusal(); err != nil {
 		t.Fatalf("no variable is set: %v", err)
 	}
-	got := claimsEnvSet([]string{"AEP_IDP_CLAIMS_ORG_HANDLE=x", "AEP_IDP_ORG_HANDLE=default", "AEP_IDP_CLAIMS_PRESET=", "PATH=/bin"})
-	if strings.Join(got, ",") != "AEP_IDP_CLAIMS_ORG_HANDLE,AEP_IDP_CLAIMS_PRESET" {
+	got := claimsEnvSet([]string{"AEP_PLATFORM_IDP_CLAIMS_ORG_HANDLE=x", "AEP_PLATFORM_IDP_ORG_HANDLE=default", "AEP_PLATFORM_IDP_CLAIMS_PRESET=", "PATH=/bin"})
+	if strings.Join(got, ",") != "AEP_PLATFORM_IDP_CLAIMS_ORG_HANDLE,AEP_PLATFORM_IDP_CLAIMS_PRESET" {
 		t.Fatalf("claimsEnvSet = %v, want the two claim variables, the blank one included", got)
 	}
 
-	t.Setenv("AEP_IDP_CLAIMS_PRESET", "okta")
+	t.Setenv("AEP_PLATFORM_IDP_CLAIMS_PRESET", "okta")
 	err := ClaimsEnvRefusal()
-	if err == nil || !strings.Contains(err.Error(), "AEP_IDP_CLAIMS_PRESET") || !strings.Contains(err.Error(), "idp.claims") {
-		t.Fatalf("err = %v, want one naming the variable and idp.claims", err)
+	if err == nil || !strings.Contains(err.Error(), "AEP_PLATFORM_IDP_CLAIMS_PRESET") || !strings.Contains(err.Error(), "platform.idp.claims") {
+		t.Fatalf("err = %v, want one naming the variable and platform.idp.claims", err)
 	}
 	// The refusal comes first: the variable can cause the other errors.
-	errs := withClaimsEnvRefusal([]string{"idp.claims.preset: unknown"})
-	if len(errs) != 2 || !strings.HasPrefix(errs[0], "AEP_IDP_CLAIMS_PRESET:") {
+	errs := withClaimsEnvRefusal([]string{"platform.idp.claims.preset: unknown"})
+	if len(errs) != 2 || !strings.HasPrefix(errs[0], "AEP_PLATFORM_IDP_CLAIMS_PRESET:") {
 		t.Fatalf("errors %v, want the refusal first", errs)
 	}
 	// A config file is read alone, and is refused too.
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(path, []byte("idp:\n  org_handle: default\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("platform:\n  idp:\n    org_handle: default\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if errs := ValidateFile(path); len(errs) == 0 || !strings.HasPrefix(errs[0], "AEP_IDP_CLAIMS_PRESET:") {
+	if errs := ValidateFile(path); len(errs) == 0 || !strings.HasPrefix(errs[0], "AEP_PLATFORM_IDP_CLAIMS_PRESET:") {
 		t.Fatalf("ValidateFile errors %v, want the refusal first", errs)
 	}
 }

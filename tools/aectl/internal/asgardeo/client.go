@@ -16,7 +16,7 @@
 
 // Package asgardeo is a minimal client of an Asgardeo organization's
 // Application Management API, for `aectl platform install` and
-// `aectl platform sync-clients` with idp.clients asgardeo. It creates AE's
+// `aectl platform sync-clients` with platform.idp.clients asgardeo. It creates AE's
 // OAuth applications with the settings AE needs and checks the ones that
 // exist.
 //
