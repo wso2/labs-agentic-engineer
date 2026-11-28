@@ -15,10 +15,10 @@ go build -o aectl .  # build CLI
 | `cmd/` | Cobra commands for the CLI (`platform`, `config`, `secret`, `sre`, `uninstall`) |
 | `internal/openbao/` | HTTP client for OpenBao API |
 | `internal/thunder/` | Thunder admin client (OAuth app registration over HTTP), port-forward |
-| `internal/asgardeo/` | Client of the Application Management API of an Asgardeo organization, for `idp.clients: asgardeo`: creates AE's applications, lists the wrong settings of an application that exists, checks a secret by a token request, regenerates a secret |
+| `internal/asgardeo/` | Client of the Application Management API of an Asgardeo organization, for `platform.idp.clients: asgardeo`: creates AE's applications, lists the wrong settings of an application that exists, checks a secret by a token request, regenerates a secret |
 | `internal/kubernetes/` | k8s client helpers (Job runner, port-forward) |
 | `internal/config/` | Viper config defaults and init |
-| `internal/idpclaims/` | Resolves the `idp.claims` block: a preset (data files in `presets/`), then the values that the caller lays over it. `platformIDPClaims` (`cmd/platform_idp.go`) supplies the config keys of the loaded config |
+| `internal/idpclaims/` | Resolves the `platform.idp.claims` block: a preset (data files in `presets/`), then the values that the caller lays over it. `platformIDPClaims` (`cmd/platform_idp.go`) supplies the config keys of the loaded config |
 | `internal/oidc/` | Reads the platform IdP's endpoints from its OIDC discovery document (`Discover`). `Endpoints.OnBase` puts the same paths on another address: Thunder's in-cluster Service, or the HTTPS gateway through which the environment Thunders fetch its keys |
 | `internal/envidp/` | Installs the environment-tier Thunder + its binding record + the environment's API Platform gateway — see deployments/design/two-tier-thunder.md. Org/env come from oc.default_org_namespace/oc.pipeline_source_environment (cmd.ocOrgNamespace/ocPipelineSourceEnvironment); no runtime dependency on Agent Manager |
 
@@ -35,26 +35,27 @@ always override the ConfigMap.
 `aeStudio.*` values from it (`sre install` flips `sreAgent.*` through an
 in-process `platform update`).
 
-`idp.clients` selects who creates the clients of the platform IdP: `thunder`
-(the default), `imported` or `asgardeo`. A key in `keyRegistry`
-(`internal/config/config.go`) can belong to values of `idp.clients`
+`platform.idp.clients` selects who creates the clients of the platform IdP:
+`thunder` (the default), `imported` or `asgardeo`. A key in `keyRegistry`
+(`internal/config/config.go`) can belong to values of `platform.idp.clients`
 (`clients`). The four `thunder.*` keys are required for `thunder` and are
 refused for the other values (`exclusive`). `asgardeo.api_url` is required
-for `asgardeo` and is refused for the other values. `idp.issuer` is required
-for `imported` and `asgardeo`. There, `idp.issuer` and `asgardeo.api_url`
-must be https URLs. For `thunder`, `idp.issuer` is optional: if it is not
-set, the issuer is `thunder.public_url`. `idp.org_handle` is always
+for `asgardeo` and is refused for the other values. `platform.idp.issuer` is
+required for `imported` and `asgardeo`. There, `platform.idp.issuer` and
+`asgardeo.api_url` must be https URLs. For `thunder`, `platform.idp.issuer`
+is optional: if it is not set, the issuer is `thunder.public_url`.
+`platform.idp.org_handle` is always
 required. `administersThunder` (`cmd/platform_idp.go`) reports the value
 `thunder`. `idpClients` gives the clients that `aectl` creates for the
 value.
 
-The `idp.claims` block gives the claim names of the platform IdP
+The `platform.idp.claims` block gives the claim names of the platform IdP
 (`internal/idpclaims`). Each value comes from two layers, in this order:
-the preset (`idp.claims.preset`: `thunder`, `asgardeo` or `none`; `thunder`
-if it is not set) and the `idp.claims.*` keys of the config
+the preset (`platform.idp.claims.preset`: `thunder`, `asgardeo` or `none`;
+`thunder` if it is not set) and the `platform.idp.claims.*` keys of the config
 (`ResolveClaims`, `internal/config/config.go`). A claim value does not come
 from the environment: each command that validates a config stops if an
-`AEP_IDP_CLAIMS_*` variable is set (`ClaimsEnvRefusal`).
+`AEP_PLATFORM_IDP_CLAIMS_*` variable is set (`ClaimsEnvRefusal`).
 `platform install`, `platform update` and `platform config test` print each
 value and its layer. With `none`, a required value that is not set stops the
 command. `aectl` passes the values to the chart. Every reader of the IdP's
@@ -79,7 +80,7 @@ tokens reads by them.
   IDs must be the same (`TestAectlOpenChoreoClient_MatchesTheChartsBinding`).
 - `orgClients` (`cmd/thunder_cli.go`) adds the two clients of the org:
   `aep-publisher-<org>` and `ae-studio-<org>`. `aectl` registers them under
-  the organization unit that `idp.org_handle` names (`OrgOUHandle`,
+  the organization unit that `platform.idp.org_handle` names (`OrgOUHandle`,
   `internal/thunder`). It does not create an organization unit. Their vault
   names are `org-publisher` and `org-studio`, and aep-api reads their secrets
   from the `aep-org-client-secrets` Secret. `aectl` does not register
@@ -92,7 +93,7 @@ tokens reads by them.
   http://localhost:8090]`.
 - `discoverPlatformIDP` (`cmd/platform_idp.go`) reads the platform IdP's
   endpoints from `<issuer>/.well-known/openid-configuration`. The issuer is
-  `idp.issuer`. If `idp.issuer` is not set, the issuer is
+  `platform.idp.issuer`. If `platform.idp.issuer` is not set, the issuer is
   `thunder.public_url` (`platformIssuerKey`).
   `platform install`, `platform update` and `sre install` each fetch the
   document once, from the operator's machine. `platform install` fetches it
@@ -107,10 +108,12 @@ tokens reads by them.
   IdP), `idp.jwksURL` and `idp.tokenURL`,
   `aeStudio.idp.{issuer,jwksUrl,tokenUrl}`, `idp.orgHandle` and
   `idp.orgNamespace`. When the IdP is a ThunderID that `aectl` administers
-  (`idp.clients: thunder`), the JWKS and token URLs are the paths of the
-  document on `thunder.url`, the address at which pods reach the IdP. If
+  (`platform.idp.clients: thunder`), the JWKS and token URLs are the paths of
+  the document on `thunder.url`, the address at which pods reach the IdP. If
   not, they are the URLs that the document gives.
   `platformIDPInstallArgs` writes `idp.issuer`.
+  These are the values of the chart, which keeps the block `idp.*`. Only the
+  config of `aectl` uses `platform.idp.*`.
   `envidp` builds the environment Thunders' trust of the platform IdP from
   the same endpoints on `https://<host>:8443`.
 - `platform install` overwrites (plain PUT) every OpenBao seed it owns: the
@@ -129,8 +132,8 @@ tokens reads by them.
 
 ## Imported clients
 
-With `idp.clients: imported`, the admin of the platform IdP creates the
-clients, and `aectl` administers nothing on the IdP. An Asgardeo organization
+With `platform.idp.clients: imported`, the admin of the platform IdP creates
+the clients, and `aectl` administers nothing on the IdP. An Asgardeo organization
 is an example. What differs from the sections above:
 
 - **Secrets.** `aectl` generates no client secret and asks for no admin
@@ -155,12 +158,12 @@ is an example. What differs from the sections above:
   clients that `aectl` registers.
 - **`sre install`** refuses (`sreIDPSupported`, `cmd/sre.go`). It uses the
   observer and RCA clients of OpenChoreo, which `platform install` registers
-  only with `idp.clients: thunder`.
+  only with `platform.idp.clients: thunder`.
 
 ## Asgardeo clients
 
-With `idp.clients: asgardeo`, `aectl` creates AE's clients in an Asgardeo
-organization (`internal/asgardeo`, `cmd/asgardeo_cli.go`). The Helm values,
+With `platform.idp.clients: asgardeo`, `aectl` creates AE's clients in an
+Asgardeo organization (`internal/asgardeo`, `cmd/asgardeo_cli.go`). The Helm values,
 the environment Thunders and `sre install` are as in "Imported clients".
 What differs:
 
@@ -174,7 +177,7 @@ What differs:
   and looks up each client before the command changes the cluster. The
   command uses that token to its end.
   `refuseIDPAdminFlags` refuses the flags for another value of
-  `idp.clients`.
+  `platform.idp.clients`.
 - **Secrets.** `generatedClientSecrets` gives the five secrets of
   `importedClientNames` a generator (`generatedAsgardeoClientSecrets`).
   Nothing is imported.
