@@ -187,6 +187,26 @@ func OriginOf(redirectURI string) string {
 	return u.Scheme + "://" + host
 }
 
+// OriginsOf is the origin of each redirect URI, once each, in their order. A
+// URI with no web origin (see OriginOf) adds none. The result is never nil, so
+// that it marshals to an empty JSON array.
+func OriginsOf(redirectURIs []string) []string {
+	origins := []string{}
+	seen := map[string]struct{}{}
+	for _, uri := range redirectURIs {
+		origin := OriginOf(uri)
+		if origin == "" {
+			continue
+		}
+		if _, dup := seen[origin]; dup {
+			continue
+		}
+		seen[origin] = struct{}{}
+		origins = append(origins, origin)
+	}
+	return origins
+}
+
 func omitDefaultPort(scheme, port string) bool {
 	return (scheme == "https" && (port == "" || port == "443")) ||
 		(scheme == "http" && (port == "" || port == "80"))

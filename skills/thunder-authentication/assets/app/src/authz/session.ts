@@ -127,8 +127,8 @@ export async function signIn(): Promise<void> {
  * callback posts its answer back to the parent window. Finish the wrong leg and
  * the parent hears nothing and waits out `silentRequestTimeoutInSeconds`.
  * `signinCallback()` reads `request_type` off the stored state and dispatches
- * both. One registered redirect URI is all the platform gives you, so this one
- * route has to serve both.
+ * both. One callback URI is all the platform registers, so this one route has
+ * to serve both.
  *
  * Returns nothing: the silent leg has no User to hand a hidden iframe. A
  * /callback page renders from this promise SETTLING, never from a value.
@@ -137,8 +137,9 @@ export async function handleCallback(): Promise<void> {
   await userManager.signinCallback();
 }
 
-// The IdP's discovery document advertises no end_session_endpoint, so
-// signoutRedirect() rejects. Drop the LOCAL session instead.
+// signoutRedirect() sends the browser to the IdP's end_session_endpoint, which
+// returns it to post_logout_redirect_uri above. An IdP whose discovery document
+// advertises none makes it reject: drop the LOCAL session instead.
 export async function signOut(): Promise<void> {
   try {
     await userManager.signoutRedirect();

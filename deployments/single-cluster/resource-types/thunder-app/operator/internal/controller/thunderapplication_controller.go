@@ -212,26 +212,15 @@ func (r *Reconciler) syncBrowserOrigins(ctx context.Context, target thunderTarge
 	// A set: several apps legitimately share an origin (one SPA whose service
 	// declares the same auth dependency), and several redirect URIs on one app
 	// collapse onto one.
-	seen := map[string]struct{}{}
-	var origins []string
+	var redirectURIs []string
 	for i := range apps.Items {
 		peer := &apps.Items[i]
 		if !peer.DeletionTimestamp.IsZero() {
 			continue
 		}
-		for _, uri := range splitRedirectURIs(peer.Spec.RedirectURIs) {
-			origin := thunder.OriginOf(uri)
-			if origin == "" {
-				continue
-			}
-			if _, dup := seen[origin]; dup {
-				continue
-			}
-			seen[origin] = struct{}{}
-			origins = append(origins, origin)
-		}
+		redirectURIs = append(redirectURIs, splitRedirectURIs(peer.Spec.RedirectURIs)...)
 	}
-	return r.clientFor(target).SetBrowserOrigins(ctx, origins)
+	return r.clientFor(target).SetBrowserOrigins(ctx, thunder.OriginsOf(redirectURIs))
 }
 
 // nudgeRenderedRelease makes OpenChoreo re-read this app's status now rather

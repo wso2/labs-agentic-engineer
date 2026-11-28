@@ -161,6 +161,16 @@ application-creation time, the client (`internal/thunder/client.go`)
 substitutes a reserved, non-routable placeholder
 (`https://pending.invalid/callback`) until a real one is patched in.
 
+The client also writes the application's `postLogoutRedirectUris`: the origin
+of each redirect URI, once each. That is where sign-out returns. A generated
+app sends its own origin as `post_logout_redirect_uri`, and ThunderID 1.0.0
+checks it against that list alone, by exact string: an address that is only
+among `redirectUris` is refused with `invalid post_logout_redirect_uri`. The
+list is derived on the wire and is not in the CR, so `spec.redirectUris` stays
+what aep-api wrote, and an app that was registered before the list was written
+gets it on its next reconcile. The write is read back with the scopes: an IdP
+that drops the list still signs users in, so the reconcile fails and names it.
+
 `scopes` is written through to the registered application's
 `inboundAuthConfig[oauth2].config.scopes`. The CR carries it space-joined
 (that is the ClusterResourceType parameter's shape) and ThunderID's contract
