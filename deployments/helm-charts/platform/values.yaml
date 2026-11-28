@@ -239,7 +239,7 @@ idp:
   # for its name is deployments/scripts/env.sh (THUNDER_INTERNAL_URL).
   jwksURL: "http://platform-idp-service.platform-idp.svc.cluster.local:8090/oauth2/jwks"
   tokenURL: "http://platform-idp-service.platform-idp.svc.cluster.local:8090/oauth2/token"
-  # Who creates AE's clients on the IdP (aectl's idp.clients):
+  # Who creates AE's clients on the IdP (aectl's platform.idp.clients):
   #   thunder   aectl registers them on a ThunderID it administers. The chart
   #             then renders what only that needs: the ThunderID admin
   #             credentials aectl reads (aep-thunder-admin-creds), the secrets
@@ -257,8 +257,8 @@ idp:
   # the token. The values reach aep-api (PLATFORM_IDP_CLAIMS_*), every org's
   # AE Studio pod (AE_IDP_CLAIMS_*) and, for the org's handle, the console
   # (VITE_IDP_CLAIMS_ORG_HANDLE). Every reader of the IdP's tokens reads by
-  # them and knows no IdP. `aectl` sets them from its idp.claims config, and
-  # the defaults here are ThunderID's.
+  # them and knows no IdP. `aectl` sets them from its platform.idp.claims
+  # config, and the defaults here are ThunderID's.
   claims:
     org:
       # The claim that carries the handle the IdP knows the caller's org by.
