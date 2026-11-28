@@ -59,7 +59,7 @@ func TestResourceTypeDir_DecodesTheRepoCatalog(t *testing.T) {
 	if idpApp.Metadata.Labels["aep.wso2.com/role"] != "end-user-auth" {
 		t.Errorf("idp-app role label = %q", idpApp.Metadata.Labels["aep.wso2.com/role"])
 	}
-	if idpApp.Metadata.Annotations["aep.wso2.com/skill"] != "thunder-authentication" {
+	if idpApp.Metadata.Annotations["aep.wso2.com/skill"] != "idp-authentication" {
 		t.Errorf("idp-app skill annotation = %q", idpApp.Metadata.Annotations["aep.wso2.com/skill"])
 	}
 	if len(idpApp.Spec.Resources) == 0 || len(idpApp.Spec.Resources[0].Template) == 0 {

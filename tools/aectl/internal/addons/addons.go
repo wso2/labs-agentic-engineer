@@ -185,7 +185,7 @@ metadata:
       client on this environment's identity provider. Declare on both the
       web app that signs users in and the service whose API it protects.
     aep.wso2.com/consumer-url-env-config: redirectUris
-    aep.wso2.com/skill: thunder-authentication
+    aep.wso2.com/skill: idp-authentication
 spec:
   retainPolicy: Delete
   parameters:
