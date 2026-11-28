@@ -28,7 +28,7 @@ against a scope nobody can hold.
 
 The platform provisions from it at Build (resource server, actions, project
 roles, group bindings, test users) and the console renders it as the Security
-page. `architecture` declares the `thunder-app` dependency on the SPA and each
+page. `architecture` declares the `idp-app` dependency on the SPA and each
 protected API; this file says what the people who sign in through it may do.
 
 ---

@@ -56,7 +56,7 @@ not designed with — it is the coding run's to load, and its theming is a settl
 organization decision that no design-time question reopens. Never ask the user
 about colors, themes, or look and feel. An ai-agent → `["agent-building"]`. **Pin the auth skills the same way,
 never leave them to a description:** `"thunder-authentication"` on **both**
-sides of sign-in — every component that declares the `thunder-app` dependency,
+sides of sign-in — every component that declares the `idp-app` dependency,
 the SPA *and* each protected backend it calls — and `"api-management"` on every
 service that sits behind the gateway. The first owns the SPA's sign-in, its
 screen gates and the backend's verification of the gateway's assertion; the
@@ -125,7 +125,7 @@ components over HTTP: give it a `component` dependency for every API it uses.
 caller is a sibling web-application or the platform's Try it app, set
 `"exposure": "internet"` (a browser cannot reach an intranet address, so an
 intranet agent has nothing that can talk to it) AND give it the project's
-shared `thunder-app`
+shared `idp-app`
 dependency, under the same dependency NAME the SPA and the sibling APIs use,
 exactly as you would for a service. It is the same sign-in and the same OAuth
 app, not a second one. Do this even when the agent stores nothing and every API
@@ -152,7 +152,7 @@ the generic platform-resource wiring injects each of its five outputs as
 `<DEP_NAME>_<OUTPUT>`, uppercased). When the project already carries a
 Postgres and the user prefers one instance, declare the SAME dependency name
 the sibling service uses — same-name resolution to one shared instance is the
-`thunder-app` sharing rule, and it applies here too. Either way the agent owns
+`idp-app` sharing rule, and it applies here too. Either way the agent owns
 its `conversations` table exclusively: no other component touches it, and the
 agent touches nothing else in a shared instance. Business data is still not
 the agent's to hold — anything beyond its own conversation belongs behind a
@@ -312,15 +312,15 @@ operations its contract actually exposes:
   and the SPA never sees the credential. A web-application may declare an
   `external` dependency directly only when NONE of its `config` keys need
   `secret: true` — a genuinely public API, or one the END USER authenticates with
-  their own in-browser OAuth. The one exception is `thunder-app` (next bullet):
+  their own in-browser OAuth. The one exception is `idp-app` (next bullet):
   its outputs are public OIDC client config by design. The schema does not reject
   a secret on a web-application, so apply this as the architect's judgment call,
   not a rule to route around.
-- **`thunder-app` is how sign-in happens, and nothing else provisions it.** When
+- **`idp-app` is how sign-in happens, and nothing else provisions it.** When
   the spec implies users sign in, declare it on BOTH the SPA and each protected
   service under the SAME dependency `name` — that shared name is what ties
   sign-in to token-carrying API calls. With no such dependency the SPA deploys
-  unable to sign in. `thunder-app` takes no `parameters` and **nothing about the
+  unable to sign in. `idp-app` takes no `parameters` and **nothing about the
   sign-in client is authored by hand**: its display name, its redirect URIs and
   its scope list are all derived by the platform (the scopes from the permission
   catalog `security-design` writes on `security.json`). A project with no web

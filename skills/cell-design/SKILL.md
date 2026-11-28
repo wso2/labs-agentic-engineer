@@ -37,7 +37,7 @@ what kind of thing it is:
 - **west** = org / intranet gateway. A component exposed only inside the org
   (`exposure: "intranet"`) is reached through west: `west -> <component>`.
 - **east** = org / platform dependencies OUTSIDE the project — shared platform
-  services and other projects' services. Thunder auth (a `thunder-app`
+  services and other projects' services. Thunder auth (an `idp-app`
   platform-resource) and any `org-service` dependency go on **east**.
 - **south** = third-party / external dependencies — SaaS and other systems
   outside the platform (`external`-kind dependencies: payment, email, …).
@@ -48,7 +48,7 @@ what kind of thing it is:
 |---|---|---|
 | Your own component (service, web-app, worker) | a `components/<name>/` folder | INSIDE the cell — `component …` |
 | Project-scoped backing resource (db, cache, …) | `platform-resource` — `resourceType` copied from this turn's `list_platform_resource_types` during enrichment | INSIDE the cell — `component <id> … database` |
-| Auth (Thunder) | `platform-resource` `thunder-app` | **east** — `east <id> as "Thunder Auth" identity-server` |
+| Auth (Thunder) | `platform-resource` `idp-app` | **east** — `east <id> as "Thunder Auth" identity-server` |
 | Another project's / org service | `org-service` | **east** |
 | Third-party SaaS / external system | `external` | **south** |
 | Exposed to the internet | `exposure: "internet"` | **north** exposure edge `north -> comp` |
