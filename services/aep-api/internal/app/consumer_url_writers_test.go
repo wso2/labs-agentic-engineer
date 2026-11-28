@@ -57,7 +57,7 @@ const (
 	pinOrg        = "acme"
 	pinProject    = "proj"
 	pinDep        = "user-auth"
-	pinType       = "thunder-app"
+	pinType       = "idp-app"
 	pinEnvConfig  = "redirectUris"
 	pinPath       = "/callback"
 	pinEnv        = "default"

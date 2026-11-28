@@ -27,7 +27,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
-// thunder-app is a TEST FIXTURE type name the fake catalog marks end-user-auth.
+// idp-app is a TEST FIXTURE type name the fake catalog marks end-user-auth.
 // Production overlay keys on the CRT marker, never this string.
 
 type fakeMarkers struct {
@@ -44,7 +44,7 @@ func (f *fakeMarkers) MarkersByName(context.Context) (map[string]dependencies.Ty
 
 func endUserAuthMarkers() *fakeMarkers {
 	return &fakeMarkers{byName: map[string]dependencies.TypeMarkers{
-		"thunder-app":   {EndUserAuth: true},
+		"idp-app":   {EndUserAuth: true},
 		"postgres-cnpg": {EndUserAuth: false},
 	}}
 }
@@ -110,7 +110,7 @@ func designWithThunderApp(params map[string]any) []spec.DesignComponent {
 	return []spec.DesignComponent{{
 		Name: "web",
 		Dependencies: []spec.Dependency{
-			{Kind: spec.DependencyKindPlatformResource, Name: "idp", ResourceType: "thunder-app", Parameters: params},
+			{Kind: spec.DependencyKindPlatformResource, Name: "idp", ResourceType: "idp-app", Parameters: params},
 		},
 	}}
 }
@@ -185,7 +185,7 @@ func TestProvision_DisplayNameNamesTheWebAppWhenAProjectHasSeveral(t *testing.T)
 		{
 			Name: "web", ComponentType: "web-application",
 			Dependencies: []spec.Dependency{
-				{Kind: spec.DependencyKindPlatformResource, Name: "idp", ResourceType: "thunder-app"},
+				{Kind: spec.DependencyKindPlatformResource, Name: "idp", ResourceType: "idp-app"},
 			},
 		},
 		{Name: "admin-web", ComponentType: "web-application"},
@@ -207,7 +207,7 @@ func TestProvision_DisplayNameNamesTheWebAppWhenAProjectHasSeveral(t *testing.T)
 // belongs to an app that is only half its users.
 func TestProvision_DisplayNameHasNoOwnerWhenWebAppsShareTheDependency(t *testing.T) {
 	dep := []spec.Dependency{
-		{Kind: spec.DependencyKindPlatformResource, Name: "idp", ResourceType: "thunder-app"},
+		{Kind: spec.DependencyKindPlatformResource, Name: "idp", ResourceType: "idp-app"},
 	}
 	design := []spec.DesignComponent{
 		{Name: "guest-web", ComponentType: "web-application", Dependencies: dep},

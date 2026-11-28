@@ -8,7 +8,7 @@
   "entrypoint": "deployment/service",
   "exposure": "internet",
   "dependencies": [
-    { "kind": "platform-resource", "name": "user-auth", "resourceType": "thunder-app" },
+    { "kind": "platform-resource", "name": "user-auth", "resourceType": "idp-app" },
     { "kind": "platform-resource", "name": "lunch-db", "resourceType": "postgres-cnpg" },
     { "kind": "external", "name": "slack", "description": "Posts a message to the team's Slack channel when a round opens or reaches its cutoff." }
   ],

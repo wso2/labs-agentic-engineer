@@ -64,12 +64,12 @@ test("deriveDesign: nothing to derive is success with no changes", async () => {
 
 test("deriveDesign: a refusal carries the derivation's own message", async () => {
   const stderr =
-    'design-derive: resourceType is not installed on this cluster: receipts ("object-storage"); available: postgres-cnpg, thunder-app\n';
+    'design-derive: resourceType is not installed on this cluster: receipts ("object-storage"); available: idp-app, postgres-cnpg\n';
   const outcome = await deriveDesign("/p", answer({ code: 1, stderr }));
   assert.deepEqual(outcome, {
     ok: false,
     detail:
-      'design refused: resourceType is not installed on this cluster: receipts ("object-storage"); available: postgres-cnpg, thunder-app',
+      'design refused: resourceType is not installed on this cluster: receipts ("object-storage"); available: idp-app, postgres-cnpg',
   });
 });
 

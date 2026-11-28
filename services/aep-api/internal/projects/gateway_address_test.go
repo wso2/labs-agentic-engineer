@@ -119,7 +119,7 @@ func TestProtectedSiblingsOf(t *testing.T) {
       {"name":"web","type":"web-application","dependencies":[
         {"kind":"component","name":"api","wiring":{"endpoint":{"component":"proj-api","name":"http","visibility":"project","envBindings":{"address":"API_URL"}}}},
         {"kind":"component","name":"open","wiring":{"endpoint":{"component":"proj-open","name":"http","visibility":"project","envBindings":{"address":"OPEN_URL"}}}},
-        {"kind":"platform-resource","name":"user-auth","resourceType":"thunder-app"}
+        {"kind":"platform-resource","name":"user-auth","resourceType":"idp-app"}
       ]},
       {"name":"api","type":"service","dependencies":[],"exposesAPI":{"auth":"end-user-required"}},
       {"name":"open","type":"service","dependencies":[]}

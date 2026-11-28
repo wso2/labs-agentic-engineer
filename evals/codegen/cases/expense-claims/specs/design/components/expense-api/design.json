@@ -33,7 +33,7 @@
       "kind": "platform-resource",
       "name": "user-auth",
       "description": "Sign-in: the gateway validates tokens issued by Thunder and forwards a signed assertion.",
-      "resourceType": "thunder-app",
+      "resourceType": "idp-app",
       "wiring": {
         "ref": "ev-expense-claims-92b8ac76",
         "envBindings": {

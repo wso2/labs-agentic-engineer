@@ -118,8 +118,8 @@ func (h *sharedDepHarness) registered(t *testing.T, n int) string {
 
 func twoWebAppsOneDep() map[string]string {
 	return map[string]string{
-		sharedAdmin: webAppWithPlatformResource(sharedAdmin, thunderWaitDep, "thunder-app"),
-		sharedGuest: webAppWithPlatformResource(sharedGuest, thunderWaitDep, "thunder-app"),
+		sharedAdmin: webAppWithPlatformResource(sharedAdmin, thunderWaitDep, "idp-app"),
+		sharedGuest: webAppWithPlatformResource(sharedGuest, thunderWaitDep, "idp-app"),
 	}
 }
 
@@ -229,7 +229,7 @@ func TestDeploymentState_SharedDependencyHoldsOnlyTheUnregisteredApp(t *testing.
 func TestDeploymentState_WebAppWithoutTheDependencyContributesNothing(t *testing.T) {
 	t.Parallel()
 	designs := map[string]string{
-		sharedAdmin: webAppWithPlatformResource(sharedAdmin, thunderWaitDep, "thunder-app"),
+		sharedAdmin: webAppWithPlatformResource(sharedAdmin, thunderWaitDep, "idp-app"),
 		sharedGuest: plainWebApp(sharedGuest),
 	}
 	h := newSharedDepHarness(t, designs, bothOrigins(), crWith(sharedAdminCB))

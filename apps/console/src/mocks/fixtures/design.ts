@@ -67,7 +67,7 @@ const EXPENSE_WEB_DESIGN = `{
   "description": "Where staff submit claims and managers approve them.",
   "dependencies": [
     { "kind": "component", "name": "expense-api" },
-    { "kind": "platform-resource", "name": "company-sso", "resourceType": "thunder-app" }
+    { "kind": "platform-resource", "name": "company-sso", "resourceType": "idp-app" }
   ]
 }`;
 
@@ -83,7 +83,7 @@ const EXPENSE_API_DESIGN = `{
   "description": "Claims, expenses and their approvals.",
   "dependencies": [
     { "kind": "platform-resource", "name": "expenses-db", "resourceType": "postgres-cnpg" },
-    { "kind": "platform-resource", "name": "company-sso", "resourceType": "thunder-app" }
+    { "kind": "platform-resource", "name": "company-sso", "resourceType": "idp-app" }
   ]
 }`;
 

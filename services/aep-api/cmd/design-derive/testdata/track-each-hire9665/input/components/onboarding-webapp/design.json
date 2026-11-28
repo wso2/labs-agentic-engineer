@@ -29,7 +29,7 @@
     {
       "kind": "platform-resource",
       "name": "user-auth",
-      "resourceType": "thunder-app"
+      "resourceType": "idp-app"
     }
   ],
   "skillsPinned": [

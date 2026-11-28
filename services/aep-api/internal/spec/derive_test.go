@@ -33,14 +33,14 @@ func assembled(t *testing.T, files map[string]string) *DesignFile {
 
 func thunderAndPostgres() map[string]CRTType {
 	return map[string]CRTType{
-		"thunder-app":   {EndUserAuth: true, Outputs: []string{"client_id", "issuer"}},
+		"idp-app":   {EndUserAuth: true, Outputs: []string{"client_id", "issuer"}},
 		"postgres-cnpg": {Outputs: []string{"host", "port"}},
 	}
 }
 
 func TestDerivePlatformResourceFacts_ReturnsTheChangedComponentRendered(t *testing.T) {
 	t.Parallel()
-	files := designFilesWithDeps(`[{"kind":"platform-resource","name":"user-auth","resourceType":"thunder-app"}]`)
+	files := designFilesWithDeps(`[{"kind":"platform-resource","name":"user-auth","resourceType":"idp-app"}]`)
 	design := assembled(t, files)
 
 	derived, err := DerivePlatformResourceFacts(design, thunderAndPostgres(), "web")
@@ -84,7 +84,7 @@ func TestDerivePlatformResourceFacts_OwnOutputDerivesNothing(t *testing.T) {
 func TestDerivePlatformResourceFacts_UnknownTypeRefusesBeforeMutating(t *testing.T) {
 	t.Parallel()
 	design := assembled(t, designFilesWithDeps(`[
-    {"kind":"platform-resource","name":"user-auth","resourceType":"thunder-app"},
+    {"kind":"platform-resource","name":"user-auth","resourceType":"idp-app"},
     {"kind":"platform-resource","name":"receipts","resourceType":"object-storage"}]`))
 
 	derived, err := DerivePlatformResourceFacts(design, thunderAndPostgres(), "web")
@@ -99,7 +99,7 @@ func TestDerivePlatformResourceFacts_UnknownTypeRefusesBeforeMutating(t *testing
 func TestDerivePlatformResourceFacts_AuthConflictRefuses(t *testing.T) {
 	t.Parallel()
 	design := assembled(t, designFilesWithDepsAndAuth(
-		`[{"kind":"platform-resource","name":"user-auth","resourceType":"thunder-app"}]`,
+		`[{"kind":"platform-resource","name":"user-auth","resourceType":"idp-app"}]`,
 		`{"auth": "service-required"}`))
 
 	if _, err := DerivePlatformResourceFacts(design, thunderAndPostgres(), "web"); !errors.Is(err, ErrEndUserAuthConflict) {

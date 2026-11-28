@@ -263,7 +263,7 @@ test("a dependency that binds no variable is unresolved, not a silently unconfig
     wire.unresolved.map((entry) => [entry.component, entry.dependency, entry.resourceType]),
     [
       ["onboarding-api", "onboarding-db", "postgres-cnpg"],
-      ["onboarding-api", "user-auth", "thunder-app"],
+      ["onboarding-api", "user-auth", "idp-app"],
     ],
     "both stood-up dependencies must be reported, so the message names what to fix",
   );

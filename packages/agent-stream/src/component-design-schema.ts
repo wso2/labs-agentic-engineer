@@ -40,7 +40,7 @@ import type { Equal } from "./type-equal.js";
  * The cluster marks the type with the role `end-user-auth`. This package cannot
  * read a cluster's markers, so it knows the one type by name.
  */
-export const SIGN_IN_RESOURCE_TYPE = "thunder-app";
+export const SIGN_IN_RESOURCE_TYPE = "idp-app";
 
 // strictObject, matching the published component-design.schema.json
 // (additionalProperties: false) and the BFF save-gate — a dependency carrying
