@@ -30,7 +30,7 @@ type OperatorSpec struct {
 	Chart string
 	// Version is the chart version passed to --version; empty omits the flag.
 	// Helm resolves this as a semver constraint, not only a literal version, so
-	// a range is valid here — see the thunder-app addon for why one is needed.
+	// a range is valid here — see the idp-app addon for why one is needed.
 	Version string
 	// Namespace is the target namespace for the operator deployment.
 	Namespace string
@@ -80,8 +80,8 @@ type VerifySpec struct {
 // selector.
 var Available = []Addon{
 	{
-		ID:          "thunder-app",
-		Label:       "thunder-app",
+		ID:          "idp-app",
+		Label:       "idp-app",
 		Description: "ThunderApplication ClusterResourceType + RBAC",
 		Operator: OperatorSpec{
 			ReleaseName: "thunder-app-operator",
@@ -122,11 +122,11 @@ var Available = []Addon{
 			// naming drifts, rather than leaving the operator running with
 			// no environment it can register apps into.
 		},
-		Manifests: []string{thunderAppResourceType, thunderAppRBAC},
+		Manifests: []string{idpAppResourceType, idpAppRBAC},
 		VerifyResources: []VerifySpec{
-			{APIVersion: "openchoreo.dev/v1alpha1", Kind: "ClusterResourceType", Name: "thunder-app"},
-			{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole", Name: "openchoreo-dataplane-thunder-app"},
-			{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRoleBinding", Name: "openchoreo-dataplane-thunder-app"},
+			{APIVersion: "openchoreo.dev/v1alpha1", Kind: "ClusterResourceType", Name: "idp-app"},
+			{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole", Name: "openchoreo-dataplane-idp-app"},
+			{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRoleBinding", Name: "openchoreo-dataplane-idp-app"},
 		},
 	},
 	{
@@ -149,7 +149,7 @@ var Available = []Addon{
 	},
 }
 
-// thunderAppResourceType is the ClusterResourceType that makes the thunder-app
+// idpAppResourceType is the ClusterResourceType that makes the idp-app
 // OAuth provisioning available as a platform-resource dependency type in AEP.
 // Source: deployments/single-cluster/resource-types/thunder-app/resourcetype.yaml
 // — a mirror, not a verbatim copy: aectl's own module can't reach across the
@@ -162,7 +162,7 @@ var Available = []Addon{
 // the rendered ThunderApplication's live status, not a literal Thunder URL. A
 // literal here once pointed at the single, pre-two-tier-Thunder platform
 // instance; with a per-environment Thunder (internal/envidp), a project's
-// thunder-app dependency registers on THAT environment's Thunder, so a
+// idp-app dependency registers on THAT environment's Thunder, so a
 // literal silently sends every generated app's login to the wrong Thunder —
 // which authenticates the client_id but not the issuer, so every login fails
 // there with a generic "invalid request".
@@ -172,11 +172,11 @@ var Available = []Addon{
 // step with the source. addons_test.go compares the two field by field, so
 // adding a parameter or an output on one side and not the other fails the
 // build.
-const thunderAppResourceType = `
+const idpAppResourceType = `
 apiVersion: openchoreo.dev/v1alpha1
 kind: ClusterResourceType
 metadata:
-  name: thunder-app
+  name: idp-app
   labels:
     aep.wso2.com/role: end-user-auth
   annotations:
@@ -240,14 +240,14 @@ spec:
       value: ${parameters.resource}
 `
 
-// thunderAppRBAC grants the OpenChoreo data-plane agent permission to manage
+// idpAppRBAC grants the OpenChoreo data-plane agent permission to manage
 // ThunderApplication objects in project namespaces.
 // Source: deployments/single-cluster/resource-types/thunder-app/rbac.yaml
-const thunderAppRBAC = `
+const idpAppRBAC = `
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: openchoreo-dataplane-thunder-app
+  name: openchoreo-dataplane-idp-app
   labels:
     app.kubernetes.io/part-of: wso2-agentic-engineer
 rules:
@@ -258,13 +258,13 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: openchoreo-dataplane-thunder-app
+  name: openchoreo-dataplane-idp-app
   labels:
     app.kubernetes.io/part-of: wso2-agentic-engineer
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: openchoreo-dataplane-thunder-app
+  name: openchoreo-dataplane-idp-app
 subjects:
   - kind: ServiceAccount
     name: cluster-agent-dataplane
