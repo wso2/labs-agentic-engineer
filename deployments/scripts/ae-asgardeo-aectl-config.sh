@@ -16,19 +16,18 @@
 # under the License.
 
 # Prints an aectl config whose platform IdP is an Asgardeo organization: the
-# given base config with its `idp:` block set to imported clients, Asgardeo's
-# claim names written out in full under `preset: "none"` (the shape a config
-# for any other IdP takes), the organization's issuer and its handle, and
-# with the four keys
-# of its `thunder:` block commented out (aectl refuses them where it
-# administers no ThunderID). `make dev-env AE_DEV_IDP=asgardeo` uses it so a
-# developer's organization handle is never written into the repository;
-# everything else (URLs, namespaces, toggles) stays the base's.
+# given base config with its `platform.idp:` block set to imported clients,
+# Asgardeo's claim names written out in full under `preset: "none"` (the shape
+# a config for any other IdP takes), the organization's issuer and its handle,
+# and with the four keys of its `thunder:` block commented out (aectl refuses
+# them where it administers no ThunderID). `make dev-env AE_DEV_IDP=asgardeo`
+# uses it so a developer's organization handle is never written into the
+# repository; everything else (URLs, namespaces, toggles) stays the base's.
 #
 # With [clients] `asgardeo`, aectl creates the applications itself: the
-# `idp:` block then says `clients: "asgardeo"`, and the base's commented
-# `asgardeo:` block is turned on with the address of the organization's
-# management API.
+# `platform.idp:` block then says `clients: "asgardeo"`, and the base's
+# commented `asgardeo:` block is turned on with the address of the
+# organization's management API.
 #
 # Usage: ae-asgardeo-aectl-config.sh <base config> <organization handle> [base URL] [clients]
 #   <base config>           skaffold/defaults.yaml, or a copy of it
@@ -37,9 +36,9 @@
 #   [clients]               imported (the default) or asgardeo
 #
 # It edits lines of the base that must be in the shape skaffold/defaults.yaml
-# ships them: in the `idp:` block `  clients: "thunder"`,
-# `    preset: "thunder"`, `  org_handle: "default"` and the commented
-# `  # issuer: ""`; in the
+# ships them: in the `platform.idp:` block `    clients: "thunder"`,
+# `      preset: "thunder"`, `    org_handle: "default"` and the commented
+# `    # issuer: ""`; in the
 # `thunder:` block its four keys; and, for [clients] `asgardeo`, the commented
 # `# asgardeo:` line and its `#   api_url: "..."` line. A base without them is
 # refused, not guessed at.
@@ -70,32 +69,32 @@ out="$(awk '
     END { if (n != 4) exit 3 }
 ' "$base")" || { echo "❌ ${base}: its thunder: block does not hold the four keys this script comments out (see the header)" >&2; exit 1; }
 out="$(printf '%s\n' "$out" | sed \
-    -e 's|^  clients: "thunder"$|  clients: "'"${clients}"'"|' \
-    -e 's|^  # issuer: ""$|  issuer: "'"${issuer}"'"|' \
-    -e 's|^  org_handle: "default"$|  org_handle: "'"${tenant}"'"|')"
+    -e 's|^    clients: "thunder"$|    clients: "'"${clients}"'"|' \
+    -e 's|^    # issuer: ""$|    issuer: "'"${issuer}"'"|' \
+    -e 's|^    org_handle: "default"$|    org_handle: "'"${tenant}"'"|')"
 
 # The claims block: no preset, every value written out. These are the names
 # an Asgardeo token carries (the values of aectl's own `asgardeo` preset).
-claims='    preset: "none"\
-    org:\
-      handle: "org_handle"\
-      id: "org_id"\
-      name: "org_name"\
-    caller_type:\
-      claim: "aut"\
-      machine: "APPLICATION"\
-      user: "APPLICATION_USER"'
-out="$(printf '%s\n' "$out" | sed -e 's|^    preset: "thunder"$|'"${claims}"'|')"
+claims='      preset: "none"\
+      org:\
+        handle: "org_handle"\
+        id: "org_id"\
+        name: "org_name"\
+      caller_type:\
+        claim: "aut"\
+        machine: "APPLICATION"\
+        user: "APPLICATION_USER"'
+out="$(printf '%s\n' "$out" | sed -e 's|^      preset: "thunder"$|'"${claims}"'|')"
 
-for line in "  clients: \"${clients}\"" '    preset: "none"' '      user: "APPLICATION_USER"' "  issuer: \"${issuer}\"" "  org_handle: \"${tenant}\""; do
+for line in "    clients: \"${clients}\"" '      preset: "none"' '        user: "APPLICATION_USER"' "    issuer: \"${issuer}\"" "    org_handle: \"${tenant}\""; do
     if [ "$(printf '%s\n' "$out" | grep -cxF -- "$line")" != "1" ]; then
-        echo "❌ ${base}: its idp: block is not in the shape this script edits (see the header); could not set: ${line}" >&2
+        echo "❌ ${base}: its platform.idp: block is not in the shape this script edits (see the header); could not set: ${line}" >&2
         exit 1
     fi
 done
 if [ "$clients" = "asgardeo" ]; then
     # The base's asgardeo: block is commented out (it is read only with
-    # idp.clients asgardeo): its two lines are turned on.
+    # platform.idp.clients asgardeo): its two lines are turned on.
     api="${url%/}/t/${tenant}/api/server/v1"
     out="$(printf '%s\n' "$out" | sed \
         -e 's|^# asgardeo:$|asgardeo:|' \

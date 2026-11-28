@@ -1,7 +1,9 @@
 # ADR-0054 — The platform IdP is described by configuration, not by a kind
 
 **Status:** Accepted · 2026-11-11 · rewritten 2026-11-19 · the value
-`idp.clients: asgardeo` added 2026-11-20. The first version
+`platform.idp.clients: asgardeo` added 2026-11-20 · `aectl`'s block renamed
+from `idp.*` to `platform.idp.*` 2026-11-28 (the chart's values keep
+`idp.*`). The first version
 chose the IdP by a kind (`idp.kind`: `thunder` or `asgardeo`) that code
 branched on
 **Amends:** [ADR-0027](ADR-0027-one-cluster-one-platform-idp.md) ("installed
@@ -47,12 +49,12 @@ Two separate things differ between IdPs, and the kind tied them together:
 ## Decision
 
 1. **No code branches on which IdP the platform IdP is.** The two
-   differences are two independent settings, `idp.claims` and `idp.clients`.
-   Nothing else about the IdP is configured: its endpoints come from its OIDC
-   discovery document.
+   differences are two independent settings, `platform.idp.claims` and
+   `platform.idp.clients`. Nothing else about the IdP is configured: its
+   endpoints come from its OIDC discovery document.
 
-2. **The token dialect is configuration: `idp.claims`.** It names the claim
-   that carries the org's handle, the one that carries the IdP's id for the
+2. **The token dialect is configuration: `platform.idp.claims`.** It names
+   the claim that carries the org's handle, the one that carries the IdP's id for the
    org, optionally one for its display name, the claim that says who a token
    was issued to, its value for a machine and optionally its value for a
    user. Each is a top-level text claim.
@@ -79,10 +81,10 @@ Two separate things differ between IdPs, and the kind tied them together:
      machine's. `preset: none` starts from nothing, so that a config for
      another IdP cannot inherit a name it left out. Only `aectl` knows a
      preset's name. A claim value is not taken from the environment: `aectl`
-     stops when an `AEP_IDP_CLAIMS_*` variable is set.
+     stops when an `AEP_PLATFORM_IDP_CLAIMS_*` variable is set.
 
-3. **Who creates the clients is its own setting: `idp.clients`.** `thunder`
-   (the default): `aectl` registers them on a ThunderID it administers and
+3. **Who creates the clients is its own setting: `platform.idp.clients`.**
+   `thunder` (the default): `aectl` registers them on a ThunderID it administers and
    generates their secrets. `imported`: the IdP's admin created them and
    imports their secrets, and `aectl` administers nothing on the IdP.
    `asgardeo`: `aectl` creates them in an Asgardeo organization through its
@@ -132,8 +134,8 @@ Two separate things differ between IdPs, and the kind tied them together:
    remove the last two copies (issue #975).
 
 5. **An install serves one org.** The org is named at install by the handle
-   the IdP's tokens carry (`idp.org_handle`) and by its OpenChoreo namespace.
-   aep-api maps one to the other, and a token of any other org of the IdP
+   the IdP's tokens carry (`platform.idp.org_handle`) and by its OpenChoreo
+   namespace. aep-api maps one to the other, and a token of any other org of the IdP
    reads as no org. The pod is given the IdP's handle, so the pod and the
    console need no mapping.
 
@@ -154,8 +156,8 @@ Two separate things differ between IdPs, and the kind tied them together:
 ## Consequences
 
 - An IdP other than ThunderID or Asgardeo is configured, not coded: its
-  admin creates the five clients (`idp.clients: imported`), and the config
-  names its claims. That is
+  admin creates the five clients (`platform.idp.clients: imported`), and the
+  config names its claims. That is
   configurable, not supported: AE has been run against two IdPs, and what a
   third needs beyond its claim names is only known for those two.
 - The IdP has to state the org and the caller type in top-level text claims.
@@ -169,18 +171,18 @@ Two separate things differ between IdPs, and the kind tied them together:
   the one-org mapping it names the install's org. A token issued before the
   org was recreated at the IdP can put the old id back until it expires
   (issue #974).
-- With `idp.clients: imported` or `asgardeo` an install lacks what needs
-  clients `aectl` registers on a ThunderID: the in-cluster ThunderID itself,
+- With `platform.idp.clients: imported` or `asgardeo` an install lacks what
+  needs clients `aectl` registers on a ThunderID: the in-cluster ThunderID itself,
   Agent Manager, and `aectl sre install`. With `asgardeo`, `aectl` creates
   AE's five clients only. OpenChoreo's own clients in the organization are
   the cluster owner's.
-- With `idp.clients: asgardeo`, a new cluster on an organization that has
-  the applications starts with an empty vault, so its install needs
+- With `platform.idp.clients: asgardeo`, a new cluster on an organization that
+  has the applications starts with an empty vault, so its install needs
   `--replace-client-secrets`. The secrets the earlier cluster held then
   stop working.
 - Settings and stored names every IdP has carry the IdP's role and not a
-  product's (`idp.issuer`, `idp.jwksURL`, the vault path family
-  `aep/idp-clients/`, the Secret `aep-idp-client-secrets`). Names that
+  product's (the chart's values `idp.issuer` and `idp.jwksURL`, the vault
+  path family `aep/idp-clients/`, the Secret `aep-idp-client-secrets`). Names that
   describe a ThunderID AE administers keep ThunderID's name (`thunder.*`,
   `aep-thunder-admin-creds`).
 - Three names still say "thunder" for a value every IdP has, because each
@@ -205,8 +207,8 @@ Two separate things differ between IdPs, and the kind tied them together:
   Built, then removed. The value is not stored, so an install with the
   variable followed by an update without it sent the stored value to the
   chart, and every reader then read a claim that the tokens do not carry.
-- **`idp.clients: managed` in place of `thunder`.** The chart has to know
-  that the IdP is a ThunderID `aectl` administers (its CORS policy, its
+- **`platform.idp.clients: managed` in place of `thunder`.** The chart has to
+  know that the IdP is a ThunderID `aectl` administers (its CORS policy, its
   admin credentials), and creating clients is specific to an IdP's admin
   API. One explicit value says both, with no guess from which config block
   is filled.

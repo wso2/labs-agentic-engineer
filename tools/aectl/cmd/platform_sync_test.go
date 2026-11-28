@@ -301,7 +301,7 @@ func TestPathExists_FailsClosed(t *testing.T) {
 func TestOrgClients(t *testing.T) {
 	t.Cleanup(viper.Reset)
 	viper.Set("oc.default_org_namespace", "acme")
-	viper.Set("idp.org_handle", "acme-unit")
+	viper.Set("platform.idp.org_handle", "acme-unit")
 
 	got := map[string]idpClientDef{}
 	for _, d := range orgClients() {

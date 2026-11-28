@@ -92,10 +92,10 @@ var aepThunderClients = []idpClientDef{
 // its publisher client (the coding and validation runners' identity) and its
 // AE Studio client (its pod's identity). aep-api holds no rights to create
 // them, so aectl registers both here, under the org's organization unit
-// (idp.org_handle), and aep-api reads their secrets from their own Secret.
+// (platform.idp.org_handle), and aep-api reads their secrets from their own Secret.
 // The client ids are the ones aep-api derives from the org's namespace.
 func orgClients() []idpClientDef {
-	org, handle := ocOrgNamespace(), viper.GetString("idp.org_handle")
+	org, handle := ocOrgNamespace(), viper.GetString("platform.idp.org_handle")
 	return []idpClientDef{
 		{clientID: "aep-publisher-" + org, clientType: "confidential", vaultName: "org-publisher", secretKey: "PLATFORM_IDP_ORG_PUBLISHER_SECRET", secretName: orgClientSecretsName, orgOUHandle: handle},
 		{clientID: "ae-studio-" + org, clientType: "confidential", vaultName: "org-studio", secretKey: "PLATFORM_IDP_ORG_STUDIO_SECRET", secretName: orgClientSecretsName, orgOUHandle: handle},

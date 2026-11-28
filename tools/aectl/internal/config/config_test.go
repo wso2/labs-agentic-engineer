@@ -203,7 +203,7 @@ func TestLoadFromCluster_LegacyWorkspacesAccessMode_Tolerated(t *testing.T) {
 			"thunder.public_url":              "http://thunder.example.com",
 			"oc.api_url":                      "http://oc.example.com",
 			"oc.system_namespace":             "openchoreo-system",
-			"idp.org_handle":                  "default",
+			"platform.idp.org_handle":         "default",
 		},
 	}
 	viper.Reset()

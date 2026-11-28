@@ -299,20 +299,20 @@ var initCmd = &cobra.Command{
   1. Validates the cluster config (imported via 'aectl platform config import')
   2. Seeds all platform secrets into OpenChoreo's built-in OpenBao instance
   3. Installs or upgrades the platform Helm chart (idempotent)
-  4. Registers AEP's OAuth clients on the platform IdP (see idp.clients below)
+  4. Registers AEP's OAuth clients on the platform IdP (see platform.idp.clients below)
   5. Waits for all platform pods to be ready
 
-idp.clients says who creates the clients. With thunder (the default) aectl
+platform.idp.clients says who creates the clients. With thunder (the default) aectl
 registers them on the ThunderID in the cluster.
 
-With idp.clients imported the platform IdP is one aectl administers nothing
+With platform.idp.clients imported the platform IdP is one aectl administers nothing
 on (an Asgardeo organization, for example): it asks for no admin credentials,
 generates no client secret and registers no client. It requires the client
 secrets the IdP's admin imported (aep/idp-clients/aep-api-client,
 ae-studio-internal, org-publisher, org-studio) and stops before Helm if one
 is missing.
 
-With idp.clients asgardeo aectl creates the clients in an Asgardeo
+With platform.idp.clients asgardeo aectl creates the clients in an Asgardeo
 organization, with the credential of the organization's admin application
 (--idp-admin-client-id-file, --idp-admin-client-secret-file). It reads the
 credential for this run and never stores it. It checks the credential before

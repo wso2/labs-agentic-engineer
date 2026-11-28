@@ -290,10 +290,11 @@ AECTL_CONFIG ?= skaffold/defaults.yaml
 # directory deployments/scripts/ae-asgardeo-apps.sh wrote the four client
 # secret files to (run it first, with AE_CONSOLE_URL the dev console's URL).
 # OpenChoreo's control plane trusts the organization, no platform ThunderID is
-# installed, and aectl imports those secrets and installs with idp.clients
-# imported. Left out there, because each signs in with a client that exists
-# only in ThunderID: OpenChoreo's portal, Agent Manager, the SRE agent and
-# dev-seed (connect GitHub and the model key in the console's welcome step).
+# installed, and aectl imports those secrets and installs with
+# platform.idp.clients imported. Left out there, because each signs in with a
+# client that exists only in ThunderID: OpenChoreo's portal, Agent Manager,
+# the SRE agent and dev-seed (connect GitHub and the model key in the
+# console's welcome step).
 # Of the observability plane only the logs part is installed, and only when
 # the observer's own client is on the organization: run ae-asgardeo-apps.sh
 # with --with-openchoreo-observer and its secret file, oc-observer-reader in
@@ -308,8 +309,9 @@ AECTL_CONFIG ?= skaffold/defaults.yaml
 # It is a mode of a NEW cluster, not a switch on a running one: an org's
 # secret paths are derived from the IdP's id for it.
 #
-# aectl can create AE's six applications itself (idp.clients asgardeo). Give
-# the credential of the organization's admin application in two files:
+# aectl can create AE's six applications itself (platform.idp.clients
+# asgardeo). Give the credential of the organization's admin application in
+# two files:
 #   make dev-env AE_DEV_IDP=asgardeo ASGARDEO_TENANT=<handle> \
 #     ASGARDEO_ADMIN_CLIENT_ID_FILE=<file> ASGARDEO_ADMIN_CLIENT_SECRET_FILE=<file>
 # ae-asgardeo-apps.sh and the four secret files are then not needed, and
@@ -325,8 +327,8 @@ ASGARDEO_ADMIN_CLIENT_ID_FILE ?=
 ASGARDEO_ADMIN_CLIENT_SECRET_FILE ?=
 # Asgardeo's API address, for an organization in another region. One value
 # for the cluster script (which points OpenChoreo at the issuer under it) and
-# the generated aectl config (whose idp.issuer is under it): the two must name
-# the same issuer.
+# the generated aectl config (whose platform.idp.issuer is under it): the two
+# must name the same issuer.
 ASGARDEO_BASE_URL ?= https://api.asgardeo.io
 
 # The five client secrets an Asgardeo install imports, by file name and vault
@@ -336,7 +338,8 @@ AE_ASGARDEO_CLIENT_SECRETS := aep-api-client ae-studio-internal aectl-openchoreo
 # committed (it names the developer's organization).
 AE_ASGARDEO_AECTL_CONFIG := tools/aectl/.aectl-asgardeo.yaml
 # Who creates the applications: aectl when an admin credential file is given
-# (idp.clients asgardeo), the organization's admin otherwise (imported).
+# (platform.idp.clients asgardeo), the organization's admin otherwise
+# (imported).
 AE_ASGARDEO_CLIENTS := $(if $(ASGARDEO_ADMIN_CLIENT_ID_FILE)$(ASGARDEO_ADMIN_CLIENT_SECRET_FILE),asgardeo,imported)
 # The admin credential flags of the aectl commands that create or check the
 # applications. The install also replaces a secret that does not match.
@@ -535,9 +538,9 @@ obs-status:
 # client it seeds that client's missing vault key (never rotating an existing
 # one) and registers it. Idempotent, and it touches no database or Thunder
 # admin secret. On an Asgardeo cluster where aectl created the applications
-# (idp.clients asgardeo) it needs the admin credential again: pass the same
-# ASGARDEO_ADMIN_CLIENT_ID_FILE and ASGARDEO_ADMIN_CLIENT_SECRET_FILE as to
-# `make dev-env`. Without them it stops there and names the two flags.
+# (platform.idp.clients asgardeo) it needs the admin credential again: pass
+# the same ASGARDEO_ADMIN_CLIENT_ID_FILE and ASGARDEO_ADMIN_CLIENT_SECRET_FILE
+# as to `make dev-env`. Without them it stops there and names the two flags.
 #
 # One-shot, not a watch loop. Run after `make dev-env`.
 # Console: http://console.ae.localhost:8080

@@ -36,20 +36,20 @@ run the cluster script prints that block already composed, so it doesn't have
 to be written by hand. The IdP's endpoints are not in the config: `aectl`
 reads them from `<thunder.public_url>/.well-known/openid-configuration` at
 install and update, and puts their paths on `thunder.url` for the pods.
-`idp.clients` says who creates AE's clients on the IdP: `thunder` (the
-default) means `aectl` registers them on the ThunderID of the `thunder:`
+`platform.idp.clients` says who creates AE's clients on the IdP: `thunder`
+(the default) means `aectl` registers them on the ThunderID of the `thunder:`
 block, `imported` means the IdP's admin created them, and `asgardeo` means
 `aectl` creates them in the Asgardeo organization of the `asgardeo:` block.
-The `idp.claims` block
+The `platform.idp.claims` block
 is the IdP's token dialect: how its tokens name the caller's org and whether
 a token was issued to a machine or to a user (`org.handle`, `org.id`,
 `org.name`, `caller_type.claim`, `caller_type.machine`, `caller_type.user`).
-Each value comes from a preset (`idp.claims.preset`: `thunder`, `asgardeo` or
-`none`; `thunder` when unset), then from the block's own keys, so a ThunderID
-install sets nothing there. `aectl` passes the values to the chart, and
+Each value comes from a preset (`platform.idp.claims.preset`: `thunder`,
+`asgardeo` or `none`; `thunder` when unset), then from the block's own keys,
+so a ThunderID install sets nothing there. `aectl` passes the values to the chart, and
 `aectl platform config test` prints each value and where it came from.
-`idp.org_handle` names the one org the install serves, by the handle the
-IdP's tokens carry.
+`platform.idp.org_handle` names the one org the install serves, by the handle
+the IdP's tokens carry.
 
 ```bash
 # 1. One-shot bring-up — cluster + platform, via aectl (idempotent).
@@ -137,15 +137,16 @@ the four secret files. The mode:
 - points OpenChoreo's control plane at the organization (its four
   `security.oidc` URLs come from the organization's discovery document) and
   installs no platform ThunderID;
-- generates the aectl config from `AECTL_CONFIG` with the `idp:` block set
-  (`deployments/scripts/ae-asgardeo-aectl-config.sh`, written to the ignored
-  `tools/aectl/.aectl-asgardeo.yaml`), imports the five secrets and installs
-  with `idp.clients: imported` (see "Install with Asgardeo as the platform IdP");
+- generates the aectl config from `AECTL_CONFIG` with the `platform.idp:`
+  block set (`deployments/scripts/ae-asgardeo-aectl-config.sh`, written to the
+  ignored `tools/aectl/.aectl-asgardeo.yaml`), imports the five secrets and
+  installs with `platform.idp.clients: imported` (see "Install with Asgardeo
+  as the platform IdP");
 - lets `aectl` create the applications when
   `ASGARDEO_ADMIN_CLIENT_ID_FILE` and `ASGARDEO_ADMIN_CLIENT_SECRET_FILE`
   name the credential files of the organization's admin application. The
-  config then says `idp.clients: asgardeo`, `ae-asgardeo-apps.sh` and the
-  four secret files are not needed, and the install runs with
+  config then says `platform.idp.clients: asgardeo`, `ae-asgardeo-apps.sh` and
+  the four secret files are not needed, and the install runs with
   `--replace-client-secrets`: the applications stay in the organization and
   each new cluster starts with an empty vault. `AE_ASGARDEO_SECRETS_DIR` is
   then optional and only holds the secret files of OpenChoreo's publisher
@@ -307,9 +308,9 @@ owns: when its `observer-secret` ExternalSecret in
 `aep/idp-clients/oc-observer-reader`, aectl rewrites it to do so, waits for
 ESO to sync it and restarts `deploy/observer`, so expect a short observer
 outage on that run. A plane already pointed there, or no plane, is left alone.
-This holds for `idp.clients: thunder`. On an Asgardeo dev cluster aectl does
-not create that client and does not touch `observer-secret`: the dev-env
-makes that Secret from the secret file of the client that
+This holds for `platform.idp.clients: thunder`. On an Asgardeo dev cluster
+aectl does not create that client and does not touch `observer-secret`: the
+dev-env makes that Secret from the secret file of the client that
 `ae-asgardeo-apps.sh --with-openchoreo-observer` created.
 
 Coding-agent runs as an ephemeral OpenChoreo Job Component in the project's
@@ -421,7 +422,7 @@ organization. Like every install, it serves one org. AE needs six
 applications in the organization: the console's browser client and five M2M
 clients. There are two ways to create them.
 
-### `aectl` creates the applications (`idp.clients: asgardeo`)
+### `aectl` creates the applications (`platform.idp.clients: asgardeo`)
 
 Use this when the person who installs has the credential of an admin
 application of the organization.
@@ -436,12 +437,13 @@ application of the organization.
 2. **Set the config** and import it. Leave the four `thunder.*` keys out.
 
    ```yaml
-   idp:
-     clients: "asgardeo"
-     claims:
-       preset: "asgardeo"
-     issuer: "https://api.asgardeo.io/t/<handle>/oauth2/token"
-     org_handle: "<handle>"
+   platform:
+     idp:
+       clients: "asgardeo"
+       claims:
+         preset: "asgardeo"
+       issuer: "https://api.asgardeo.io/t/<handle>/oauth2/token"
+       org_handle: "<handle>"
    asgardeo:
      api_url: "https://api.asgardeo.io/t/<handle>/api/server/v1"
    oc:
@@ -514,7 +516,7 @@ What `aectl` does with the applications:
 OpenChoreo's own clients (its workload publisher, for example) are not AE's
 and `aectl` does not create them.
 
-### The organization's admin creates the applications (`idp.clients: imported`)
+### The organization's admin creates the applications (`platform.idp.clients: imported`)
 
 Use this when the person who installs has no admin credential. `aectl` then
 administers nothing on the organization.
@@ -538,12 +540,13 @@ administers nothing on the organization.
    `aectl` refuses them where it administers no ThunderID.
 
    ```yaml
-   idp:
-     clients: "imported"
-     claims:
-       preset: "asgardeo"
-     issuer: "https://api.asgardeo.io/t/<handle>/oauth2/token"
-     org_handle: "<handle>"
+   platform:
+     idp:
+       clients: "imported"
+       claims:
+         preset: "asgardeo"
+       issuer: "https://api.asgardeo.io/t/<handle>/oauth2/token"
+       org_handle: "<handle>"
    oc:
      default_org_namespace: "<the org's namespace>"   # the script's AE_ORG_NAMESPACE
    ```
@@ -623,23 +626,25 @@ Expect to find more on a third.
 4. **Find the claim names.** Get one user token and one machine token and
    decode their payloads. Do not paste a token into a website or a chat.
 5. **Write the config.** Copy `skaffold/defaults.yaml`, comment the four
-   `thunder.*` keys out, and write the whole `idp:` block with no preset:
+   `thunder.*` keys out, and write the whole `platform.idp:` block with no
+   preset:
 
    ```yaml
-   idp:
-     clients: "imported"
-     issuer: "https://<the IdP's issuer>"
-     org_handle: "<the org's handle in the tokens>"
-     claims:
-       preset: "none"
-       org:
-         handle: "<claim>"
-         id: "<claim>"
-         name: "<claim>"          # optional
-       caller_type:
-         claim: "<claim>"
-         machine: "<value>"
-         user: "<value>"          # set it: any third value is then refused
+   platform:
+     idp:
+       clients: "imported"
+       issuer: "https://<the IdP's issuer>"
+       org_handle: "<the org's handle in the tokens>"
+       claims:
+         preset: "none"
+         org:
+           handle: "<claim>"
+           id: "<claim>"
+           name: "<claim>"          # optional
+         caller_type:
+           claim: "<claim>"
+           machine: "<value>"
+           user: "<value>"          # set it: any third value is then refused
    ```
 
    With `preset: "none"` a required value that is missing stops the install.
@@ -652,8 +657,8 @@ Expect to find more on a third.
    creates the applications" above) and run `aectl platform install`.
 
 A claim value belongs in the config file. `aectl` stops when an
-`AEP_IDP_CLAIMS_*` environment variable is set: such a value would hold for
-one run, and the next update without it would send the config's value back
+`AEP_PLATFORM_IDP_CLAIMS_*` environment variable is set: such a value would
+hold for one run, and the next update without it would send the config's value back
 to every reader. Install and update print every claim value with its source.
 
 ## Credentials
@@ -871,15 +876,15 @@ Never `bao kv get` a multi-field document without `-field=<name>` piped to
    | `aep/idp-clients/<name>` | `aep-idp-client-secrets` (and `aep-ae-studio-internal-secrets` for `ae-studio-internal`) | `OC_WORKLOAD_PUBLISHER_SECRET`, `OC_OBSERVER_READER_SECRET`, `AEP_API_CLIENT_SECRET`, `BFF_TO_GIT_SERVICE_SECRET`, `BFF_TO_REMOTE_WORKER_SECRET`, `LOCAL_DEV_SEEDER_SECRET`, `OC_RCA_AGENT_SECRET`, `AE_STUDIO_INTERNAL_CLIENT_SECRET` (for `oc-workload-publisher`, `oc-observer-reader`, `aep-api-client`, `bff-git-service`, `bff-remote-worker`, `local-dev-seeder`, `openchoreo-rca-agent`, `ae-studio-internal`, in that order) |
    | `aep/webhook-relay-seed` | `aep-webhook-relay` | `AE_STUDIO_WEBHOOK_RELAY_SEED` |
    | `aep/jev-api-key` (only with `aeStudio.jev.enabled`) | `aep-jev` | `AE_STUDIO_JEV_API_KEY` |
-   | `aep/idp-clients/org-publisher`, `.../org-studio` | `aep-org-client-secrets` | `PLATFORM_IDP_ORG_PUBLISHER_SECRET`, `PLATFORM_IDP_ORG_STUDIO_SECRET`: the secrets of the org's two pre-created clients. `aectl` generates them where it creates the clients (`idp.clients: thunder` or `asgardeo`); with `idp.clients: imported` the IdP's admin imports them |
+   | `aep/idp-clients/org-publisher`, `.../org-studio` | `aep-org-client-secrets` | `PLATFORM_IDP_ORG_PUBLISHER_SECRET`, `PLATFORM_IDP_ORG_STUDIO_SECRET`: the secrets of the org's two pre-created clients. `aectl` generates them where it creates the clients (`platform.idp.clients: thunder` or `asgardeo`); with `platform.idp.clients: imported` the IdP's admin imports them |
 
-   For `idp.clients: imported` on Asgardeo, the organization's admin creates the five
-   applications and their secret files with
+   For `platform.idp.clients: imported` on Asgardeo, the organization's admin
+   creates the five applications and their secret files with
    `deployments/scripts/ae-asgardeo-apps.sh` (its header is the manual), then
    imports `aep-api-client`, `ae-studio-internal`, `org-publisher` and
    `org-studio` with `aectl platform secret import`. For
-   `idp.clients: asgardeo`, `aectl` generates those four and creates the
-   applications itself.
+   `platform.idp.clients: asgardeo`, `aectl` generates those four and creates
+   the applications itself.
 
    The SRE handoff key is not in OpenBao: `aectl sre install` keeps it in the
    Kubernetes Secrets `sre-handoff` (`wso2-aep`) and `sre-agent-aep` (the
@@ -916,8 +921,8 @@ Never `bao kv get` a multi-field document without `-field=<name>` piped to
    not stop and start the cluster to fix it: that wipes OpenBao again.
 5. **Sync.** Run `aectl platform sync-clients`: it force-syncs the platform
    ExternalSecrets, then sets the Postgres role and the Thunder clients from
-   them. On an install with `idp.clients: asgardeo` the command needs the
-   admin credential and stops without it:
+   them. On an install with `platform.idp.clients: asgardeo` the command needs
+   the admin credential and stops without it:
 
    ```bash
    aectl platform sync-clients \

@@ -50,10 +50,10 @@ OpenBao, without a full install and without rotating anything:
      not what ESO synced up to an hour ago.
   3. Sets the Postgres role's password to postgres-secrets (idempotent).
   4. Registers or updates every Thunder client (idempotent), skipping with a
-     warning any whose Secret did not sync. With idp.clients asgardeo it
+     warning any whose Secret did not sync. With platform.idp.clients asgardeo it
      creates the applications the organization lacks and checks the ones it
      has, with the admin credential of --idp-admin-client-id-file and
-     --idp-admin-client-secret-file. With idp.clients imported it registers
+     --idp-admin-client-secret-file. With platform.idp.clients imported it registers
      nothing.
 
 'make dev-update' runs it after the helm upgrade.`,

@@ -17,7 +17,7 @@
 package cmd
 
 // asgardeo_cli.go — AE's clients in an Asgardeo organization, created by
-// aectl (idp.clients asgardeo).
+// aectl (platform.idp.clients asgardeo).
 //
 // The organization's admin gives an admin credential for one command, in two
 // files. aectl holds it in memory for that command: it is not stored in the
@@ -75,9 +75,9 @@ var (
 // belongs to one run and is never stored.
 func registerIDPAdminFlags(cmd *cobra.Command) {
 	f := cmd.Flags()
-	f.StringVar(&idpAdminClientIDFile, "idp-admin-client-id-file", "", "File holding the client id of the Asgardeo organization's admin application (idp.clients asgardeo only). Read for this run; never stored")
-	f.StringVar(&idpAdminClientSecretFile, "idp-admin-client-secret-file", "", "File holding the client secret of the Asgardeo organization's admin application (idp.clients asgardeo only). Read for this run; never stored or printed")
-	f.BoolVar(&replaceClientSecrets, "replace-client-secrets", false, "idp.clients asgardeo only: where an application exists and the secret in this install's vault is not its secret, have Asgardeo issue a new one. The old secret stops working at once, so do not use it while another install uses the same organization")
+	f.StringVar(&idpAdminClientIDFile, "idp-admin-client-id-file", "", "File holding the client id of the Asgardeo organization's admin application (platform.idp.clients asgardeo only). Read for this run; never stored")
+	f.StringVar(&idpAdminClientSecretFile, "idp-admin-client-secret-file", "", "File holding the client secret of the Asgardeo organization's admin application (platform.idp.clients asgardeo only). Read for this run; never stored or printed")
+	f.BoolVar(&replaceClientSecrets, "replace-client-secrets", false, "platform.idp.clients asgardeo only: where an application exists and the secret in this install's vault is not its secret, have Asgardeo issue a new one. The old secret stops working at once, so do not use it while another install uses the same organization")
 }
 
 // asgardeoPlatformClientIDs are the platform's clients an Asgardeo
@@ -104,7 +104,7 @@ func asgardeoClients() []idpClientDef {
 // is refused.
 func readIDPAdminCredential() (clientID, clientSecret string, err error) {
 	if idpAdminClientIDFile == "" || idpAdminClientSecretFile == "" {
-		return "", "", errors.New("idp.clients is asgardeo: aectl creates the clients with the credential of the organization's admin application. Pass --idp-admin-client-id-file and --idp-admin-client-secret-file")
+		return "", "", errors.New("platform.idp.clients is asgardeo: aectl creates the clients with the credential of the organization's admin application. Pass --idp-admin-client-id-file and --idp-admin-client-secret-file")
 	}
 	read := func(flag, file string) (string, error) {
 		raw, err := os.ReadFile(file)
@@ -134,7 +134,7 @@ func refuseIDPAdminFlags() error {
 		return nil
 	}
 	if idpAdminClientIDFile != "" || idpAdminClientSecretFile != "" || replaceClientSecrets {
-		return fmt.Errorf("--idp-admin-client-id-file, --idp-admin-client-secret-file and --replace-client-secrets are read only when idp.clients is %s (it is %s)", config.ClientsAsgardeo, platformIDPClients())
+		return fmt.Errorf("--idp-admin-client-id-file, --idp-admin-client-secret-file and --replace-client-secrets are read only when platform.idp.clients is %s (it is %s)", config.ClientsAsgardeo, platformIDPClients())
 	}
 	return nil
 }

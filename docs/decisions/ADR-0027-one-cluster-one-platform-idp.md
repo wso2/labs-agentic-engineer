@@ -14,8 +14,8 @@ local k3d cluster.
 > documents are composed by the installer rather than carried by one product.
 >
 > ADR-0054 lets the platform IdP be one AE does not install. On an install
-> whose `idp.clients` is `imported` or `asgardeo` the one platform IdP is
-> outside the cluster (an Asgardeo organization, for example), and no
+> whose `platform.idp.clients` is `imported` or `asgardeo` the one platform
+> IdP is outside the cluster (an Asgardeo organization, for example), and no
 > ThunderID is installed for it.
 > Read the two together; where they disagree on a name, ADR-0028 is current.
 

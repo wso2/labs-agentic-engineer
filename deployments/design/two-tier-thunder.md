@@ -146,8 +146,8 @@ stale prefix.
 An environment Thunder trusts the platform IdP as an issuer so a platform token
 is *understood* there (and then refused on audience, which is the correct
 answer — the tiers are not interchangeable). This holds where the platform IdP
-is a ThunderID aectl administers. Where it is not (`idp.clients` `imported`
-or `asgardeo`: an Asgardeo organization, for example; ADR-0054) the
+is a ThunderID aectl administers. Where it is not (`platform.idp.clients`
+`imported` or `asgardeo`: an Asgardeo organization, for example; ADR-0054) the
 environment Thunder is given no trusted issuer: the trust serves Agent
 Manager, which installs only where aectl registers its clients on that
 ThunderID.

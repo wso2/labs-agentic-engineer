@@ -55,16 +55,16 @@ var ConfigMapKeys = []string{
 	"thunder.url",
 	"thunder.admin_client_id",
 	"thunder.public_url",
-	"idp.clients",
-	"idp.claims.preset",
-	"idp.claims.org.handle",
-	"idp.claims.org.id",
-	"idp.claims.org.name",
-	"idp.claims.caller_type.claim",
-	"idp.claims.caller_type.machine",
-	"idp.claims.caller_type.user",
-	"idp.issuer",
-	"idp.org_handle",
+	"platform.idp.clients",
+	"platform.idp.claims.preset",
+	"platform.idp.claims.org.handle",
+	"platform.idp.claims.org.id",
+	"platform.idp.claims.org.name",
+	"platform.idp.claims.caller_type.claim",
+	"platform.idp.claims.caller_type.machine",
+	"platform.idp.claims.caller_type.user",
+	"platform.idp.issuer",
+	"platform.idp.org_handle",
 	"asgardeo.api_url",
 	"console.public_url",
 	"tryit.public_url",
@@ -96,7 +96,7 @@ const (
 	kindEnum
 )
 
-// Who creates AE's clients on the platform IdP (idp.clients). ClientsThunder:
+// Who creates AE's clients on the platform IdP (platform.idp.clients). ClientsThunder:
 // aectl registers them on a ThunderID it administers. ClientsImported: the
 // IdP's admin created them and imports their secrets; aectl administers
 // nothing on the IdP. ClientsAsgardeo: aectl creates them in an Asgardeo
@@ -111,7 +111,7 @@ type configKeyMeta struct {
 	required   bool
 	kind       keyKind
 	enumValues []string // only for kindEnum
-	// clients ties the key to values of idp.clients: it is then required
+	// clients ties the key to values of platform.idp.clients: it is then required
 	// under each of them (whatever required says) and not required under
 	// another. exclusive also refuses a value under another, for a key
 	// nothing reads there.
@@ -123,10 +123,10 @@ type configKeyMeta struct {
 var keyRegistry = map[string]configKeyMeta{
 	// Who creates AE's clients on the platform IdP. Optional; unset is
 	// thunder.
-	"idp.clients": {required: false, kind: kindEnum, enumValues: []string{ClientsAsgardeo, ClientsImported, ClientsThunder}},
+	"platform.idp.clients": {required: false, kind: kindEnum, enumValues: []string{ClientsAsgardeo, ClientsImported, ClientsThunder}},
 	// The ThunderID aectl administers: where it runs, how pods and the
 	// browser reach it, and the admin client aectl registers clients with.
-	// Required when the IdP is that ThunderID (idp.clients thunder or unset)
+	// Required when the IdP is that ThunderID (platform.idp.clients thunder or unset)
 	// and refused otherwise, where nothing reads them.
 	"thunder.namespace":       {clients: []string{ClientsThunder}, exclusive: true, kind: kindString},
 	"thunder.url":             {clients: []string{ClientsThunder}, exclusive: true, kind: kindURL},
@@ -135,30 +135,30 @@ var keyRegistry = map[string]configKeyMeta{
 	// The claim names and values of the platform IdP: how its tokens name the
 	// caller's org and caller type (internal/idpclaims). aectl passes them to
 	// the chart. Every key is optional here: a value comes from the preset
-	// (thunder when idp.claims.preset is unset), then from these keys.
+	// (thunder when platform.idp.claims.preset is unset), then from these keys.
 	// validateViper requires the block to be complete after that layering.
-	"idp.claims.preset":              {required: false, kind: kindEnum, enumValues: idpclaims.Presets()},
-	"idp.claims.org.handle":          {kind: kindString},
-	"idp.claims.org.id":              {kind: kindString},
-	"idp.claims.org.name":            {kind: kindString},
-	"idp.claims.caller_type.claim":   {kind: kindString},
-	"idp.claims.caller_type.machine": {kind: kindString},
-	"idp.claims.caller_type.user":    {kind: kindString},
+	"platform.idp.claims.preset":              {required: false, kind: kindEnum, enumValues: idpclaims.Presets()},
+	"platform.idp.claims.org.handle":          {kind: kindString},
+	"platform.idp.claims.org.id":              {kind: kindString},
+	"platform.idp.claims.org.name":            {kind: kindString},
+	"platform.idp.claims.caller_type.claim":   {kind: kindString},
+	"platform.idp.claims.caller_type.machine": {kind: kindString},
+	"platform.idp.claims.caller_type.user":    {kind: kindString},
 	// The platform IdP's issuer: the iss of every token, and where the
 	// discovery document is read. Required where aectl does not run the IdP
-	// (idp.clients imported or asgardeo), and it must be https there (see
+	// (platform.idp.clients imported or asgardeo), and it must be https there (see
 	// validateViper). Optional on a ThunderID aectl administers, whose issuer
 	// is thunder.public_url when this is unset.
-	"idp.issuer": {clients: []string{ClientsImported, ClientsAsgardeo}, kind: kindURL},
+	"platform.idp.issuer": {clients: []string{ClientsImported, ClientsAsgardeo}, kind: kindURL},
 	// The handle the IdP's tokens name the one org by: a ThunderID
 	// organization unit's handle, an Asgardeo organization's handle. aep-api
 	// maps it to oc.default_org_namespace, and on ThunderID aectl registers
 	// the org's two clients under that organization unit.
-	"idp.org_handle": {required: true, kind: kindString},
+	"platform.idp.org_handle": {required: true, kind: kindString},
 	// The address of the Asgardeo organization's management API
 	// (https://api.asgardeo.io/t/<organization>/api/server/v1), where aectl
 	// creates the clients. It is a key of its own because the IdP's discovery
-	// document does not name it. Required when idp.clients is asgardeo, where
+	// document does not name it. Required when platform.idp.clients is asgardeo, where
 	// it must be https (see validateViper), and refused otherwise.
 	"asgardeo.api_url": {clients: []string{ClientsAsgardeo}, exclusive: true, kind: kindURL},
 	// The platform's three browser-facing origins. All optional: each is bound
@@ -277,8 +277,8 @@ func ValidateLoaded() []string {
 	return withClaimsEnvRefusal(validateViper(viper.GetViper()))
 }
 
-// FileClaims resolves the idp.claims block of a config file: the preset it
-// names (idp.claims.preset), then its own idp.claims.* keys.
+// FileClaims resolves the platform.idp.claims block of a config file: the preset it
+// names (platform.idp.claims.preset), then its own platform.idp.claims.* keys.
 func FileClaims(path string) (idpclaims.Resolved, error) {
 	fv := viper.New()
 	fv.SetConfigFile(path)
@@ -288,18 +288,18 @@ func FileClaims(path string) (idpclaims.Resolved, error) {
 	return ResolveClaims(fv)
 }
 
-// ResolveClaims resolves the idp.claims block of v: the preset it names
-// (idp.claims.preset, thunder when unset), then its own idp.claims.* keys.
+// ResolveClaims resolves the platform.idp.claims block of v: the preset it names
+// (platform.idp.claims.preset, thunder when unset), then its own platform.idp.claims.* keys.
 func ResolveClaims(v *viper.Viper) (idpclaims.Resolved, error) {
-	return idpclaims.Resolve(v.GetString("idp.claims.preset"), ClaimsOverride(v))
+	return idpclaims.Resolve(v.GetString("platform.idp.claims.preset"), ClaimsOverride(v))
 }
 
 // claimsEnvPrefix is the prefix of the environment variables that the config
-// reader maps onto the idp.claims.* keys, as it maps every AEP_* variable
+// reader maps onto the platform.idp.claims.* keys, as it maps every AEP_* variable
 // onto its key.
-const claimsEnvPrefix = "AEP_IDP_CLAIMS_"
+const claimsEnvPrefix = "AEP_PLATFORM_IDP_CLAIMS_"
 
-// claimsEnvSet lists the AEP_IDP_CLAIMS_* variables in environ, sorted.
+// claimsEnvSet lists the AEP_PLATFORM_IDP_CLAIMS_* variables in environ, sorted.
 func claimsEnvSet(environ []string) []string {
 	var set []string
 	for _, kv := range environ {
@@ -312,7 +312,7 @@ func claimsEnvSet(environ []string) []string {
 }
 
 // ClaimsEnvRefusal is the error for a claim value given in the environment,
-// or nil when no AEP_IDP_CLAIMS_* variable is set. Such a value would hold
+// or nil when no AEP_PLATFORM_IDP_CLAIMS_* variable is set. Such a value would hold
 // for one run: the stored config keeps what the config file said, and the
 // next update without the variable would send that value to the chart,
 // where every reader would then read a claim the tokens do not carry. A
@@ -323,7 +323,7 @@ func ClaimsEnvRefusal() error {
 	if len(set) == 0 {
 		return nil
 	}
-	return fmt.Errorf("%s: the platform IdP's claim values are not taken from the environment. Set them in the config (idp.claims.*), import it (aectl platform config import --config <file>), and unset the variable", strings.Join(set, ", "))
+	return fmt.Errorf("%s: the platform IdP's claim values are not taken from the environment. Set them in the config (platform.idp.claims.*), import it (aectl platform config import --config <file>), and unset the variable", strings.Join(set, ", "))
 }
 
 // withClaimsEnvRefusal puts ClaimsEnvRefusal first in errs: a variable that
@@ -335,19 +335,19 @@ func withClaimsEnvRefusal(errs []string) []string {
 	return errs
 }
 
-// ClaimsOverride answers the idp.claims.* values v sets itself, for layering
+// ClaimsOverride answers the platform.idp.claims.* values v sets itself, for layering
 // over a preset (idpclaims.Resolve). An empty value sets nothing.
 func ClaimsOverride(v *viper.Viper) idpclaims.Override {
 	return func(key string) (string, idpclaims.Source) {
-		return v.GetString("idp.claims." + key), idpclaims.SourceConfig
+		return v.GetString("platform.idp.claims." + key), idpclaims.SourceConfig
 	}
 }
 
-// clientsOf is who creates the IdP's clients in v: idp.clients, thunder when
+// clientsOf is who creates the IdP's clients in v: platform.idp.clients, thunder when
 // unset. An unknown value is returned as it is; the enum check reports it,
 // and the keys tied to a value are then all "another value's".
 func clientsOf(v *viper.Viper) string {
-	if c := v.GetString("idp.clients"); c != "" {
+	if c := v.GetString("platform.idp.clients"); c != "" {
 		return c
 	}
 	return ClientsThunder
@@ -366,9 +366,9 @@ func validateViper(v *viper.Viper) []string {
 	// operator's machine and by every pod: its issuer has to be https. So has
 	// the management API, which is sent the admin credential's token.
 	if clients != ClientsThunder {
-		for _, k := range []string{"idp.issuer", "asgardeo.api_url"} {
+		for _, k := range []string{"platform.idp.issuer", "asgardeo.api_url"} {
 			if val := v.GetString(k); val != "" && !strings.HasPrefix(val, "https://") {
-				errs = append(errs, fmt.Sprintf("%s: must be an https:// URL when idp.clients is %s: %q", k, clients, val))
+				errs = append(errs, fmt.Sprintf("%s: must be an https:// URL when platform.idp.clients is %s: %q", k, clients, val))
 			}
 		}
 	}
@@ -382,13 +382,13 @@ func validateViper(v *viper.Viper) []string {
 		if len(meta.clients) > 0 {
 			required = slices.Contains(meta.clients, clients)
 			if !required && meta.exclusive && val != "" {
-				errs = append(errs, fmt.Sprintf("%s: read only when idp.clients is %s; unset it", k, strings.Join(meta.clients, " or ")))
+				errs = append(errs, fmt.Sprintf("%s: read only when platform.idp.clients is %s; unset it", k, strings.Join(meta.clients, " or ")))
 				continue
 			}
 		}
 		if required && val == "" {
 			if len(meta.clients) > 0 {
-				errs = append(errs, fmt.Sprintf("%s: required when idp.clients is %s but not set", k, clients))
+				errs = append(errs, fmt.Sprintf("%s: required when platform.idp.clients is %s but not set", k, clients))
 			} else {
 				errs = append(errs, fmt.Sprintf("%s: required but not set", k))
 			}
