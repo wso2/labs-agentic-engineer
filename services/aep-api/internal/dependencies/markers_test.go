@@ -25,7 +25,7 @@ func TestMarkersFrom_AllMarkersPresent(t *testing.T) {
 	annotations := map[string]string{
 		AnnotationConsumerURLEnvConfig: "redirectUris",
 		AnnotationConsumerURLPath:      "/oauth2/callback",
-		AnnotationSkill:                "thunder-authentication",
+		AnnotationSkill:                "idp-authentication",
 		AnnotationDescription:          "End-user sign-in: provisions an OAuth client on the platform IdP.",
 	}
 
@@ -34,7 +34,7 @@ func TestMarkersFrom_AllMarkersPresent(t *testing.T) {
 		EndUserAuth:          true,
 		ConsumerURLEnvConfig: "redirectUris",
 		ConsumerURLPath:      "/oauth2/callback",
-		Skill:                "thunder-authentication",
+		Skill:                "idp-authentication",
 		Description:          "End-user sign-in: provisions an OAuth client on the platform IdP.",
 	}
 	if got != want {

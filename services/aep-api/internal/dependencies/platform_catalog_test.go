@@ -99,7 +99,7 @@ func TestResourceTypeCatalog_List_ProjectsMarkers(t *testing.T) {
 						Annotations: map[string]string{
 							AnnotationConsumerURLEnvConfig: "redirectUris",
 							AnnotationConsumerURLPath:      "/oauth2/callback",
-							AnnotationSkill:                "thunder-authentication",
+							AnnotationSkill:                "idp-authentication",
 							AnnotationDescription:          "End-user sign-in for this project's apps.",
 						},
 					},
@@ -132,7 +132,7 @@ func TestResourceTypeCatalog_List_ProjectsMarkers(t *testing.T) {
 		EndUserAuth:          true,
 		ConsumerURLEnvConfig: "redirectUris",
 		ConsumerURLPath:      "/oauth2/callback",
-		Skill:                "thunder-authentication",
+		Skill:                "idp-authentication",
 		Description:          "End-user sign-in for this project's apps.",
 	}
 	if got[0].Name != "idp-app" || got[0].Markers != wantMarkers {

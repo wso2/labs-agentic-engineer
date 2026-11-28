@@ -61,6 +61,6 @@
     "openapi-conventions",
     "ballerina",
     "api-management",
-    "thunder-authentication"
+    "idp-authentication"
   ]
 }

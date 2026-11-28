@@ -59,7 +59,7 @@
   "skillsPinned": [
     "openapi-conventions",
     "ballerina",
-    "thunder-authentication",
+    "idp-authentication",
     "api-management"
   ]
 }

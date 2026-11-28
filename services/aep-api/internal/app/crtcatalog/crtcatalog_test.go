@@ -39,7 +39,7 @@ func TestCatalog_ProjectsTheRepoCatalogForDesignSave(t *testing.T) {
 		EndUserAuth:          true,
 		ConsumerURLEnvConfig: "redirectUris",
 		ConsumerURLPath:      dependencies.DefaultConsumerURLPath,
-		Skill:                "thunder-authentication",
+		Skill:                "idp-authentication",
 		Description:          idpApp.Description,
 		Outputs:              []string{"client_id", "issuer", "jwks_url", "scopes", "resource"},
 	}

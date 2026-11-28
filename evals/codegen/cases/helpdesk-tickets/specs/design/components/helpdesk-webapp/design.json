@@ -71,6 +71,6 @@
   "skillsPinned": [
     "react-webapp",
     "oxygen-ui-design-system",
-    "thunder-authentication"
+    "idp-authentication"
   ]
 }

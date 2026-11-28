@@ -33,6 +33,6 @@
     "openapi-conventions",
     "go",
     "api-management",
-    "thunder-authentication"
+    "idp-authentication"
   ]
 }
