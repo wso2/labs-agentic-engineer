@@ -83,6 +83,11 @@ type fakeThunder struct {
 	// tokens — a stand-in for the next ThunderID contract change.
 	dropTokenAttrs bool
 
+	// dropPostLogoutRedirectURIs makes the fake swallow the sign-out addresses
+	// the same way: 200, and the field is not there on the read-back. It
+	// stands for a ThunderID that does not know the field.
+	dropPostLogoutRedirectURIs bool
+
 	// dropScopes makes the fake swallow the scope allowlist the way it swallows
 	// an unrecognised token shape: 200, and the field is simply not there on the
 	// read-back.
@@ -308,6 +313,15 @@ func (f *fakeThunder) storeScopes(cfg map[string]any) {
 	}
 }
 
+// storePostLogoutRedirectURIs models `inboundAuthConfig[oauth2].config
+// .postLogoutRedirectUris`: stored verbatim, unless a test asks for the server
+// that discards it.
+func (f *fakeThunder) storePostLogoutRedirectURIs(cfg map[string]any) {
+	if cfg != nil && f.dropPostLogoutRedirectURIs {
+		delete(cfg, "postLogoutRedirectUris")
+	}
+}
+
 func (f *fakeThunder) handleCreate(w http.ResponseWriter, r *http.Request) {
 	var body map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -326,6 +340,7 @@ func (f *fakeThunder) handleCreate(w http.ResponseWriter, r *http.Request) {
 	cfg, _ := firstOAuthConfig(body)
 	storeTokenConfig(cfg, f.dropTokenAttrs)
 	f.storeScopes(cfg)
+	f.storePostLogoutRedirectURIs(cfg)
 	a := &fakeApp{
 		id:     id,
 		name:   asString(body["name"]),
@@ -373,6 +388,7 @@ func (f *fakeThunder) handleApplicationByID(w http.ResponseWriter, r *http.Reque
 		cfg, _ := firstOAuthConfig(body)
 		storeTokenConfig(cfg, f.dropTokenAttrs)
 		f.storeScopes(cfg)
+		f.storePostLogoutRedirectURIs(cfg)
 		a.name = asString(body["name"])
 		a.desc = asString(body["description"])
 		a.config = cfg
@@ -614,6 +630,19 @@ func (f *fakeThunder) storedScopes(t *testing.T, clientID string) []string {
 	for _, a := range f.apps {
 		if asString(a.config["clientId"]) == clientID {
 			return stringsOf(a.config["scopes"])
+		}
+	}
+	t.Fatalf("no application with clientId %q on the fake server", clientID)
+	return nil
+}
+
+func (f *fakeThunder) storedPostLogoutRedirectURIs(t *testing.T, clientID string) []string {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, a := range f.apps {
+		if asString(a.config["clientId"]) == clientID {
+			return stringsOf(a.config["postLogoutRedirectUris"])
 		}
 	}
 	t.Fatalf("no application with clientId %q on the fake server", clientID)
@@ -1064,6 +1093,229 @@ func TestWireRedirectURIs_StripsDefaultPortAndDedups(t *testing.T) {
 	})
 	if len(got) != 1 || got[0] != "https://app.example.com/callback" {
 		t.Fatalf("wireRedirectURIs = %#v, want [https://app.example.com/callback]", got)
+	}
+}
+
+// -- sign-out returns to the app ---------------------------------------------
+//
+// ThunderID 1.0.0 checks post_logout_redirect_uri against the application's
+// postLogoutRedirectUris and nothing else: an address that is only among
+// redirectUris is refused. A generated app sends its own origin, so the origin
+// of every redirect URI is written to that list, and read back.
+
+func TestOriginsOf_IsEachOriginOnce(t *testing.T) {
+	cases := []struct {
+		name         string
+		redirectURIs []string
+		want         []string
+	}{
+		{
+			name:         "one app: its origin, with its port",
+			redirectURIs: []string{"http://app.example.com:19080/callback"},
+			want:         []string{"http://app.example.com:19080"},
+		},
+		{
+			name: "two apps on one client: an origin each, in their order",
+			redirectURIs: []string{
+				"http://app.example.com:19080/callback",
+				"http://tryit.example.com:8080/callback",
+			},
+			want: []string{"http://app.example.com:19080", "http://tryit.example.com:8080"},
+		},
+		{
+			name: "two URIs of one origin: the origin once",
+			redirectURIs: []string{
+				"https://app.example.com/callback",
+				"https://app.example.com/silent",
+			},
+			want: []string{"https://app.example.com"},
+		},
+		{
+			name:         "a default port is not in a browser's origin",
+			redirectURIs: []string{"https://app.example.com:443/callback", "http://plain.example.com:80/callback"},
+			want:         []string{"https://app.example.com", "http://plain.example.com"},
+		},
+		{
+			name:         "a custom scheme has no web origin",
+			redirectURIs: []string{"myapp://callback"},
+			want:         []string{},
+		},
+		{
+			name:         "no redirect URI: empty",
+			redirectURIs: nil,
+			want:         []string{},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := OriginsOf(tc.redirectURIs)
+			if got == nil {
+				t.Fatal("OriginsOf returned nil — it must be an empty list, so that an update sends [] and clears a stale one")
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("OriginsOf(%v) = %#v, want %#v", tc.redirectURIs, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEnsureApplication_CreateStoresTheSignOutAddress(t *testing.T) {
+	f := newFakeThunder(t)
+	c := newTestClient(f)
+
+	const name = "aep-default-sign-out-app"
+	if _, err := c.EnsureApplication(context.Background(), DesiredApp{
+		Name:         name,
+		RedirectURIs: []string{"https://app.example.com/callback", "http://tryit.example.com:8080/callback"},
+	}); err != nil {
+		t.Fatalf("EnsureApplication: %v", err)
+	}
+	want := []string{"https://app.example.com", "http://tryit.example.com:8080"}
+	if got := f.storedPostLogoutRedirectURIs(t, name); !reflect.DeepEqual(got, want) {
+		t.Errorf("stored postLogoutRedirectUris = %v, want %v", got, want)
+	}
+	// The origin is a sign-out address only. Listing it among redirectUris
+	// too would let a sign-in return to it.
+	cfg, _ := firstOAuthConfig(f.lastCreateBody)
+	if uris, _ := cfg["redirectUris"].([]any); len(uris) != 2 {
+		t.Errorf("redirectUris = %v, want the two callbacks and nothing else", uris)
+	}
+}
+
+// Every app is created before it has a redirect URI. There is then no sign-out
+// address either, and the create leaves the field out rather than sending [].
+func TestEnsureApplication_CreateWithNoRedirectURISendsNoSignOutList(t *testing.T) {
+	f := newFakeThunder(t)
+	c := newTestClient(f)
+
+	if _, err := c.EnsureApplication(context.Background(), DesiredApp{Name: "aep-default-new-app"}); err != nil {
+		t.Fatalf("EnsureApplication: %v", err)
+	}
+	cfg, _ := firstOAuthConfig(f.lastCreateBody)
+	if v, present := cfg["postLogoutRedirectUris"]; present {
+		t.Errorf("create body carries postLogoutRedirectUris = %#v for an app with no redirect URI", v)
+	}
+}
+
+// An app registered before the operator wrote the list picks it up on its next
+// reconcile, with no change to its CR — which is how apps already deployed get
+// a working sign-out.
+func TestEnsureApplication_UpdateBackfillsTheSignOutAddress(t *testing.T) {
+	f := newFakeThunder(t)
+	c := newTestClient(f)
+
+	const name = "aep-default-old-app"
+	f.seedApp(name, []string{"https://app.example.com/callback"})
+
+	if _, err := c.EnsureApplication(context.Background(), DesiredApp{
+		Name:         name,
+		RedirectURIs: []string{"https://app.example.com/callback"},
+	}); err != nil {
+		t.Fatalf("EnsureApplication: %v", err)
+	}
+	want := []string{"https://app.example.com"}
+	if got := f.storedPostLogoutRedirectURIs(t, name); !reflect.DeepEqual(got, want) {
+		t.Errorf("stored postLogoutRedirectUris = %v, want %v", got, want)
+	}
+}
+
+// Converge-to-desired, as redirect URIs do: an app that moved to another
+// address does not keep the old one as a place a sign-out may return to.
+func TestEnsureApplication_UpdateReplacesTheSignOutAddress(t *testing.T) {
+	f := newFakeThunder(t)
+	c := newTestClient(f)
+
+	const name = "aep-default-moved-app"
+	ctx := context.Background()
+	for _, callback := range []string{"https://old.example.com/callback", "https://new.example.com/callback"} {
+		if _, err := c.EnsureApplication(ctx, DesiredApp{Name: name, RedirectURIs: []string{callback}}); err != nil {
+			t.Fatalf("EnsureApplication(%s): %v", callback, err)
+		}
+	}
+	want := []string{"https://new.example.com"}
+	if got := f.storedPostLogoutRedirectURIs(t, name); !reflect.DeepEqual(got, want) {
+		t.Errorf("stored postLogoutRedirectUris = %v, want %v", got, want)
+	}
+
+	// With no redirect URI left, the list is sent EMPTY rather than left out.
+	if _, err := c.EnsureApplication(ctx, DesiredApp{Name: name}); err != nil {
+		t.Fatalf("EnsureApplication with no redirect URI: %v", err)
+	}
+	cfg, _ := firstOAuthConfig(f.lastPutBody)
+	if raw, isArray := cfg["postLogoutRedirectUris"].([]any); !isArray || len(raw) != 0 {
+		t.Errorf("PUT postLogoutRedirectUris = %#v, want an empty JSON array", cfg["postLogoutRedirectUris"])
+	}
+}
+
+func TestEnsureApplication_FailsWhenTheIdPDropsTheSignOutAddress(t *testing.T) {
+	f := newFakeThunder(t)
+	f.dropPostLogoutRedirectURIs = true
+	c := newTestClient(f)
+
+	_, err := c.EnsureApplication(context.Background(), DesiredApp{
+		Name:         "aep-default-sign-out-dropped",
+		RedirectURIs: []string{"https://app.example.com/callback"},
+	})
+	if err == nil {
+		t.Fatal("EnsureApplication returned nil when the IdP stored no sign-out address")
+	}
+	for _, want := range []string{"https://app.example.com", "postLogoutRedirectUris", "invalid post_logout_redirect_uri"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q — the message has to name what vanished and what a user will see", err, want)
+		}
+	}
+}
+
+func TestEnsureApplication_UpdateFailsWhenTheIdPDropsTheSignOutAddress(t *testing.T) {
+	f := newFakeThunder(t)
+	f.dropPostLogoutRedirectURIs = true
+	c := newTestClient(f)
+
+	const name = "aep-default-sign-out-dropped-on-update"
+	f.seedApp(name, []string{"https://app.example.com/callback"})
+
+	_, err := c.EnsureApplication(context.Background(), DesiredApp{
+		Name:         name,
+		RedirectURIs: []string{"https://app.example.com/callback"},
+	})
+	if err == nil {
+		t.Fatal("EnsureApplication returned nil when an update's sign-out address was not stored")
+	}
+	if !strings.Contains(err.Error(), "https://app.example.com") {
+		t.Errorf("error %q does not name the address that vanished", err)
+	}
+}
+
+// A confidential client has no browser to send back: nothing is written, and a
+// read-back without the list is not a failed write. Its CR can still carry
+// redirect URIs, so the test gives it one — on the create and on the update.
+func TestEnsureApplication_ConfidentialClientHasNoSignOutAddress(t *testing.T) {
+	f := newFakeThunder(t)
+	f.dropPostLogoutRedirectURIs = true
+	c := newTestClient(f)
+
+	app := DesiredApp{
+		Name:         "aep-default-m2m",
+		ClientType:   "confidential",
+		ClientSecret: "s3cret",
+		Scopes:       []string{"system"},
+		RedirectURIs: []string{"https://app.example.com/callback"},
+	}
+	ctx := context.Background()
+	if _, err := c.EnsureApplication(ctx, app); err != nil {
+		t.Fatalf("EnsureApplication (create): %v", err)
+	}
+	cfg, _ := firstOAuthConfig(f.lastCreateBody)
+	if v, present := cfg["postLogoutRedirectUris"]; present {
+		t.Errorf("a confidential client's create body carries postLogoutRedirectUris: %#v", v)
+	}
+
+	if _, err := c.EnsureApplication(ctx, app); err != nil {
+		t.Fatalf("EnsureApplication (update): %v", err)
+	}
+	cfg, _ = firstOAuthConfig(f.lastPutBody)
+	if v, present := cfg["postLogoutRedirectUris"]; present {
+		t.Errorf("a confidential client's update body carries postLogoutRedirectUris: %#v", v)
 	}
 }
 

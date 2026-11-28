@@ -111,7 +111,9 @@ type DesiredApp struct {
 	// were mirrored from, which merges). An empty set is adapted on the
 	// wire to a single unroutable placeholder (see placeholderRedirectURI)
 	// because Thunder rejects an empty list; the field itself stays
-	// honestly empty. Ignored for confidential (client_credentials) apps.
+	// honestly empty. The addresses sign-out may return to are derived from
+	// this set (see postLogoutRedirectURIsKey). Ignored for confidential
+	// (client_credentials) apps.
 	RedirectURIs []string
 	// ClientType is "public" (default) or "confidential". An empty string
 	// is treated as "public" for backwards compatibility.
@@ -126,9 +128,9 @@ type DesiredApp struct {
 type AdminClient interface {
 	// EnsureApplication creates the app if absent (public client, PKCE
 	// required, token_endpoint_auth_method=none) or updates scopes/
-	// redirectUris to match (PUT is a full replace of those fields —
-	// desired state, not merge). Whatever it writes it reads back: see
-	// verifyWritten.
+	// redirectUris/postLogoutRedirectUris to match (PUT is a full replace of
+	// those fields — desired state, not merge). Whatever it writes it reads
+	// back: see verifyWritten.
 	EnsureApplication(ctx context.Context, app DesiredApp) (clientID string, err error)
 	// DeleteApplication removes the app by name; absent app is success
 	// (idempotent).
@@ -204,6 +206,18 @@ func wireRedirectURIs(desired []string) []any {
 	}
 	return uris
 }
+
+// postLogoutRedirectURIsKey is the OAuth config field that holds the addresses
+// a sign-out may return to. Thunder 1.0.0 checks post_logout_redirect_uri
+// against this list and nothing else — an address that is only among
+// redirectUris is refused with "invalid post_logout_redirect_uri" — and the
+// match is the exact string.
+//
+// The list an app gets is OriginsOf its redirect URIs: a generated app sends
+// its own origin as post_logout_redirect_uri (window.location.origin). It is
+// derived and is not on the CR, because where sign-out returns follows from
+// where the app is served, which the redirect URIs already say.
+const postLogoutRedirectURIsKey = "postLogoutRedirectUris"
 
 // New builds a Thunder admin client.
 func New(cfg Config) AdminClient {
@@ -591,9 +605,11 @@ func needsVerify(app DesiredApp) bool {
 }
 
 // verifyWritten reads the application back ONCE and diffs what the IdP actually
-// stored against what this reconcile asked for. Two checks ride on that read:
+// stored against what this reconcile asked for. Three checks ride on that read:
 //
 //   - the scope allowlist, for every client type (see DesiredApp.Scopes);
+//   - the sign-out addresses, for browser apps only — a confidential client
+//     has no browser to send back;
 //   - the identity-claim contract, for browser apps only — a confidential client
 //     here is an m2m one, whose token has no user behind it and therefore no
 //     user attributes to release.
@@ -623,7 +639,26 @@ func (c *client) verifyWritten(ctx context.Context, token, internalID string, ap
 	if !browser {
 		return nil
 	}
+	if err := verifyPostLogoutRedirectURIs(cfg, app); err != nil {
+		return err
+	}
 	return verifyIdentityClaims(cfg, app.Name)
+}
+
+// verifyPostLogoutRedirectURIs fails when a sign-out address did not survive
+// the write. An IdP that drops the list still signs users in, and every
+// sign-out then ends on its "invalid post_logout_redirect_uri" page, so the
+// one place this can be seen before a user sees it is here.
+func verifyPostLogoutRedirectURIs(cfg map[string]any, app DesiredApp) error {
+	missing := missingEntries(OriginsOf(app.RedirectURIs), stringsOf(cfg[postLogoutRedirectURIsKey]))
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf(
+		"application %q was written but the IdP did not store its sign-out addresses (missing %v) — "+
+			"inboundAuthConfig[oauth2].config.%s is a JSON array of strings; an IdP with a logout "+
+			"endpoint refuses a sign-out that returns to one of them with \"invalid post_logout_redirect_uri\"",
+		app.Name, missing, postLogoutRedirectURIsKey)
 }
 
 // verifyScopes fails when the scope allowlist did not survive the write.
@@ -636,7 +671,7 @@ func verifyScopes(cfg map[string]any, app DesiredApp) error {
 	if len(app.Scopes) == 0 {
 		return nil
 	}
-	missing := missingScopes(app.Scopes, configuredScopes(cfg))
+	missing := missingEntries(app.Scopes, configuredScopes(cfg))
 	if len(missing) == 0 {
 		return nil
 	}
@@ -806,7 +841,7 @@ func setWireScopes(cfg map[string]any, desired []string) {
 	cfg["scopes"] = wireScopes(desired)
 }
 
-// missingScopes returns the desired scopes absent from `have`, preserving the
+// missingEntries returns the desired entries absent from `have`, preserving the
 // desired order so the message is stable.
 //
 // A SUBSET check, not equality: ThunderID normalises on write (measured on
@@ -814,7 +849,7 @@ func setWireScopes(cfg map[string]any, desired []string) {
 // ["email"]), so a read-back that carries more than was sent is the server
 // having its own opinion, not a failure. What must never happen silently is a
 // scope we asked for going missing.
-func missingScopes(want, have []string) []string {
+func missingEntries(want, have []string) []string {
 	present := make(map[string]struct{}, len(have))
 	for _, s := range have {
 		present[s] = struct{}{}
@@ -899,6 +934,12 @@ func (c *client) createApp(ctx context.Context, token string, app DesiredApp, ou
 		"scopeClaims":             scopeClaimConfig(),
 	}
 	setWireScopes(oauthConfig, app.Scopes)
+	// An app is first created before it has a redirect URI, so there is no
+	// sign-out address yet either. The field is then left out, not sent empty:
+	// a new application has no list to clear.
+	if origins := OriginsOf(app.RedirectURIs); len(origins) > 0 {
+		oauthConfig[postLogoutRedirectURIsKey] = origins
+	}
 	payload := map[string]any{
 		"name": app.Name,
 		// REQUIRED from ThunderID 1.0.0 (APP-1042 without it); Thunder 0.34's
@@ -1003,8 +1044,9 @@ func (c *client) createConfidentialApp(ctx context.Context, token string, app De
 
 // updateApp implements desired-state semantics: read the full app, re-assert
 // the platform identity-claim contract, then write the full object back.
-// For public clients, redirect URIs are also replaced (desired-state). For
-// confidential clients, redirect URIs are left untouched (they have none).
+// For public clients, redirect URIs and the sign-out addresses derived from
+// them are also replaced (desired-state). For confidential clients, both are
+// left untouched (they have none).
 //
 // The claim contract (token userAttributes + scopeClaims + allowedUserTypes)
 // is re-applied here — not only on create — so apps provisioned before this
@@ -1021,6 +1063,9 @@ func (c *client) updateApp(ctx context.Context, token, internalID string, app De
 	}
 	if app.ClientType != "confidential" {
 		cfg["redirectUris"] = wireRedirectURIs(app.RedirectURIs)
+		// Always written, an EMPTY list included: an app that lost its last
+		// redirect URI must not keep an address a sign-out may return to.
+		cfg[postLogoutRedirectURIsKey] = OriginsOf(app.RedirectURIs)
 	} else if app.ClientSecret != "" {
 		// Enforce the desired secret so Thunder's stored value always matches
 		// the one provisioned in OpenBao → K8s Secret. Without this, a prior
