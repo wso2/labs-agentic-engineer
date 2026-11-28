@@ -206,11 +206,11 @@ Reconstruct exactly that in the browser: `window.location.origin + '/callback'`,
 and serve the route at `/callback`. Post-sign-in landing is
 `window.location.origin`. Neither is an env key.
 
-**That ONE registered URI serves BOTH legs, so the route must dispatch.**
+**That ONE callback URI serves BOTH legs, so the route must dispatch.**
 `silent_redirect_uri` defaults to `redirect_uri` in oidc-client-ts 3.5.0, so a
 silent renew's hidden iframe lands on `/callback` too — and a second, dedicated
-URI is not an option, because the platform registers only this one and the IdP
-answers `invalid_request: Invalid redirect URI` for anything else. So the route
+callback is not an option, because the platform registers one callback URI and
+the IdP answers `invalid_request: Invalid redirect URI` for another one. So the route
 calls **`signinCallback()`**, which reads `request_type` off the stored state
 and dispatches (`si:r` → redirect, `si:s` → silent). `signinRedirectCallback()`
 finishes only the redirect leg: on the silent leg it never calls the iframe
@@ -255,10 +255,13 @@ not exceed the original grant, and the narrowing sticks to the refresh token).
 A new permission needs a full sign-out and sign-in. Say that in the UI where a
 user could plausibly wait for a grant to arrive.
 
-**There is no sign-out endpoint.** Thunder's discovery document advertises only
-issuer, authorize and token — no `end_session_endpoint` — so `signoutRedirect()`
-rejects. Sign-out drops the local session (`removeUser()`) and reloads;
-`src/authz/session.ts` already wraps it in that fallback.
+**Sign-out follows the IdP's discovery document.** `signOut()` in
+`src/authz/session.ts` calls `signoutRedirect()`. When the IdP advertises an
+`end_session_endpoint`, the browser goes there and comes back to
+`window.location.origin`, which the platform registers for you. When it
+advertises none, `signoutRedirect()` rejects, and `signOut()` drops the local
+session (`removeUser()`) and reloads. Keep the redirect and the fallback: the
+same build runs against either kind of IdP.
 
 **Permissions ride in the access token's `scope`.** `oidc-client-ts` surfaces the
 token response's scope string as `user.scope`, and `src/authz/gates.tsx` is the
@@ -693,4 +696,4 @@ that skill already sets.
 | Sign-in loops at the right path, or the user is sent to login on every visit / new tab | No persistent `WebStorageStateStore` (the in-memory default loses the PKCE verifier across the redirect), session in `sessionStorage`, or the load path calls `signIn()` on a merely-expired token | `WebStorageStateStore({ store: localStorage })` + `automaticSilentRenew`; renew via `signinSilent()` and only `signIn()` when there is no session. |
 | The splash ("Checking your session…") sits ~10 s on every signed-out visit before the IdP appears | `/callback` calls `signinRedirectCallback()`, so the silent renew's hidden iframe never reports back and the parent waits out `silentRequestTimeoutInSeconds` — and a signed-out visitor was sent into that renew at all | `handleCallback()` → `signinCallback()`; `currentUser()` renews only what `sessionAction` calls `renew`. Both are in the assets. |
 | After login, "invalid redirect URI" | `redirect_uri` doesn't match the `<origin>/callback` the platform registered | Compute `window.location.origin + '/callback'`. |
-| Logout button does nothing | `signOut()` calls only `signoutRedirect()`, which rejects (no `end_session_endpoint`), and the handler swallows it | Wrap it in the try/catch fallback to `removeUser()` + reload. |
+| Logout button does nothing | `signOut()` calls only `signoutRedirect()`, which rejects on an IdP with no `end_session_endpoint`, and the handler swallows it | Keep the try/catch fallback to `removeUser()` + reload. |
