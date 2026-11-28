@@ -17,7 +17,7 @@
  */
 
 // Runner for ./mock-wired.cases.mjs — the same spawn-with-the-flag shape as
-// thunder-authentication's asset tests, and for the same reason: the case file
+// idp-authentication's asset tests, and for the same reason: the case file
 // imports TypeScript and the repo-wide runner is a bare `node --test`.
 
 import { test } from "node:test";

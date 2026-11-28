@@ -202,7 +202,7 @@ paths:
 
 **Never spec an auth endpoint.** No `/auth/login`, `/auth/register`,
 `/auth/logout`, or any other token-issuance path on any service: the IDP issues
-tokens and the gateway validates them (see `thunder-authentication`). Specifying
+tokens and the gateway validates them (see `idp-authentication`). Specifying
 one puts the coding agent's issue in direct conflict with its skills.
 
 ## YAML hygiene

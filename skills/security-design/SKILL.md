@@ -337,6 +337,6 @@ here creates anything: the platform creates the resource server, the roles, the
 groups and the test users when the user clicks Build. `openapi-conventions` owns
 how an operation names a handle and which rows it reaches (its path),
 `prototype` owns which screens exist and which role's flow walks them,
-`thunder-authentication` owns how the SPA gates each screen on the operation it
+`idp-authentication` owns how the SPA gates each screen on the operation it
 loads; this skill owns the decisions all three consume, and
 `authorization-model` states the invariants they share.

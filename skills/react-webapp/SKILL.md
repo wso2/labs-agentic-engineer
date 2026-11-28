@@ -26,7 +26,7 @@ browser config — they are pod env for nginx.
    `npm install` itself); without one, `npm install`.
 2. **Prepare shared interfaces** — write `src/env.ts`, generate `src/generated/`
    from each dependency's OpenAPI contract, and write `src/api.ts` with a
-   **same-origin** `baseUrl`. With auth, copy `thunder-authentication`'s
+   **same-origin** `baseUrl`. With auth, copy `idp-authentication`'s
    `assets/app/` tree (one `cp -r`, which lays down `src/authz/` and
    `mock/authz/`), set the `USER_AUTH_` prefix in `src/authz/session.ts` (mock
    mode substitutes that module), and run `npm run gen` once so the three
@@ -90,7 +90,7 @@ browser config — they are pod env for nginx.
    `mock/authz/roles.gen.ts`) from the permission catalog and the contracts.
    It is not optional and it must come BEFORE the type-check — a stale
    generated union type-checks perfectly green while the app gates on
-   operations the design no longer has (`thunder-authentication`).
+   operations the design no longer has (`idp-authentication`).
 
    Verification ends at exit 0. **Never run `npm audit` or `npm audit fix`** —
    the advisories land on Vite's dev-only transitive dependencies, which never
@@ -115,7 +115,7 @@ is `undefined` at module load. Use these exact spellings:
 | Key | Set when | Meaning |
 |---|---|---|
 | `<NAME>_URL` | `dependencies` include an `external`-kind entry `<name>` | URL of that **external** upstream (browser may call it). Not used for a sibling `component`-kind service. |
-| `<DEP>_*` | this web-app declares an auth `platform-resource` dependency named `<dep>` | OIDC config — `<DEP>_CLIENT_ID`, `<DEP>_ISSUER`, `<DEP>_JWKS_URL`, `<DEP>_SCOPES` and **`<DEP>_RESOURCE`** (the project's resource-server identifier, the RFC 8707 `resource` indicator the SPA must send or every `/api` call 401s). `<DEP>` = UPPER_SNAKE of the dependency name (`user-auth` → `USER_AUTH_*`) — owned by `thunder-authentication` |
+| `<DEP>_*` | this web-app declares an auth `platform-resource` dependency named `<dep>` | OIDC config — `<DEP>_CLIENT_ID`, `<DEP>_ISSUER`, `<DEP>_JWKS_URL`, `<DEP>_SCOPES` and **`<DEP>_RESOURCE`** (the project's resource-server identifier, the RFC 8707 `resource` indicator the SPA must send or every `/api` call 401s). `<DEP>` = UPPER_SNAKE of the dependency name (`user-auth` → `USER_AUTH_*`) — owned by `idp-authentication` |
 | `<NAME>` (any) | you declared it in `workload.yaml` `configurations.env` | app-config default, per-env override possible |
 
 There is **no** `API_BASE_URL` and **no** `<UPSTREAM>_URL` in `window._env_` for
@@ -158,13 +158,13 @@ which is why you copy it rather than write it:
   gateway overwrites with nothing — and the five unsigned `X-User-*`.
 
 Copy the assets in Layout; do not hand-write a different `proxy_pass`, do not add
-`/oidc/` (token endpoint stays cross-origin; `thunder-authentication`), do not
+`/oidc/` (token endpoint stays cross-origin; `idp-authentication`), do not
 copy `apps/console/docker-entrypoint.sh`. Keep the official `nginx:alpine`
 `ENTRYPOINT`. The image adds exactly the three asset files: `nginx.conf`, the
 `default.conf` template and `/docker-entrypoint.d/15-aep-api-proxy.sh`.
 
 **Auth.** If the component declares an auth `platform-resource` dependency, its
-sign-in, screen gating and API-client wiring are `thunder-authentication`'s:
+sign-in, screen gating and API-client wiring are `idp-authentication`'s:
 copy that skill's `assets/app/` tree as one (`src/authz/`, `mock/authz/`,
 `scripts/gen-authz.mjs`), and reach the API through `apiFetch`/`apiJson` rather
 than attaching a bearer by hand. A screen is gated on the **operation it
@@ -178,7 +178,7 @@ auth through its auth dependency instead.
 **The UI comes from the organization's design system.** Every component, layout
 primitive and style under `src/` comes from the design-system skill pinned on
 this component — no raw HTML styling, no second component or styling library.
-The one carve-out is `thunder-authentication`'s copied assets: `src/authz/gates.tsx`'s
+The one carve-out is `idp-authentication`'s copied assets: `src/authz/gates.tsx`'s
 `Forbidden` and `NoAccess` ship as plain `<main>/<section>/<h1>` so the file is
 copied verbatim into any app, whatever design system it pins. Treat that markup
 as structure to restyle with the design system's components after copying, and
@@ -263,7 +263,7 @@ Reserve "couldn't reach the assistant" for a network failure or a 5xx.
 │   ├── env.ts            # typed window._env_ shim
 │   ├── generated/        # openapi-typescript output, one file per dependency — commit, never hand-edit
 │   ├── api.ts            # openapi-fetch client(s), typed against generated/
-│   ├── authz/            # ┐ only with an auth dependency — thunder-authentication owns
+│   ├── authz/            # ┐ only with an auth dependency — idp-authentication owns
 │   │   ├── session.ts    # │ the whole directory. session/core/gates/client arrive
 │   │   ├── core.ts       # │ verbatim with one `cp -r`; screens.ts is a pattern you
 │   │   ├── gates.tsx     # │ adapt; the two *.gen.ts are GENERATED and COMMITTED —

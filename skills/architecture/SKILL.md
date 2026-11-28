@@ -55,7 +55,7 @@ Never substitute a design system the organization defaults do not name.
 not designed with — it is the coding run's to load, and its theming is a settled
 organization decision that no design-time question reopens. Never ask the user
 about colors, themes, or look and feel. An ai-agent → `["agent-building"]`. **Pin the auth skills the same way,
-never leave them to a description:** `"thunder-authentication"` on **both**
+never leave them to a description:** `"idp-authentication"` on **both**
 sides of sign-in — every component that declares the `idp-app` dependency,
 the SPA *and* each protected backend it calls — and `"api-management"` on every
 service that sits behind the gateway. The first owns the SPA's sign-in, its
@@ -326,7 +326,7 @@ operations its contract actually exposes:
   catalog `security-design` writes on `security.json`). A project with no web
   application still declares the dependency on its API — the client is what the
   platform's Try it app and the validation agent sign in through.
-  `thunder-authentication` owns the coding-time rule, and `security-design`
+  `idp-authentication` owns the coding-time rule, and `security-design`
   owns which roles sign in through it and what they may do.
 
 ### Resolving an `external` dependency

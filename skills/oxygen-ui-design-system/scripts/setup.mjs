@@ -43,7 +43,7 @@ const ROUTER = "react-router";
 // What the app actually IMPORTS. `react-router-dom` is the DOM entry point and
 // depends on `react-router` at its own version, so installing it covers both —
 // and installing only `react-router` does NOT cover it. Measured 2026-09-17:
-// `thunder-authentication`'s assets (`gates.tsx`, `App.example.tsx`) are copied
+// `idp-authentication`'s assets (`gates.tsx`, `App.example.tsx`) are copied
 // verbatim into every generated app and import from `react-router-dom`, so a
 // manifest holding only `react-router` left the app importing a package npm had
 // never installed. One run discovered it mid-build and paid a second full
