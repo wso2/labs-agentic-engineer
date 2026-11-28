@@ -814,7 +814,7 @@ func TestRolesGate_TheTrailerCarriesTheSignInClientID(t *testing.T) {
 		WriteTargets: staticWriteTarget{env: testWriteTarget},
 		Design: fakeProjectDesign{byProject: map[string][]spec.DesignComponent{
 			"workouts": {{Name: "api", Dependencies: []spec.Dependency{
-				{Kind: spec.DependencyKindPlatformResource, Name: "user-auth", ResourceType: "thunder-app"},
+				{Kind: spec.DependencyKindPlatformResource, Name: "user-auth", ResourceType: "idp-app"},
 			}}},
 		}},
 		Bindings: &fakeBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{

@@ -27,7 +27,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
-// thunder-app is a TEST FIXTURE type name the fake catalog marks end-user-auth.
+// idp-app is a TEST FIXTURE type name the fake catalog marks end-user-auth.
 // Production overlay keys on the CRT marker, never this string.
 
 type fakeMarkers struct {
@@ -44,7 +44,7 @@ func (f *fakeMarkers) MarkersByName(context.Context) (map[string]dependencies.Ty
 
 func endUserAuthMarkers() *fakeMarkers {
 	return &fakeMarkers{byName: map[string]dependencies.TypeMarkers{
-		"thunder-app":   {EndUserAuth: true},
+		"idp-app":       {EndUserAuth: true},
 		"postgres-cnpg": {EndUserAuth: false},
 	}}
 }
@@ -106,11 +106,11 @@ func (f fakeProjectNames) ProjectDisplayName(context.Context, string, string) (s
 	return f.display, f.err
 }
 
-func designWithThunderApp(params map[string]any) []spec.DesignComponent {
+func designWithIDPApp(params map[string]any) []spec.DesignComponent {
 	return []spec.DesignComponent{{
 		Name: "web",
 		Dependencies: []spec.Dependency{
-			{Kind: spec.DependencyKindPlatformResource, Name: "idp", ResourceType: "thunder-app", Parameters: params},
+			{Kind: spec.DependencyKindPlatformResource, Name: "idp", ResourceType: "idp-app", Parameters: params},
 		},
 	}}
 }
@@ -138,7 +138,7 @@ func thunderOverlayServiceNamed(design []spec.DesignComponent, plat *fakePlatPro
 func TestProvision_DisplayNameIsTheProjectDisplayName(t *testing.T) {
 	plat := &fakePlatProv{}
 	sec := &fakeSecurityJSON{raw: securityJSONV2(t)}
-	svc := thunderOverlayService(designWithThunderApp(nil), plat, sec)
+	svc := thunderOverlayService(designWithIDPApp(nil), plat, sec)
 	if err := svc.Provision(context.Background(), "org", "proj", "idp", nil, nil); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestProvision_DisplayNameFallsBackToTheProjectID(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			plat := &fakePlatProv{}
-			svc := thunderOverlayServiceNamed(designWithThunderApp(nil), plat,
+			svc := thunderOverlayServiceNamed(designWithIDPApp(nil), plat,
 				&fakeSecurityJSON{raw: securityJSONV2(t)}, namer)
 			if err := svc.Provision(context.Background(), "org", "proj", "idp", nil, nil); err != nil {
 				t.Fatalf("Provision: %v", err)
@@ -185,7 +185,7 @@ func TestProvision_DisplayNameNamesTheWebAppWhenAProjectHasSeveral(t *testing.T)
 		{
 			Name: "web", ComponentType: "web-application",
 			Dependencies: []spec.Dependency{
-				{Kind: spec.DependencyKindPlatformResource, Name: "idp", ResourceType: "thunder-app"},
+				{Kind: spec.DependencyKindPlatformResource, Name: "idp", ResourceType: "idp-app"},
 			},
 		},
 		{Name: "admin-web", ComponentType: "web-application"},
@@ -207,7 +207,7 @@ func TestProvision_DisplayNameNamesTheWebAppWhenAProjectHasSeveral(t *testing.T)
 // belongs to an app that is only half its users.
 func TestProvision_DisplayNameHasNoOwnerWhenWebAppsShareTheDependency(t *testing.T) {
 	dep := []spec.Dependency{
-		{Kind: spec.DependencyKindPlatformResource, Name: "idp", ResourceType: "thunder-app"},
+		{Kind: spec.DependencyKindPlatformResource, Name: "idp", ResourceType: "idp-app"},
 	}
 	design := []spec.DesignComponent{
 		{Name: "guest-web", ComponentType: "web-application", Dependencies: dep},
@@ -228,7 +228,7 @@ func TestProvision_DisplayNameHasNoOwnerWhenWebAppsShareTheDependency(t *testing
 // ThunderID stores it and never enforces it.
 func TestProvision_ScopesAreTheOIDCScopesPlusTheCatalog(t *testing.T) {
 	plat := &fakePlatProv{}
-	svc := thunderOverlayService(designWithThunderApp(nil), plat, &fakeSecurityJSON{raw: securityJSONV2(t)})
+	svc := thunderOverlayService(designWithIDPApp(nil), plat, &fakeSecurityJSON{raw: securityJSONV2(t)})
 	if err := svc.Provision(context.Background(), "org", "proj", "idp", nil, nil); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestProvision_AuthoredScopesCannotWin(t *testing.T) {
 
 	t.Run("design.json parameters", func(t *testing.T) {
 		plat := &fakePlatProv{}
-		svc := thunderOverlayService(designWithThunderApp(designScopes), plat,
+		svc := thunderOverlayService(designWithIDPApp(designScopes), plat,
 			&fakeSecurityJSON{raw: securityJSONV2(t)})
 		if err := svc.Provision(context.Background(), "org", "proj", "idp", nil, nil); err != nil {
 			t.Fatalf("Provision: %v", err)
@@ -256,7 +256,7 @@ func TestProvision_AuthoredScopesCannotWin(t *testing.T) {
 
 	t.Run("request parameters", func(t *testing.T) {
 		plat := &fakePlatProv{}
-		svc := thunderOverlayService(designWithThunderApp(nil), plat,
+		svc := thunderOverlayService(designWithIDPApp(nil), plat,
 			&fakeSecurityJSON{raw: securityJSONV2(t)})
 		if err := svc.Provision(context.Background(), "org", "proj", "idp",
 			map[string]any{"scopes": "openid profile email"}, nil); err != nil {
@@ -287,7 +287,7 @@ func TestProvision_NonEndUserAuthParamsUnchanged(t *testing.T) {
 
 func TestProvision_InvalidSecurityJSONFailsProvision(t *testing.T) {
 	plat := &fakePlatProv{}
-	svc := thunderOverlayService(designWithThunderApp(nil), plat, &fakeSecurityJSON{
+	svc := thunderOverlayService(designWithIDPApp(nil), plat, &fakeSecurityJSON{
 		raw: []byte(`{"not": "a security document"}`),
 	})
 	if err := svc.Provision(context.Background(), "org", "proj", "idp", nil, nil); err == nil {
@@ -301,7 +301,7 @@ func TestProvision_InvalidSecurityJSONFailsProvision(t *testing.T) {
 func TestProvisionForBuild_ReadsSecurityJSONAtSpecTag(t *testing.T) {
 	plat := &fakePlatProv{}
 	sec := &fakeSecurityJSON{raw: securityJSONV2(t)}
-	svc := thunderOverlayService(designWithThunderApp(nil), plat, sec)
+	svc := thunderOverlayService(designWithIDPApp(nil), plat, sec)
 	fails, err := svc.ProvisionForBuild(context.Background(), "org", "org", "proj", "v3", 0, []BuildProvisionInput{
 		{Component: "web", Dependency: "idp", Kind: buildKindPlatformResrc},
 	})
@@ -324,7 +324,7 @@ func TestProvisionForBuild_ReadsSecurityJSONAtSpecTag(t *testing.T) {
 // SPA reads back out of the binding as <DEP>_RESOURCE.
 func TestProvision_ResourceIsTheProjectResourceServerIdentifier(t *testing.T) {
 	plat := &fakePlatProv{}
-	svc := thunderOverlayService(designWithThunderApp(nil), plat, &fakeSecurityJSON{raw: securityJSONV2(t)})
+	svc := thunderOverlayService(designWithIDPApp(nil), plat, &fakeSecurityJSON{raw: securityJSONV2(t)})
 	if err := svc.Provision(context.Background(), "acme", "expense-tracker", "idp", nil, nil); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
@@ -341,7 +341,7 @@ func TestProvision_ResourceNeedsNoDirectoryRow(t *testing.T) {
 	plat := &fakePlatProv{}
 	// No identity store is wired into this service at all — the overlay must
 	// still produce the identifier.
-	svc := thunderOverlayService(designWithThunderApp(nil), plat, &fakeSecurityJSON{raw: securityJSONV2(t)})
+	svc := thunderOverlayService(designWithIDPApp(nil), plat, &fakeSecurityJSON{raw: securityJSONV2(t)})
 	if err := svc.Provision(context.Background(), "org", "proj", "idp", nil, nil); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
@@ -358,7 +358,7 @@ func TestProvision_AuthoredResourceCannotWin(t *testing.T) {
 
 	t.Run("design.json parameters", func(t *testing.T) {
 		plat := &fakePlatProv{}
-		svc := thunderOverlayService(designWithThunderApp(spoof), plat,
+		svc := thunderOverlayService(designWithIDPApp(spoof), plat,
 			&fakeSecurityJSON{raw: securityJSONV2(t)})
 		if err := svc.Provision(context.Background(), "org", "proj", "idp", nil, nil); err != nil {
 			t.Fatalf("Provision: %v", err)
@@ -370,7 +370,7 @@ func TestProvision_AuthoredResourceCannotWin(t *testing.T) {
 
 	t.Run("request parameters", func(t *testing.T) {
 		plat := &fakePlatProv{}
-		svc := thunderOverlayService(designWithThunderApp(nil), plat,
+		svc := thunderOverlayService(designWithIDPApp(nil), plat,
 			&fakeSecurityJSON{raw: securityJSONV2(t)})
 		if err := svc.Provision(context.Background(), "org", "proj", "idp", spoof, nil); err != nil {
 			t.Fatalf("Provision: %v", err)
@@ -386,7 +386,7 @@ func TestProvision_AuthoredResourceCannotWin(t *testing.T) {
 // is made by patching its ThunderApplication CR — see 4.V.)
 func TestProvision_ValidityPeriodIsLeftToTheResourceTypeDefault(t *testing.T) {
 	plat := &fakePlatProv{}
-	svc := thunderOverlayService(designWithThunderApp(nil), plat, &fakeSecurityJSON{raw: securityJSONV2(t)})
+	svc := thunderOverlayService(designWithIDPApp(nil), plat, &fakeSecurityJSON{raw: securityJSONV2(t)})
 	if err := svc.Provision(context.Background(), "org", "proj", "idp", nil, nil); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}

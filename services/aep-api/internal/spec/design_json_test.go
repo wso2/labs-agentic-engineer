@@ -273,7 +273,7 @@ func TestParseComponentDesignJSON_UnknownTopLevelKeyRejected(t *testing.T) {
 // TestParseComponentDesignJSON_RetiredCallerIdentityKeyRejected documents the
 // deletion's actual on-disk consequence: this decoder calls
 // DisallowUnknownFields, so a design.json still carrying the retired
-// caller-identity field (e.g. one written before the thunder-app dependency
+// caller-identity field (e.g. one written before the idp-app dependency
 // replaced it) is now REJECTED as an unknown top-level key — not silently
 // tolerated.
 func TestParseComponentDesignJSON_RetiredCallerIdentityKeyRejected(t *testing.T) {

@@ -232,7 +232,7 @@ on every RestApi; `aep-api` derives the same host in
 `internal/projects/gateway_address.go`.
 
 ### Thunder application
-A `platform-resource` dependency (`resourceType: thunder-app`) representing a
+A `platform-resource` dependency (`resourceType: idp-app`) representing a
 per-project OAuth (PKCE) client registered on the **environment's** Thunder.
 Declared under the *same* dependency name by both the SPA performing sign-in and
 the service whose API it protects. Provisioned like any other platform resource
@@ -295,7 +295,7 @@ other key is rejected with 401.
 org-published component, addressed by project-prefixed catalog name),
 `external` (third-party service consumed via configured values), and
 `platform-resource` (platform-provisioned infrastructure from a typed catalog,
-e.g. `postgres-cnpg`, `thunder-app`). Authored in
+e.g. `postgres-cnpg`, `idp-app`). Authored in
 `specs/design/components/<name>/design.json`
 under `dependencies[]`. The word **connection** is banned for these concepts —
 in OC it means a consumed endpoint (WorkloadConnection), the opposite side.

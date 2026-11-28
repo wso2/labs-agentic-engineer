@@ -31,6 +31,17 @@ import { z } from "zod";
 import type { ComponentDesign } from "./contracts/component-design.js";
 import type { Equal } from "./type-equal.js";
 
+/**
+ * The platform resource type that IS sign-in. A component depending on it gets
+ * an OAuth client, an issuer and a JWKS URL wired into its environment, and its
+ * operations are rendered onto the gateway with a jwt-auth policy; a component
+ * that does not is served with no policy at all.
+ *
+ * The cluster marks the type with the role `end-user-auth`. This package cannot
+ * read a cluster's markers, so it knows the one type by name.
+ */
+export const SIGN_IN_RESOURCE_TYPE = "idp-app";
+
 // strictObject, matching the published component-design.schema.json
 // (additionalProperties: false) and the BFF save-gate — a dependency carrying
 // unknown properties (notably the read-time-computed status/reason, which the

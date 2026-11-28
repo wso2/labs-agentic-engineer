@@ -95,7 +95,7 @@ func main() {
 		//
 		// LIMIT: a CR with spec.secretRef (clientType=confidential) outside this
 		// namespace cannot have its secret read. No such CR exists today — the
-		// thunder-app ResourceType renders only public PKCE clients, and the
+		// idp-app ResourceType renders only public PKCE clients, and the
 		// confidential platform clients are provisioned by aectl, not here.
 		// Supporting one would need a cluster-wide Secret grant, which the
 		// namespace-scoped Role deliberately withholds.

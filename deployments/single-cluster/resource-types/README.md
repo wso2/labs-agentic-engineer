@@ -9,7 +9,7 @@ catalog for the local single-cluster dev stack. Each type's directory holds:
   agent apply this type's rendered manifest (a foreign CRD) into the
   consuming project's `dp-*` namespace.
 - `operator/` — present only when AEP itself provides the type's backing
-  implementation (e.g. `thunder-app`). It is a real Go module (added to the
+  implementation (e.g. `idp-app`). It is a real Go module (added to the
   root `go.work`, built with the rest of the workspace) with its own Helm
   chart. The local dev stack installs this chart via `helm` as part of
   `setup-aep.sh`; a real cluster's PE may reuse this chart or bring its own

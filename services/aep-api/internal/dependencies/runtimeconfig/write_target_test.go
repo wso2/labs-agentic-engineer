@@ -33,7 +33,7 @@ const resolvedEnv = "development"
 func webWithSignIn() map[string]string {
 	return map[string]string{
 		spec.DesignRootFile:          rootDesignMd(),
-		"components/web/design.json": webappWithPR("web", []prDep{{"user-auth", "thunder-app"}}),
+		"components/web/design.json": webappWithPR("web", []prDep{{"user-auth", "idp-app"}}),
 	}
 }
 
@@ -44,7 +44,7 @@ func Test_FilesForComponent_readsTheWriteTargetsBinding(t *testing.T) {
 	binding := "proj-user-auth-" + resolvedEnv
 	rc := rcBindings(map[string]map[string]string{binding: authOutputs()}, nil)
 	svc := svcWithCatalog(ocResolving(map[string]string{"web": "http://web.local/"}), rc, storeWith(webWithSignIn()),
-		&fakeCatalog{markers: authMarkers("thunder-app")})
+		&fakeCatalog{markers: authMarkers("idp-app")})
 	svc.SetWriteTargets(staticWriteTarget{env: resolvedEnv})
 
 	files, ready, err := svc.FilesForComponent(context.Background(), "acme", "proj", "web")
@@ -71,7 +71,7 @@ func Test_FilesForComponent_readsTheWriteTargetsBinding(t *testing.T) {
 func Test_FilesForComponent_noWriteTargetComposesNothing(t *testing.T) {
 	t.Parallel()
 	rc := rcOutputs(authOutputs(), nil)
-	svc := svcWithCatalog(ocResolving(nil), rc, storeWith(webWithSignIn()), &fakeCatalog{markers: authMarkers("thunder-app")})
+	svc := svcWithCatalog(ocResolving(nil), rc, storeWith(webWithSignIn()), &fakeCatalog{markers: authMarkers("idp-app")})
 	cause := &openchoreo.ErrNoWriteTarget{Org: "acme", Project: "proj", Cause: openchoreo.ErrPipelineRefMissing}
 	svc.SetWriteTargets(staticWriteTarget{err: cause})
 
@@ -89,10 +89,10 @@ func Test_FilesForComponent_agentWithNoWriteTargetPatchesNothing(t *testing.T) {
 	t.Parallel()
 	files := map[string]string{
 		spec.DesignRootFile:            rootDesignMd(),
-		"components/agent/design.json": buildComponentJSON("agent", "ai-agent", nil, []prDep{{"user-auth", "thunder-app"}}),
+		"components/agent/design.json": buildComponentJSON("agent", "ai-agent", nil, []prDep{{"user-auth", "idp-app"}}),
 	}
 	rc := rcOutputs(authOutputs(), nil)
-	svc := svcWithCatalog(ocResolving(nil), rc, storeWith(files), &fakeCatalog{markers: authMarkers("thunder-app")})
+	svc := svcWithCatalog(ocResolving(nil), rc, storeWith(files), &fakeCatalog{markers: authMarkers("idp-app")})
 	svc.SetTryItCallbackURL(tryIt)
 	svc.SetWriteTargets(staticWriteTarget{err: errors.New("openchoreo: 503")})
 

@@ -41,7 +41,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { parse } from "yaml";
-import type { ComponentDesign, Dependency } from "@aep/agent-stream";
+import { SIGN_IN_RESOURCE_TYPE, type ComponentDesign, type Dependency } from "@aep/agent-stream";
 import { listComponents } from "../gates.js";
 import type { WireCause } from "./failure.js";
 
@@ -155,7 +155,7 @@ export interface PlanOptions {
  * bindings it must find. Anything else is already reported as unresolved by the
  * dependency walk below, so it needs no second check.
  */
-const STANDS_UP = new Set(["postgres-cnpg", "thunder-app"]);
+const STANDS_UP = new Set(["postgres-cnpg", SIGN_IN_RESOURCE_TYPE]);
 
 /**
  * The dependency OUTPUTS whose value is a secret, whatever variable a design
@@ -257,7 +257,7 @@ function bindingsOf(dependency: Dependency, workload: WorkloadBindings | undefin
 }
 
 /**
- * The values a `thunder-app` binding gets.
+ * The values an `idp-app` binding gets.
  *
  * Placeholders, on purpose. The service reads these at start — and PANICS when
  * one is empty — but in wired mode nothing authenticates against Thunder: the
@@ -360,7 +360,7 @@ export function buildWirePlan(specs: WireSpecs, options: PlanOptions = {}): Wire
           if (SECRET_OUTPUTS.has(output)) secretEnv.add(variable);
         }
         dependsOn.push(database.name);
-      } else if (dependency.kind === "platform-resource" && dependency.resourceType === "thunder-app") {
+      } else if (dependency.kind === "platform-resource" && dependency.resourceType === SIGN_IN_RESOURCE_TYPE) {
         const values = thunderPlaceholders(allGrants);
         for (const [output, variable] of Object.entries(bindings)) {
           env[variable] = values[output] ?? "";

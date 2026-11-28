@@ -786,7 +786,7 @@ func TestListClusterResourceTypes_FollowsTheCursor(t *testing.T) {
 			writeJSON(t, w, http.StatusOK, resourceTypeList{Items: []ResourceType{{Metadata: OCObjectMeta{Name: "postgres-cnpg"}}}, Pagination: &listPagination{NextCursor: "more"}})
 			return
 		}
-		writeJSON(t, w, http.StatusOK, resourceTypeList{Items: []ResourceType{{Metadata: OCObjectMeta{Name: "thunder-app"}}}, Pagination: &listPagination{}})
+		writeJSON(t, w, http.StatusOK, resourceTypeList{Items: []ResourceType{{Metadata: OCObjectMeta{Name: "idp-app"}}}, Pagination: &listPagination{}})
 	}))
 	defer srv.Close()
 
@@ -795,7 +795,7 @@ func TestListClusterResourceTypes_FollowsTheCursor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListClusterResourceTypes: %v", err)
 	}
-	if len(got) != 2 || got[1].Metadata.Name != "thunder-app" {
+	if len(got) != 2 || got[1].Metadata.Name != "idp-app" {
 		t.Fatalf("both pages must be read: %+v", got)
 	}
 }

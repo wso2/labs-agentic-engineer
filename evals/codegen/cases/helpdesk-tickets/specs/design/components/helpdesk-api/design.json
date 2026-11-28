@@ -40,7 +40,7 @@
       "kind": "platform-resource",
       "name": "user-auth",
       "description": "Sign-in: the gateway validates tokens issued for this client.",
-      "resourceType": "thunder-app",
+      "resourceType": "idp-app",
       "wiring": {
         "ref": "ev-helpdesk-ticke-54feb9ea",
         "envBindings": {

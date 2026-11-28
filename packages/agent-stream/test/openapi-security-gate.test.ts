@@ -45,7 +45,7 @@ const DESIGN_PATH = "specs/design/components/expense-api/design.json";
 const SECURITY_PATH = "specs/design/security.json";
 
 const EXPENSE_API_SPEC = readFileSync(new URL("./fixtures/openapi/expense-api.yaml", import.meta.url), "utf8");
-/** The component design.json that carries the sign-in dependency (`thunder-app`). */
+/** The component design.json that carries the sign-in dependency (`idp-app`). */
 const PROTECTED_DESIGN = readFileSync(
   new URL("./fixtures/openapi/expense-api.design.json", import.meta.url),
   "utf8",

@@ -72,8 +72,8 @@ func TestAvailable_OperatorMetadata(t *testing.T) {
 	}
 }
 
-func TestAvailable_ThunderApp(t *testing.T) {
-	a := findAddon(t, "thunder-app")
+func TestAvailable_IDPApp(t *testing.T) {
+	a := findAddon(t, "idp-app")
 	op := a.Operator
 	if got, want := op.ReleaseName, "thunder-app-operator"; got != want {
 		t.Errorf("ReleaseName = %q, want %q", got, want)
@@ -137,7 +137,7 @@ const crtSourceDir = "../../../../deployments/single-cluster/resource-types"
 // rendered template, and every output's name AND value. Adding a parameter or
 // an output on one side and forgetting the other is the failure this
 // catches — silently, an `aectl`-installed cluster would either render a CR
-// missing a field the platform expects to read back, or (thunder-app's
+// missing a field the platform expects to read back, or (idp-app's
 // issuer/jwks_url once did exactly this) carry a stale literal that never
 // agrees with what the source now computes.
 func TestEmbeddedResourceTypes_MatchTheAuthoredSource(t *testing.T) {
@@ -147,8 +147,8 @@ func TestEmbeddedResourceTypes_MatchTheAuthoredSource(t *testing.T) {
 		source   string
 	}{
 		{
-			id:       "thunder-app",
-			embedded: thunderAppResourceType,
+			id:       "idp-app",
+			embedded: idpAppResourceType,
 			source:   "thunder-app/resourcetype.yaml",
 		},
 		{

@@ -287,7 +287,7 @@ func buildComponentJSON(name, typ string, deps []string, prDeps []prDep) string 
 
 func Test_platformResourceDeps(t *testing.T) {
 	t.Parallel()
-	auth := spec.Dependency{Kind: spec.DependencyKindPlatformResource, Name: "user-auth", ResourceType: "thunder-app"}
+	auth := spec.Dependency{Kind: spec.DependencyKindPlatformResource, Name: "user-auth", ResourceType: "idp-app"}
 	db := spec.Dependency{Kind: spec.DependencyKindPlatformResource, Name: "orders-db", ResourceType: "postgres-cnpg"}
 	comp := spec.Dependency{Kind: spec.DependencyKindComponent, Name: "api"}
 
@@ -356,14 +356,14 @@ func Test_buildEnvValues_genericEmission(t *testing.T) {
 		t.Parallel()
 		files := map[string]string{
 			spec.DesignRootFile:          rootDesignMd(),
-			"components/web/design.json": webappWithPR("web", []prDep{{"user-auth", "thunder-app"}}),
+			"components/web/design.json": webappWithPR("web", []prDep{{"user-auth", "idp-app"}}),
 		}
 		design := readDesign(t, files)
 		web := componentNamed(t, design, "web")
 
 		oc := ocResolving(map[string]string{"web": "http://web.local/"})
 		rc := rcOutputs(authOutputs(), nil)
-		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
+		cat := &fakeCatalog{markers: authMarkers("idp-app")}
 		svc := svcWithCatalog(oc, rc, nil, cat)
 
 		out, ready := svc.buildEnvValues(ctx, "acme", "proj", testWriteTarget, design, web)
@@ -408,7 +408,7 @@ func Test_buildEnvValues_genericEmission(t *testing.T) {
 		t.Parallel()
 		files := map[string]string{
 			spec.DesignRootFile:          rootDesignMd(),
-			"components/web/design.json": webappWithPR("web", []prDep{{"user-auth", "thunder-app"}, {"orders-db", "postgres-cnpg"}}),
+			"components/web/design.json": webappWithPR("web", []prDep{{"user-auth", "idp-app"}, {"orders-db", "postgres-cnpg"}}),
 		}
 		design := readDesign(t, files)
 		web := componentNamed(t, design, "web")
@@ -418,8 +418,8 @@ func Test_buildEnvValues_genericEmission(t *testing.T) {
 			"proj-user-auth-default": authOutputs(),
 			"proj-orders-db-default": {"host": "db.local", "port": "5432"},
 		}, nil)
-		// thunder-app carries the consumer-URL marker; postgres-cnpg carries none.
-		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
+		// idp-app carries the consumer-URL marker; postgres-cnpg carries none.
+		cat := &fakeCatalog{markers: authMarkers("idp-app")}
 		svc := svcWithCatalog(oc, rc, nil, cat)
 
 		out, ready := svc.buildEnvValues(ctx, "acme", "proj", testWriteTarget, design, web)
@@ -442,7 +442,7 @@ func Test_buildEnvValues_genericEmission(t *testing.T) {
 				t.Errorf("out[%q] = %v; want %v", k, out[k], v)
 			}
 		}
-		// Only the annotated (thunder-app) dep is patched; postgres has no marker.
+		// Only the annotated (idp-app) dep is patched; postgres has no marker.
 		calls := rc.PatchBindingEnvironmentConfigsCalls()
 		if len(calls) != 1 {
 			t.Fatalf("want exactly 1 patch (annotated dep only); got %d", len(calls))
@@ -456,7 +456,7 @@ func Test_buildEnvValues_genericEmission(t *testing.T) {
 		t.Parallel()
 		files := map[string]string{
 			spec.DesignRootFile:          rootDesignMd(),
-			"components/web/design.json": webappWithPR("web", []prDep{{"user-auth", "thunder-app"}}),
+			"components/web/design.json": webappWithPR("web", []prDep{{"user-auth", "idp-app"}}),
 		}
 		design := readDesign(t, files)
 		web := componentNamed(t, design, "web")
@@ -464,7 +464,7 @@ func Test_buildEnvValues_genericEmission(t *testing.T) {
 		oc := ocResolving(map[string]string{"web": "http://web.local"})
 		rc := rcOutputs(authOutputs(), nil)
 		cat := &fakeCatalog{markers: map[string]dependencies.TypeMarkers{
-			"thunder-app": dependencies.MarkersFrom(nil, map[string]string{
+			"idp-app": dependencies.MarkersFrom(nil, map[string]string{
 				dependencies.AnnotationConsumerURLEnvConfig: "redirectUris",
 				dependencies.AnnotationConsumerURLPath:      "/oauth/callback",
 			}),
@@ -519,7 +519,7 @@ func Test_buildEnvValues_genericEmission(t *testing.T) {
 
 		oc := ocResolving(map[string]string{"api": "http://api.local"})
 		rc := rcOutputs(authOutputs(), nil) // wired but must never be touched
-		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
+		cat := &fakeCatalog{markers: authMarkers("idp-app")}
 		svc := svcWithCatalog(oc, rc, nil, cat)
 
 		out, ready := svc.buildEnvValues(ctx, "acme", "proj", testWriteTarget, design, web)
@@ -555,7 +555,7 @@ func Test_buildEnvValues_defers(t *testing.T) {
 
 	authWebFiles := map[string]string{
 		spec.DesignRootFile:          rootDesignMd(),
-		"components/web/design.json": webappWithPR("web", []prDep{{"user-auth", "thunder-app"}}, "api"),
+		"components/web/design.json": webappWithPR("web", []prDep{{"user-auth", "idp-app"}}, "api"),
 		"components/api/design.json": serviceComponentMd(),
 	}
 
@@ -633,7 +633,7 @@ func Test_buildEnvValues_defers(t *testing.T) {
 		web := componentNamed(t, design, "web")
 
 		oc := ocResolving(map[string]string{"api": "http://api.local", "web": "http://web.local"})
-		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
+		cat := &fakeCatalog{markers: authMarkers("idp-app")}
 		out, ready := svcWithCatalog(oc, nil, nil, cat).buildEnvValues(ctx, "acme", "proj", testWriteTarget, design, web)
 		if ready {
 			t.Fatalf("want ready=false when the resource client is unwired")
@@ -686,7 +686,7 @@ func Test_buildEnvValues_defers(t *testing.T) {
 
 		oc := ocResolving(map[string]string{"api": "http://api.local", "web": "http://web.local"})
 		rc := rcOutputs(nil, nil) // binding has no status yet
-		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
+		cat := &fakeCatalog{markers: authMarkers("idp-app")}
 		out, ready := svcWithCatalog(oc, rc, nil, cat).buildEnvValues(ctx, "acme", "proj", testWriteTarget, design, web)
 		if ready {
 			t.Fatalf("want ready=false when the binding outputs are not ready")
@@ -705,7 +705,7 @@ func Test_buildEnvValues_defers(t *testing.T) {
 
 		oc := ocResolving(map[string]string{"api": "http://api.local", "web": "http://web.local"})
 		rc := rcOutputs(map[string]string{}, nil) // status present, zero outputs
-		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
+		cat := &fakeCatalog{markers: authMarkers("idp-app")}
 		_, ready := svcWithCatalog(oc, rc, nil, cat).buildEnvValues(ctx, "acme", "proj", testWriteTarget, design, web)
 		if ready {
 			t.Fatalf("want ready=false when the binding has zero outputs")
@@ -723,7 +723,7 @@ func Test_buildEnvValues_defers(t *testing.T) {
 
 		oc := ocResolving(map[string]string{"api": "http://api.local", "web": "http://web.local"})
 		rc := rcOutputs(authOutputs(), errors.New("oc: patch failed"))
-		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
+		cat := &fakeCatalog{markers: authMarkers("idp-app")}
 		out, ready := svcWithCatalog(oc, rc, nil, cat).buildEnvValues(ctx, "acme", "proj", testWriteTarget, design, web)
 		if !ready {
 			t.Fatalf("want ready=true; a failed callback registration is not a missing start-up value")
@@ -754,7 +754,7 @@ func Test_buildEnvValues_defers(t *testing.T) {
 		// api resolves (its wave went first); the SPA's own URL does not exist yet.
 		oc := ocResolving(map[string]string{"api": "http://api.local"})
 		rc := rcOutputs(authOutputs(), nil)
-		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
+		cat := &fakeCatalog{markers: authMarkers("idp-app")}
 		out, ready := svcWithCatalog(oc, rc, nil, cat).buildEnvValues(ctx, "acme", "proj", testWriteTarget, design, web)
 		if !ready {
 			t.Fatalf("want ready=true; the SPA's own URL is not a value the SPA reads")
@@ -773,10 +773,10 @@ func Test_buildEnvValues_defers(t *testing.T) {
 		t.Parallel()
 		oc := ocResolving(map[string]string{"api": "http://api.local"}) // no "web" origin
 		rc := rcOutputs(authOutputs(), nil)
-		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
+		cat := &fakeCatalog{markers: authMarkers("idp-app")}
 		files := map[string]string{
 			spec.DesignRootFile:          rootDesignMd(),
-			"components/web/design.json": webappWithPR("web", []prDep{{"user-auth", "thunder-app"}}, "api"),
+			"components/web/design.json": webappWithPR("web", []prDep{{"user-auth", "idp-app"}}, "api"),
 			"components/api/design.json": serviceComponentMd(),
 		}
 		svc := svcWithCatalog(oc, rc, storeWith(files), cat)
@@ -806,7 +806,7 @@ func Test_buildEnvValues_defers(t *testing.T) {
 		rc.GetBindingFunc = func(context.Context, string, string) (*openchoreo.ResourceReleaseBinding, error) {
 			return nil, errors.New("oc down")
 		}
-		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
+		cat := &fakeCatalog{markers: authMarkers("idp-app")}
 		_, ready := svcWithCatalog(oc, rc, nil, cat).buildEnvValues(ctx, "acme", "proj", testWriteTarget, design, web)
 		if ready {
 			t.Fatalf("want ready=false when GetBinding errors")
@@ -900,8 +900,8 @@ func Test_FilesForComponent(t *testing.T) {
 			"web": "http://web.local/",
 		})
 		rc := rcOutputs(authOutputs(), nil)
-		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
-		svc := svcWithCatalog(oc, rc, storeWith(webAndAPI("thunder-app")), cat)
+		cat := &fakeCatalog{markers: authMarkers("idp-app")}
+		svc := svcWithCatalog(oc, rc, storeWith(webAndAPI("idp-app")), cat)
 
 		files, ready, err := svc.FilesForComponent(ctx, "acme", "proj", "web")
 		if err != nil {
@@ -990,8 +990,8 @@ func Test_FilesForComponent(t *testing.T) {
 		t.Parallel()
 		oc := ocResolving(map[string]string{"api": "http://api.local", "web": "http://web.local"})
 		rc := rcOutputs(nil, nil) // binding has no status yet
-		cat := &fakeCatalog{markers: authMarkers("thunder-app")}
-		svc := svcWithCatalog(oc, rc, storeWith(webAndAPI("thunder-app")), cat)
+		cat := &fakeCatalog{markers: authMarkers("idp-app")}
+		svc := svcWithCatalog(oc, rc, storeWith(webAndAPI("idp-app")), cat)
 
 		files, ready, err := svc.FilesForComponent(ctx, "acme", "proj", "web")
 		if err != nil {

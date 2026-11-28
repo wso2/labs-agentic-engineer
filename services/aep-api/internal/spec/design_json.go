@@ -59,7 +59,7 @@ import (
 // `components/<name>/openapi.yaml` file, assembled/split separately.
 //
 // The retired caller-identity field (formerly `callerIdentity`, superseded by
-// the explicit `thunder-app` platform-resource dependency) is no longer part
+// the explicit `idp-app` platform-resource dependency) is no longer part
 // of this struct. Because the decoder above calls DisallowUnknownFields, this
 // is NOT silently tolerated: a design.json still carrying a `callerIdentity`
 // key (e.g. written by an old agent build) now fails to parse with `json:

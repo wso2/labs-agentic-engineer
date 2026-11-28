@@ -25,12 +25,12 @@ import (
 
 // --- deriveEndUserAuth (pure function) ---------------------------------------
 
-// thunderDep builds a platform-resource dependency of the SAMPLE resourceType
-// "thunder-app". The name is arbitrary sample data — derivation keys on the CRT
+// idpAppDep builds a platform-resource dependency of the SAMPLE resourceType
+// "idp-app". The name is arbitrary sample data — derivation keys on the CRT
 // role MARKER (authRole), never on the name (see
-// TestDeriveEndUserAuth_UnlabeledTypeUntouchedEvenIfNamedThunderApp).
-func thunderDep(name string) Dependency {
-	return Dependency{Kind: DependencyKindPlatformResource, Name: name, ResourceType: "thunder-app"}
+// TestDeriveEndUserAuth_UnlabeledTypeUntouchedEvenIfNamedIDPApp).
+func idpAppDep(name string) Dependency {
+	return Dependency{Kind: DependencyKindPlatformResource, Name: name, ResourceType: "idp-app"}
 }
 
 // authRole returns a marker map flagging resourceType as carrying the
@@ -53,17 +53,17 @@ func (f *fakeTypeCatalog) ResourceTypesByName(context.Context) (map[string]CRTTy
 	return f.types, f.err
 }
 
-// (a) service + thunder-app dep + nil ExposesAPI → ExposesAPI created with
+// (a) service + idp-app dep + nil ExposesAPI → ExposesAPI created with
 // Auth end-user-required.
 func TestDeriveEndUserAuth_StampsNilExposesAPI(t *testing.T) {
 	t.Parallel()
 	comps := []DesignComponent{{
 		Name:          "orders-api",
 		ComponentType: "service",
-		Dependencies:  []Dependency{thunderDep("user-auth")},
+		Dependencies:  []Dependency{idpAppDep("user-auth")},
 	}}
 
-	if err := deriveEndUserAuth(comps, authRole("thunder-app")); err != nil {
+	if err := deriveEndUserAuth(comps, authRole("idp-app")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if comps[0].ExposesAPI == nil || comps[0].ExposesAPI.Auth != authEndUserRequired {
@@ -78,11 +78,11 @@ func TestDeriveEndUserAuth_ExistingEndUserRequiredUnchanged(t *testing.T) {
 	comps := []DesignComponent{{
 		Name:          "orders-api",
 		ComponentType: "service",
-		Dependencies:  []Dependency{thunderDep("user-auth")},
+		Dependencies:  []Dependency{idpAppDep("user-auth")},
 		ExposesAPI:    &ExposesAPI{Auth: authEndUserRequired, Managed: true, UserContext: "X-User-Id"},
 	}}
 
-	if err := deriveEndUserAuth(comps, authRole("thunder-app")); err != nil {
+	if err := deriveEndUserAuth(comps, authRole("idp-app")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	got := comps[0].ExposesAPI
@@ -98,11 +98,11 @@ func TestDeriveEndUserAuth_ServiceRequiredConflictErrors(t *testing.T) {
 	comps := []DesignComponent{{
 		Name:          "orders-api",
 		ComponentType: "service",
-		Dependencies:  []Dependency{thunderDep("user-auth")},
+		Dependencies:  []Dependency{idpAppDep("user-auth")},
 		ExposesAPI:    &ExposesAPI{Auth: authServiceRequired},
 	}}
 
-	err := deriveEndUserAuth(comps, authRole("thunder-app"))
+	err := deriveEndUserAuth(comps, authRole("idp-app"))
 	if err == nil {
 		t.Fatal("want a conflict error, got nil")
 	}
@@ -123,10 +123,10 @@ func TestDeriveEndUserAuth_WebAppUntouched(t *testing.T) {
 	comps := []DesignComponent{{
 		Name:          "storefront-web",
 		ComponentType: "web-application",
-		Dependencies:  []Dependency{thunderDep("user-auth")},
+		Dependencies:  []Dependency{idpAppDep("user-auth")},
 	}}
 
-	if err := deriveEndUserAuth(comps, authRole("thunder-app")); err != nil {
+	if err := deriveEndUserAuth(comps, authRole("idp-app")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if comps[0].ExposesAPI != nil {
@@ -137,7 +137,7 @@ func TestDeriveEndUserAuth_WebAppUntouched(t *testing.T) {
 // An `ai-agent` is a protected backend on exactly the same terms as a service:
 // a SPA calls it with the signed-in user's token, so it sits behind the API
 // Platform Gateway and derives the same stamp from the same shared
-// `thunder-app` dependency name. Before this, an agent that declared the
+// `idp-app` dependency name. Before this, an agent that declared the
 // dependency got a provisioned OAuth client and NO stamp — a design that reads
 // as protected and deploys unprotected, which is the one failure mode this
 // derivation exists to prevent.
@@ -146,10 +146,10 @@ func TestDeriveEndUserAuth_AIAgentStampedLikeAService(t *testing.T) {
 	comps := []DesignComponent{{
 		Name:          "booking-agent",
 		ComponentType: ComponentTypeAIAgent,
-		Dependencies:  []Dependency{thunderDep("user-auth")},
+		Dependencies:  []Dependency{idpAppDep("user-auth")},
 	}}
 
-	if err := deriveEndUserAuth(comps, authRole("thunder-app")); err != nil {
+	if err := deriveEndUserAuth(comps, authRole("idp-app")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if comps[0].ExposesAPI == nil || comps[0].ExposesAPI.Auth != authEndUserRequired {
@@ -166,11 +166,11 @@ func TestDeriveEndUserAuth_AIAgentServiceRequiredConflictErrors(t *testing.T) {
 	comps := []DesignComponent{{
 		Name:          "booking-agent",
 		ComponentType: ComponentTypeAIAgent,
-		Dependencies:  []Dependency{thunderDep("user-auth")},
+		Dependencies:  []Dependency{idpAppDep("user-auth")},
 		ExposesAPI:    &ExposesAPI{Auth: authServiceRequired},
 	}}
 
-	err := deriveEndUserAuth(comps, authRole("thunder-app"))
+	err := deriveEndUserAuth(comps, authRole("idp-app"))
 	if err == nil {
 		t.Fatal("want a conflict error, got nil")
 	}
@@ -190,7 +190,7 @@ func TestDeriveEndUserAuth_DepLessAIAgentUntouched(t *testing.T) {
 		Dependencies:  []Dependency{{Kind: DependencyKindComponent, Name: "booking-api"}},
 	}}
 
-	if err := deriveEndUserAuth(comps, authRole("thunder-app")); err != nil {
+	if err := deriveEndUserAuth(comps, authRole("idp-app")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if comps[0].ExposesAPI != nil {
@@ -207,7 +207,7 @@ func TestDeriveEndUserAuth_DepLessServiceUntouched(t *testing.T) {
 		Dependencies:  []Dependency{{Kind: DependencyKindComponent, Name: "sibling"}},
 	}}
 
-	if err := deriveEndUserAuth(comps, authRole("thunder-app")); err != nil {
+	if err := deriveEndUserAuth(comps, authRole("idp-app")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if comps[0].ExposesAPI != nil {
@@ -227,27 +227,27 @@ func TestDeriveEndUserAuth_OtherResourceTypeUntouched(t *testing.T) {
 		},
 	}}
 
-	if err := deriveEndUserAuth(comps, authRole("thunder-app")); err != nil {
+	if err := deriveEndUserAuth(comps, authRole("idp-app")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if comps[0].ExposesAPI != nil {
-		t.Fatalf("non-thunder-app resource ExposesAPI must stay nil, got %+v", comps[0].ExposesAPI)
+		t.Fatalf("non-idp-app resource ExposesAPI must stay nil, got %+v", comps[0].ExposesAPI)
 	}
 }
 
 // The NAME must mean nothing now: a platform-resource dep whose resourceType
-// happens to be "thunder-app" but which carries NO end-user-auth role marker
+// happens to be "idp-app" but which carries NO end-user-auth role marker
 // (empty catalog) is left completely untouched. This is the crux of the
 // generalization — derivation keys on the CRT marker, never on the name.
-func TestDeriveEndUserAuth_UnlabeledTypeUntouchedEvenIfNamedThunderApp(t *testing.T) {
+func TestDeriveEndUserAuth_UnlabeledTypeUntouchedEvenIfNamedIDPApp(t *testing.T) {
 	t.Parallel()
 	comps := []DesignComponent{{
 		Name:          "orders-api",
 		ComponentType: "service",
-		Dependencies:  []Dependency{thunderDep("user-auth")},
+		Dependencies:  []Dependency{idpAppDep("user-auth")},
 	}}
 
-	// Empty marker map: "thunder-app" carries no role — nothing to derive.
+	// Empty marker map: "idp-app" carries no role — nothing to derive.
 	if err := deriveEndUserAuth(comps, map[string]CRTType{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestDeriveEndUserAuth_UnlabeledTypeUntouchedEvenIfNamedThunderApp(t *testin
 	}
 }
 
-// A labeled type with a name OTHER than "thunder-app" stamps just the same —
+// A labeled type with a name OTHER than "idp-app" stamps just the same —
 // the marker, not the name, is the signal.
 func TestDeriveEndUserAuth_StampsAnyLabeledType(t *testing.T) {
 	t.Parallel()
@@ -282,12 +282,12 @@ func TestDeriveEndUserAuth_StampsAnyLabeledType(t *testing.T) {
 func TestDeriveEndUserAuth_MixedComponentsOnlyQualifyingServiceStamped(t *testing.T) {
 	t.Parallel()
 	comps := []DesignComponent{
-		{Name: "orders-api", ComponentType: "service", Dependencies: []Dependency{thunderDep("user-auth")}},
+		{Name: "orders-api", ComponentType: "service", Dependencies: []Dependency{idpAppDep("user-auth")}},
 		{Name: "billing-api", ComponentType: "service"},
-		{Name: "storefront-web", ComponentType: "web-application", Dependencies: []Dependency{thunderDep("user-auth")}},
+		{Name: "storefront-web", ComponentType: "web-application", Dependencies: []Dependency{idpAppDep("user-auth")}},
 	}
 
-	if err := deriveEndUserAuth(comps, authRole("thunder-app")); err != nil {
+	if err := deriveEndUserAuth(comps, authRole("idp-app")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if comps[0].ExposesAPI == nil || comps[0].ExposesAPI.Auth != authEndUserRequired {
@@ -317,12 +317,12 @@ func designFilesWithDepsAndAuth(depsJSON, exposesAPIJSON string) map[string]stri
 // standalone (no tag-cut): a commit lands with the stamped auth.
 func TestDeriveEndUserAuthAtHead_PersistsBeforeReturn(t *testing.T) {
 	t.Parallel()
-	deps := `[{"kind":"platform-resource","name":"user-auth","resourceType":"thunder-app"}]`
+	deps := `[{"kind":"platform-resource","name":"user-auth","resourceType":"idp-app"}]`
 	fake := happySave(designFilesWithDeps(deps))
 	svc := newService(fake)
 	fc := &fakeCommitter{}
 	svc.fileCommitter = fc
-	svc.resourceCatalog = &fakeTypeCatalog{types: authRole("thunder-app")}
+	svc.resourceCatalog = &fakeTypeCatalog{types: authRole("idp-app")}
 
 	if err := svc.DerivePlatformResourceFactsAtHead(context.Background(), "acme", "web"); err != nil {
 		t.Fatalf("DerivePlatformResourceFactsAtHead: %v", err)
@@ -339,12 +339,12 @@ func TestDeriveEndUserAuthAtHead_PersistsBeforeReturn(t *testing.T) {
 // nothing.
 func TestDeriveEndUserAuthAtHead_ConflictReturnsSentinel(t *testing.T) {
 	t.Parallel()
-	deps := `[{"kind":"platform-resource","name":"user-auth","resourceType":"thunder-app"}]`
+	deps := `[{"kind":"platform-resource","name":"user-auth","resourceType":"idp-app"}]`
 	files := designFilesWithDepsAndAuth(deps, `{"auth": "service-required"}`)
 	svc := newService(happySave(files))
 	fc := &fakeCommitter{}
 	svc.fileCommitter = fc
-	svc.resourceCatalog = &fakeTypeCatalog{types: authRole("thunder-app")}
+	svc.resourceCatalog = &fakeTypeCatalog{types: authRole("idp-app")}
 
 	err := svc.DerivePlatformResourceFactsAtHead(context.Background(), "acme", "web")
 	if !errors.Is(err, ErrEndUserAuthConflict) {
@@ -359,7 +359,7 @@ func TestDeriveEndUserAuthAtHead_ConflictReturnsSentinel(t *testing.T) {
 // 503 sentinel.
 func TestDeriveEndUserAuthAtHead_CatalogDownFailsClosed(t *testing.T) {
 	t.Parallel()
-	deps := `[{"kind":"platform-resource","name":"user-auth","resourceType":"thunder-app"}]`
+	deps := `[{"kind":"platform-resource","name":"user-auth","resourceType":"idp-app"}]`
 	svc := newService(happySave(designFilesWithDeps(deps)))
 	svc.fileCommitter = &fakeCommitter{}
 	svc.resourceCatalog = &fakeTypeCatalog{err: errors.New("OC unreachable")}
@@ -395,7 +395,7 @@ func TestDeriveAtHead_UnknownResourceTypeReturnsSentinel(t *testing.T) {
 	svc.fileCommitter = fc
 	svc.resourceCatalog = &fakeTypeCatalog{types: map[string]CRTType{
 		"postgres-cnpg": {},
-		"thunder-app":   {},
+		"idp-app":       {},
 	}}
 
 	err := svc.DerivePlatformResourceFactsAtHead(context.Background(), "acme", "web")
@@ -406,7 +406,7 @@ func TestDeriveAtHead_UnknownResourceTypeReturnsSentinel(t *testing.T) {
 	if !strings.Contains(msg, "object-storage") {
 		t.Fatalf("error must name the unknown type: %v", err)
 	}
-	if !strings.Contains(msg, "postgres-cnpg") || !strings.Contains(msg, "thunder-app") {
+	if !strings.Contains(msg, "postgres-cnpg") || !strings.Contains(msg, "idp-app") {
 		t.Fatalf("error must list installed types: %v", err)
 	}
 	if fc.commits != 0 {

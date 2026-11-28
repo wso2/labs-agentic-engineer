@@ -354,7 +354,7 @@ func init() {
 	initCmd.Flags().String("secret-target-plane-name", "", "Name of the OpenChoreo plane aep-api's secrets are stored on (overrides config; empty leaves the chart default, default)")
 	_ = viper.BindPFlag("oc.secret_target_plane.name", initCmd.Flags().Lookup("secret-target-plane-name"))
 	initCmd.Flags().BoolVar(&initReuseSecrets, "reuse-secrets", false, "Skip secret prompts and reuse secrets already seeded in OpenBao (for reinstall or upgrade)")
-	initCmd.Flags().StringVar(&initAddons, "addons", "", `Comma-separated addon IDs to install without prompting (e.g. "thunder-app,postgres-cnpg"). Use "none" to skip addons, "all" to install everything. Omit for interactive selection.`)
+	initCmd.Flags().StringVar(&initAddons, "addons", "", `Comma-separated addon IDs to install without prompting (e.g. "idp-app,postgres-cnpg"). Use "none" to skip addons, "all" to install everything. Omit for interactive selection.`)
 	initCmd.Flags().StringVar(&initAEStudioImageDesignAgent, "ae-studio-image-design-agent", "", "Full image ref of the ae-studio pod's design-agent container (aeStudio.images.designAgent)")
 	initCmd.Flags().StringVar(&initAEStudioImageCollab, "ae-studio-image-collab", "", "Full image ref of the ae-studio pod's collab container (aeStudio.images.collab)")
 	initCmd.Flags().StringVar(&initAEStudioImageStudioTools, "ae-studio-image-studio-tools", "", "Full image ref of the ae-studio pod's studio-tools container (aeStudio.images.studioTools)")
@@ -681,7 +681,7 @@ type addonDeps struct {
 	waitForSecrets func(ctx context.Context, namespace string, names []string) error
 	// addonsFlag, when non-empty, bypasses the interactive multi-select and
 	// operator-install confirmation. Accepted values: "none", "all", or a
-	// comma-separated list of addon IDs (e.g. "thunder-app,postgres-cnpg").
+	// comma-separated list of addon IDs (e.g. "idp-app,postgres-cnpg").
 	addonsFlag string
 }
 

@@ -289,7 +289,7 @@ in the org's AE Studio pod ([turn-runtime](../../../../components/dataplane/ae-s
   - **Protected is read off committed truth, never a type name**: `exposesAPI.auth =
     end-user-required`, which design-save already derived from the CRT role marker (ADR-0007). No
     cluster round-trip, and a new sign-in flavour needs no app-factory release. The agent's bundle
-    still keys on the literal `thunder-app` resourceType, so a renamed or aliased sign-in CRT is
+    still keys on the literal `idp-app` resourceType, so a renamed or aliased sign-in CRT is
     protected here and unprotected there — recorded in the file header.
   - **The gate and the gateway read the block ONCE** (`openapi_operations.go`). `OpenAPIOperations`
     turns a protected spec into `(method, path, public | signedIn | scope)` for the deployment

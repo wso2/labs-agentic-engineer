@@ -46,24 +46,24 @@ func TestResourceTypeDir_DecodesTheRepoCatalog(t *testing.T) {
 		byName[rt.Metadata.Name] = rt
 	}
 	if len(byName) != 2 {
-		t.Fatalf("want postgres-cnpg and thunder-app, got %v", reflect.ValueOf(byName).MapKeys())
+		t.Fatalf("want postgres-cnpg and idp-app, got %v", reflect.ValueOf(byName).MapKeys())
 	}
 
-	thunder := byName["thunder-app"]
-	if thunder.Kind != "ClusterResourceType" || thunder.APIVersion != "openchoreo.dev/v1alpha1" {
-		t.Errorf("thunder-app: kind/apiVersion = %s %s", thunder.Kind, thunder.APIVersion)
+	idpApp := byName["idp-app"]
+	if idpApp.Kind != "ClusterResourceType" || idpApp.APIVersion != "openchoreo.dev/v1alpha1" {
+		t.Errorf("idp-app: kind/apiVersion = %s %s", idpApp.Kind, idpApp.APIVersion)
 	}
-	if got, want := outputNames(thunder), []string{"client_id", "issuer", "jwks_url", "scopes", "resource"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("thunder-app outputs = %v, want %v", got, want)
+	if got, want := outputNames(idpApp), []string{"client_id", "issuer", "jwks_url", "scopes", "resource"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("idp-app outputs = %v, want %v", got, want)
 	}
-	if thunder.Metadata.Labels["aep.wso2.com/role"] != "end-user-auth" {
-		t.Errorf("thunder-app role label = %q", thunder.Metadata.Labels["aep.wso2.com/role"])
+	if idpApp.Metadata.Labels["aep.wso2.com/role"] != "end-user-auth" {
+		t.Errorf("idp-app role label = %q", idpApp.Metadata.Labels["aep.wso2.com/role"])
 	}
-	if thunder.Metadata.Annotations["aep.wso2.com/skill"] != "thunder-authentication" {
-		t.Errorf("thunder-app skill annotation = %q", thunder.Metadata.Annotations["aep.wso2.com/skill"])
+	if idpApp.Metadata.Annotations["aep.wso2.com/skill"] != "thunder-authentication" {
+		t.Errorf("idp-app skill annotation = %q", idpApp.Metadata.Annotations["aep.wso2.com/skill"])
 	}
-	if len(thunder.Spec.Resources) == 0 || len(thunder.Spec.Resources[0].Template) == 0 {
-		t.Errorf("thunder-app: resource template not decoded")
+	if len(idpApp.Spec.Resources) == 0 || len(idpApp.Spec.Resources[0].Template) == 0 {
+		t.Errorf("idp-app: resource template not decoded")
 	}
 
 	pg := byName["postgres-cnpg"]

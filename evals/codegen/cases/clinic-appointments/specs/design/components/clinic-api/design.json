@@ -38,7 +38,7 @@
     {
       "kind": "platform-resource",
       "name": "user-auth",
-      "resourceType": "thunder-app",
+      "resourceType": "idp-app",
       "wiring": {
         "ref": "ev-clinic-appoint-4ed63457",
         "envBindings": {
