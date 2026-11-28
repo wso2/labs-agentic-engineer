@@ -26,7 +26,7 @@ import type { Launch } from "./launch";
  *
  * `resource` is set on all three legs (settings, extraTokenParams, and every
  * signinSilent call) — oidc-client-ts carries it on only one by itself. Why,
- * measured: skills/thunder-authentication/assets/app/src/authz/session.ts.
+ * measured: skills/idp-authentication/assets/app/src/authz/session.ts.
  */
 export function managerSettings(launch: Launch, origin: string): UserManagerSettings {
   return {
@@ -46,7 +46,7 @@ export function managerSettings(launch: Launch, origin: string): UserManagerSett
     userStore: new WebStorageStateStore({ store: window.sessionStorage }),
     automaticSilentRenew: false,
     // The ID token carries no username — `sub` is a UUID (measured in the
-    // thunder-authentication reference app). userinfo fills the profile claims.
+    // idp-authentication reference app). userinfo fills the profile claims.
     loadUserInfo: true,
   };
 }
