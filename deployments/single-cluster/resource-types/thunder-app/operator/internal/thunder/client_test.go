@@ -1286,26 +1286,34 @@ func TestEnsureApplication_UpdateFailsWhenTheIdPDropsTheSignOutAddress(t *testin
 	}
 }
 
-// A confidential client has no browser to send back: nothing is written, and a
-// read-back without the list is not a failed write. Its CR can still carry
-// redirect URIs, so the test gives it one — on the create and on the update.
-func TestEnsureApplication_ConfidentialClientHasNoSignOutAddress(t *testing.T) {
-	f := newFakeThunder(t)
-	f.dropPostLogoutRedirectURIs = true
-	c := newTestClient(f)
+// A confidential client has no browser to send back, so no sign-out address is
+// written for it. Its CR can still carry redirect URIs, so the tests give it
+// one. Two tests, because the fake DELETES the field from the body it records
+// when it is told to drop it: a request can only be inspected with the drop off.
 
-	app := DesiredApp{
+func confidentialAppWithARedirectURI() DesiredApp {
+	return DesiredApp{
 		Name:         "aep-default-m2m",
 		ClientType:   "confidential",
 		ClientSecret: "s3cret",
 		Scopes:       []string{"system"},
 		RedirectURIs: []string{"https://app.example.com/callback"},
 	}
+}
+
+func TestEnsureApplication_ConfidentialClientIsSentNoSignOutAddress(t *testing.T) {
+	f := newFakeThunder(t)
+	c := newTestClient(f)
+
+	app := confidentialAppWithARedirectURI()
 	ctx := context.Background()
 	if _, err := c.EnsureApplication(ctx, app); err != nil {
 		t.Fatalf("EnsureApplication (create): %v", err)
 	}
-	cfg, _ := firstOAuthConfig(f.lastCreateBody)
+	cfg, ok := firstOAuthConfig(f.lastCreateBody)
+	if !ok {
+		t.Fatalf("create body missing inboundAuthConfig[0].config: %#v", f.lastCreateBody)
+	}
 	if v, present := cfg["postLogoutRedirectUris"]; present {
 		t.Errorf("a confidential client's create body carries postLogoutRedirectUris: %#v", v)
 	}
@@ -1313,9 +1321,32 @@ func TestEnsureApplication_ConfidentialClientHasNoSignOutAddress(t *testing.T) {
 	if _, err := c.EnsureApplication(ctx, app); err != nil {
 		t.Fatalf("EnsureApplication (update): %v", err)
 	}
-	cfg, _ = firstOAuthConfig(f.lastPutBody)
+	if f.putCalls != 1 {
+		t.Fatalf("putCalls = %d, want 1 — the second call must be an update", f.putCalls)
+	}
+	cfg, ok = firstOAuthConfig(f.lastPutBody)
+	if !ok {
+		t.Fatalf("update body missing inboundAuthConfig[0].config: %#v", f.lastPutBody)
+	}
 	if v, present := cfg["postLogoutRedirectUris"]; present {
 		t.Errorf("a confidential client's update body carries postLogoutRedirectUris: %#v", v)
+	}
+}
+
+// The read-back check is for browser apps. An IdP that stores no sign-out
+// address for a confidential client has dropped nothing that was asked for.
+func TestEnsureApplication_ConfidentialClientReadBackNeedsNoSignOutAddress(t *testing.T) {
+	f := newFakeThunder(t)
+	f.dropPostLogoutRedirectURIs = true
+	c := newTestClient(f)
+
+	app := confidentialAppWithARedirectURI()
+	ctx := context.Background()
+	if _, err := c.EnsureApplication(ctx, app); err != nil {
+		t.Fatalf("EnsureApplication (create) failed on a read-back with no sign-out address: %v", err)
+	}
+	if _, err := c.EnsureApplication(ctx, app); err != nil {
+		t.Fatalf("EnsureApplication (update) failed on a read-back with no sign-out address: %v", err)
 	}
 }
 
